@@ -41,4 +41,6 @@ export type MotecSession = {
   warnings: string[];
   minSessionTime: number | null;
   maxSessionTime: number | null;
+  sampleCount?: number;
+  lapCount?: number;
 };

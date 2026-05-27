@@ -12,7 +12,8 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { channelByName, importMotecCsvFile, loadMotecSessions, numeric, samplesForLap, saveMotecSession } from "../lib/motecCsv";
+import { api } from "../api/client";
+import { channelByName, numeric } from "../lib/motecCsv";
 import type { ChannelDefinition, MotecSample, MotecSession } from "../types/motec";
 
 type WorksheetKey =
@@ -59,6 +60,27 @@ function valueAt(samples: MotecSample[], channel: string, cursor: number) {
   return samples[index]?.[channel] ?? null;
 }
 
+function useMotecSamples(session: MotecSession | null, lap: string, channels: string[], maxPoints = 3000) {
+  const [samples, setSamples] = useState<MotecSample[]>([]);
+  const key = channels.join(",");
+  useEffect(() => {
+    if (!session || !lap || channels.length === 0) {
+      setSamples([]);
+      return;
+    }
+    let cancelled = false;
+    void api.motecSamples(session.id, channels, lap, maxPoints).then((payload) => {
+      if (!cancelled) setSamples(payload.samples);
+    }).catch(() => {
+      if (!cancelled) setSamples([]);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [session?.id, lap, key, maxPoints]);
+  return samples;
+}
+
 function Empty({ message = "Import a telemetry CSV to use this worksheet." }: { message?: string }) {
   return <div className="empty-state"><strong>Data not available</strong><span>{message}</span></div>;
 }
@@ -74,7 +96,7 @@ function LapSelectors({ session, lapA, lapB, setLapA, setLapB }: { session: Mote
     <div className="motec-toolbar">
       <label>Primary lap<select value={lapA} onChange={(event) => setLapA(event.target.value)}>{session?.laps.map((lap) => <option key={lap.lapNumber} value={lap.lapNumber}>Lap {lap.lapNumber}</option>)}</select></label>
       <label>Compare lap<select value={lapB} onChange={(event) => setLapB(event.target.value)}><option value="">None</option>{session?.laps.map((lap) => <option key={lap.lapNumber} value={lap.lapNumber}>Lap {lap.lapNumber}</option>)}</select></label>
-      <span className="muted">{session ? `${session.samples.length} samples, ${session.laps.length} laps` : "No session loaded"}</span>
+      <span className="muted">{session ? `${session.sampleCount ?? 0} samples, ${session.laps.length} laps` : "No session loaded"}</span>
     </div>
   );
 }
@@ -91,8 +113,8 @@ function ChartBlock({ session, title, channels, lapA, lapB, xKey = "Lap-relative
   height?: number;
 }) {
   if (!session) return <section className="card span-12"><h2>{title}</h2><Empty /></section>;
-  const dataA = samplesForLap(session, lapA);
-  const dataB = lapB ? samplesForLap(session, lapB) : [];
+  const dataA = useMotecSamples(session, lapA, channels);
+  const dataB = useMotecSamples(session, lapB || "", channels);
   const unit = channelByName(session, channels[0])?.unit || "";
   const chartData = dataA.map((sample, index) => {
     const row: Record<string, number | string | null> = { x: numeric(sample, xKey) ?? index };
@@ -119,7 +141,7 @@ function ChartBlock({ session, title, channels, lapA, lapB, xKey = "Lap-relative
 }
 
 function CursorValues({ session, lapA, channels, cursor }: { session: MotecSession | null; lapA: string; channels: string[]; cursor: number }) {
-  const samples = session ? samplesForLap(session, lapA) : [];
+  const samples = useMotecSamples(session, lapA, channels);
   return (
     <section className="card span-12">
       <h2>Cursor Values</h2>
@@ -146,37 +168,29 @@ function AnalysisCards({ samples, channels }: { samples: MotecSample[]; channels
 
 function ImportPage({ onImported }: { onImported: (session: MotecSession, openAnalysis?: boolean) => void }) {
   const [preview, setPreview] = useState<MotecSession | null>(null);
+  const [file, setFile] = useState<File | null>(null);
   const [imported, setImported] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
   const [error, setError] = useState("");
   const handleFile = async (file: File | null) => {
     if (!file) return;
-    try {
-      setError("");
-      setImported(false);
-      setBusy(true);
-      setProgress("Reading CSV...");
-      setPreview(await importMotecCsvFile(file, ({ rows, bytes, totalBytes }) => {
-        const percent = totalBytes ? Math.round((bytes / totalBytes) * 100) : 0;
-        setProgress(`${percent}% read, ${rows.toLocaleString()} samples parsed`);
-      }));
-      setProgress("Parsed. Ready to import.");
-    } catch (exc) {
-      setError(exc instanceof Error ? exc.message : String(exc));
-    } finally {
-      setBusy(false);
-    }
+    setFile(file);
+    setPreview(null);
+    setImported(false);
+    setError("");
+    setProgress(`${file.name} selected (${Math.round(file.size / 1024 / 1024)} MB). Click Import Session to stream it to the backend.`);
   };
   const importPreview = async () => {
-    if (!preview) return;
+    if (!file) return;
     try {
       setBusy(true);
       setError("");
-      setProgress("Saving session to browser database...");
-      await saveMotecSession(preview);
+      setProgress("Uploading and importing CSV in the backend. Large files can take a while...");
+      const importedSession = await api.motecImport(file);
+      setPreview(importedSession);
       setImported(true);
-      onImported(preview, false);
+      onImported(importedSession, false);
       setProgress("Saved. Open Analysis is ready.");
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -191,7 +205,7 @@ function ImportPage({ onImported }: { onImported: (session: MotecSession, openAn
         <input type="file" accept=".csv,text/csv" disabled={busy} onChange={(event) => void handleFile(event.target.files?.[0] || null)} />
         {progress && <p className="subvalue">{progress}</p>}
         {error && <p className="motec-warning">{error}</p>}
-        {preview && <button className="primary" disabled={busy} onClick={() => void importPreview()}>Import Session</button>}
+        {file && <button className="primary" disabled={busy} onClick={() => void importPreview()}>Import Session</button>}
         {preview && imported && <button onClick={() => onImported(preview, true)}>Open Analysis</button>}
       </section>
       <section className="card span-8">
@@ -241,8 +255,8 @@ function Worksheet({ session, worksheet, lapA, lapB, setLapA, setLapB }: { sessi
   const [xyY, setXyY] = useState("Engine RPM");
   const [histChannel, setHistChannel] = useState("Ground Speed");
   const [mapColor, setMapColor] = useState("Ground Speed");
-  const samples = session ? samplesForLap(session, lapA) : [];
-  const allNumeric = session?.channels.filter((channel) => session.samples.some((sample) => numeric(sample, channel.originalName) != null)) || [];
+  const samples = useMotecSamples(session, lapA, ["Ground Speed", "Brake Pos", "Throttle Pos", "Steering", "Engine RPM", "G Force Lat", "G Force Long", "Fuel Level"]);
+  const allNumeric = session?.channels.filter((channel) => channel.type !== "marker") || [];
   const stack = (title: string, groups: Array<[string, string[]]>, cards: string[] = []) => (
     <div className="page grid">
       <LapSelectors session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />
@@ -271,7 +285,7 @@ function Worksheet({ session, worksheet, lapA, lapB, setLapA, setLapB }: { sessi
 }
 
 function GForceWorksheet(props: { session: MotecSession; lapA: string; lapB: string; setLapA: (lap: string) => void; setLapB: (lap: string) => void; cursor: number; setCursor: (value: number) => void }) {
-  const samples = samplesForLap(props.session, props.lapA);
+  const samples = useMotecSamples(props.session, props.lapA, ["G Force Lat", "G Force Long", "G Force Vert", "Combined G"]);
   return (
     <div className="page grid">
       <LapSelectors session={props.session} lapA={props.lapA} lapB={props.lapB} setLapA={props.setLapA} setLapB={props.setLapB} />
@@ -283,7 +297,7 @@ function GForceWorksheet(props: { session: MotecSession; lapA: string; lapB: str
 }
 
 function MapWorksheet({ session, lapA, lapB, setLapA, setLapB, color, setColor }: { session: MotecSession; lapA: string; lapB: string; setLapA: (lap: string) => void; setLapB: (lap: string) => void; color: string; setColor: (channel: string) => void }) {
-  const samples = samplesForLap(session, lapA).filter((sample) => numeric(sample, "GPS Latitude") != null && numeric(sample, "GPS Longitude") != null);
+  const samples = useMotecSamples(session, lapA, ["GPS Latitude", "GPS Longitude", color], 6000).filter((sample) => numeric(sample, "GPS Latitude") != null && numeric(sample, "GPS Longitude") != null);
   const lats = samples.map((sample) => numeric(sample, "GPS Latitude")!);
   const lons = samples.map((sample) => numeric(sample, "GPS Longitude")!);
   const minLat = Math.min(...lats), maxLat = Math.max(...lats), minLon = Math.min(...lons), maxLon = Math.max(...lons);
@@ -297,7 +311,7 @@ function MapWorksheet({ session, lapA, lapB, setLapA, setLapB, color, setColor }
 }
 
 function HistogramWorksheet({ session, lapA, lapB, setLapA, setLapB, channel, setChannel, numericChannels }: { session: MotecSession; lapA: string; lapB: string; setLapA: (lap: string) => void; setLapB: (lap: string) => void; channel: string; setChannel: (channel: string) => void; numericChannels: ChannelDefinition[] }) {
-  const samples = samplesForLap(session, lapA);
+  const samples = useMotecSamples(session, lapA, [channel], 10000);
   const values = samples.map((sample) => numeric(sample, channel)).filter((value): value is number => value != null);
   const min = Math.min(...values), max = Math.max(...values);
   const bins = Array.from({ length: 20 }, (_, index) => ({ bin: fmt(min + ((max - min) / 20) * index, 1), count: 0 }));
@@ -313,7 +327,7 @@ function HistogramWorksheet({ session, lapA, lapB, setLapA, setLapB, channel, se
 }
 
 function XYWorksheet({ session, lapA, lapB, setLapA, setLapB, x, y, setX, setY, numericChannels }: { session: MotecSession; lapA: string; lapB: string; setLapA: (lap: string) => void; setLapB: (lap: string) => void; x: string; y: string; setX: (channel: string) => void; setY: (channel: string) => void; numericChannels: ChannelDefinition[] }) {
-  const samples = samplesForLap(session, lapA);
+  const samples = useMotecSamples(session, lapA, [x, y], 6000);
   const presets: Array<[string, string, string]> = [["Ground Speed vs Time", "Time", "Ground Speed"], ["Throttle vs Time", "Time", "Throttle Pos"], ["Brake vs Speed", "Ground Speed", "Brake Pos"], ["G-G", "G Force Lat", "G Force Long"], ["RPM vs Speed", "Ground Speed", "Engine RPM"], ["Rake vs Speed", "Ground Speed", "Rake"]];
   return (
     <div className="page grid">
@@ -334,19 +348,27 @@ export function MotecWorkspace() {
   const [lapB, setLapB] = useState("");
   const activeLapA = lapA || session?.laps[0]?.lapNumber || "";
   const activeLapB = lapB;
-  const setImported = (next: MotecSession, openAnalysis = true) => {
-    void loadMotecSessions().then((loaded) => {
-      setSessions(loaded);
-      setSessionId(next.id);
-    });
+  const selectSession = (next: MotecSession) => {
+    setSessions((current) => [next, ...current.filter((item) => item.id !== next.id)]);
     setSessionId(next.id);
+  };
+  const loadSession = (id: string) => {
+    void api.motecSession(id).then((next) => {
+      selectSession(next);
+      setLapA((current) => current || next.laps[0]?.lapNumber || "");
+    });
+  };
+  const setImported = (next: MotecSession, openAnalysis = true) => {
+    selectSession(next);
     setLapA(next.laps[0]?.lapNumber || "");
     if (openAnalysis) setWorksheet("compare");
   };
   useEffect(() => {
-    void loadMotecSessions().then((loaded) => {
+    void api.motecSessions().then((loaded) => {
       setSessions(loaded);
-      setSessionId((current) => current || loaded[0]?.id || "");
+      const firstId = loaded[0]?.id || "";
+      setSessionId((current) => current || firstId);
+      if (firstId) loadSession(firstId);
     });
   }, []);
   useEffect(() => {
@@ -355,7 +377,7 @@ export function MotecWorkspace() {
   return (
     <div className="motec-workspace">
       <aside className="motec-worksheets">
-        <label>Session<select value={session?.id || ""} onChange={(event) => setSessionId(event.target.value)}>{sessions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>Session<select value={session?.id || ""} onChange={(event) => loadSession(event.target.value)}>{sessions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
         {worksheets.map(([key, label]) => <button key={key} className={worksheet === key ? "active" : ""} onClick={() => setWorksheet(key)}>{label}</button>)}
       </aside>
       <main className="motec-main">
