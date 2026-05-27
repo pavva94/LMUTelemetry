@@ -19,7 +19,7 @@ import type { ChannelDefinition, MotecSample, MotecSession } from "../types/mote
 
 type WorksheetKey =
   | "import" | "laps" | "compare" | "driver" | "tyre-temp" | "tyre-pressure" | "brakes" | "ride-height"
-  | "g-force" | "map" | "histograms" | "xy" | "powertrain" | "fuel-strategy" | "wheel-speeds" | "environment" | "speed-delta" | "inputs";
+  | "g-force" | "map" | "histograms" | "xy" | "powertrain" | "fuel-strategy" | "race-engineer" | "wheel-speeds" | "environment" | "speed-delta" | "inputs";
 
 const worksheets: Array<[WorksheetKey, string]> = [
   ["import", "CSV Import"],
@@ -36,6 +36,7 @@ const worksheets: Array<[WorksheetKey, string]> = [
   ["xy", "X-Y Plotter"],
   ["powertrain", "Powertrain"],
   ["fuel-strategy", "Fuel Strategy"],
+  ["race-engineer", "Race Engineer"],
   ["wheel-speeds", "Wheel Speeds"],
   ["environment", "Environment"],
   ["speed-delta", "Speed / Delta"],
@@ -274,6 +275,80 @@ type FuelLapRow = {
   fuelAdded: number | null;
 };
 
+type EngineerHint = {
+  title: string;
+  severity: "info" | "warning" | "critical";
+  confidence: "low" | "medium" | "high";
+  affected: string;
+  explanation: string;
+  evidence: string[];
+  action: string;
+};
+
+type StintSummary = {
+  stint: number;
+  startLap: string;
+  endLap: string;
+  lapCount: number;
+  fastestLap: number | null;
+  averageLap: number | null;
+  medianLap: number | null;
+  firstHalfAverage: number | null;
+  secondHalfAverage: number | null;
+  degradationPerLap: number | null;
+  fuelUsed: number | null;
+  averageFuelPerLap: number | null;
+  fuelVariance: number | null;
+  fuelAdded: number | null;
+  tyreWearDelta: number | null;
+};
+
+const engineerChannels = [
+  "Ground Speed", "Throttle Pos", "Brake Pos", "Steering", "Gear", "Engine RPM",
+  "G Force Lat", "G Force Long", "Combined G", "Delta Best", "Realtime Loss",
+  "Lap-relative time", "Brake/Throttle Overlap", "Fuel Level",
+  "Tyre Pressure FL", "Tyre Pressure FR", "Tyre Pressure RL", "Tyre Pressure RR",
+  "Tyre Wear FL", "Tyre Wear FR", "Tyre Wear RL", "Tyre Wear RR",
+  "Tyre Temp FL Outer", "Tyre Temp FL Centre", "Tyre Temp FL Inner",
+  "Tyre Temp FR Outer", "Tyre Temp FR Centre", "Tyre Temp FR Inner",
+  "Tyre Temp RL Outer", "Tyre Temp RL Centre", "Tyre Temp RL Inner",
+  "Tyre Temp RR Outer", "Tyre Temp RR Centre", "Tyre Temp RR Inner",
+  "Brake Temp FL", "Brake Temp FR", "Brake Temp RL", "Brake Temp RR",
+  "Ride Height FL", "Ride Height FR", "Ride Height RL", "Ride Height RR",
+  "Front Ride Height Avg", "Rear Ride Height Avg", "Rake", "Front Ride Height Min", "Rear Ride Height Min",
+  "Wheel Rot Speed FL", "Wheel Rot Speed FR", "Wheel Rot Speed RL", "Wheel Rot Speed RR",
+];
+
+const valuesFor = (samples: MotecSample[], channel: string) => samples.map((sample) => numeric(sample, channel)).filter((value): value is number => value != null);
+const avgValue = (values: number[]) => values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
+const medianValue = (values: number[]) => {
+  if (!values.length) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+};
+const varianceValue = (values: number[]) => {
+  if (values.length < 2) return null;
+  const avg = avgValue(values);
+  return avgValue(values.map((value) => (value - avg) ** 2));
+};
+const minValue = (samples: MotecSample[], channel: string) => {
+  const values = valuesFor(samples, channel);
+  return values.length ? Math.min(...values) : null;
+};
+const maxValue = (samples: MotecSample[], channel: string) => {
+  const values = valuesFor(samples, channel);
+  return values.length ? Math.max(...values) : null;
+};
+const avgChannel = (samples: MotecSample[], channel: string) => {
+  const values = valuesFor(samples, channel);
+  return values.length ? avgValue(values) : null;
+};
+
+function hint(title: string, severity: EngineerHint["severity"], confidence: EngineerHint["confidence"], affected: string, explanation: string, evidence: string[], action: string): EngineerHint {
+  return { title, severity, confidence, affected, explanation, evidence, action };
+}
+
 function buildFuelLapRows(session: MotecSession) {
   let stint = 1;
   let previousFuelEnd: number | null = null;
@@ -297,6 +372,300 @@ function buildFuelLapRows(session: MotecSession) {
       fuelAdded: pitStop ? fuelAdded : null,
     };
   });
+}
+
+function buildStintSummaries(session: MotecSession, samples: MotecSample[] = []): StintSummary[] {
+  const rows = buildFuelLapRows(session);
+  const stintNumbers = Array.from(new Set(rows.map((row) => row.stint))).sort((a, b) => a - b);
+  return stintNumbers.map((stint) => {
+    const stintRows = rows.filter((row) => row.stint === stint);
+    const lapTimes = stintRows.map((row) => row.duration).filter((value): value is number => value != null && value > 0);
+    const fuelUsedValues = stintRows.map((row) => row.fuelUsed).filter((value): value is number => value != null && value >= 0);
+    const split = Math.max(1, Math.ceil(lapTimes.length / 2));
+    const firstHalf = lapTimes.slice(0, split);
+    const secondHalf = lapTimes.slice(split);
+    const firstHalfAverage = firstHalf.length ? avgValue(firstHalf) : null;
+    const secondHalfAverage = secondHalf.length ? avgValue(secondHalf) : null;
+    const startLapNumber = Number(stintRows[0]?.lapNumber);
+    const endLapNumber = Number(stintRows[stintRows.length - 1]?.lapNumber);
+    const stintSamples = samples.filter((sample) => {
+      const lap = Number(sample["Lap Number"]);
+      return Number.isFinite(lap) && Number.isFinite(startLapNumber) && Number.isFinite(endLapNumber) && lap >= startLapNumber && lap <= endLapNumber;
+    });
+    const wearStart = ["Tyre Wear FL", "Tyre Wear FR", "Tyre Wear RL", "Tyre Wear RR"].map((channel) => numeric(stintSamples[0] || {}, channel)).filter((value): value is number => value != null);
+    const wearEnd = ["Tyre Wear FL", "Tyre Wear FR", "Tyre Wear RL", "Tyre Wear RR"].map((channel) => numeric(stintSamples[stintSamples.length - 1] || {}, channel)).filter((value): value is number => value != null);
+    const tyreWearDelta = wearStart.length && wearEnd.length ? avgValue(wearEnd) - avgValue(wearStart) : null;
+    return {
+      stint,
+      startLap: stintRows[0]?.lapNumber || "--",
+      endLap: stintRows[stintRows.length - 1]?.lapNumber || "--",
+      lapCount: stintRows.length,
+      fastestLap: lapTimes.length ? Math.min(...lapTimes) : null,
+      averageLap: lapTimes.length ? avgValue(lapTimes) : null,
+      medianLap: medianValue(lapTimes),
+      firstHalfAverage,
+      secondHalfAverage,
+      degradationPerLap: firstHalfAverage != null && secondHalfAverage != null && lapTimes.length > 1 ? (secondHalfAverage - firstHalfAverage) / Math.max(lapTimes.length / 2, 1) : null,
+      fuelUsed: fuelUsedValues.length ? fuelUsedValues.reduce((sum, value) => sum + value, 0) : null,
+      averageFuelPerLap: fuelUsedValues.length ? avgValue(fuelUsedValues) : null,
+      fuelVariance: varianceValue(fuelUsedValues),
+      fuelAdded: stintRows.find((row) => row.pitStop)?.fuelAdded ?? null,
+      tyreWearDelta,
+    };
+  });
+}
+
+function analyzeDriving(session: MotecSession, lapA: string, referenceLap: string, selected: MotecSample[], reference: MotecSample[]) {
+  const hints: EngineerHint[] = [];
+  const currentLap = session.laps.find((lap) => lap.lapNumber === lapA);
+  const refLap = session.laps.find((lap) => lap.lapNumber === referenceLap);
+  if (!selected.length) {
+    return [hint("Not enough selected lap data", "info", "high", `Lap ${lapA || "--"}`, "The selected lap has no loaded samples, so the engineer view cannot judge driving traces yet.", ["No samples returned for the selected lap."], "Select a lap with telemetry samples or re-import a CSV with lap data.")];
+  }
+  if (currentLap?.duration && refLap?.duration && currentLap.lapNumber !== refLap.lapNumber) {
+    const loss = currentLap.duration - refLap.duration;
+    if (loss > 0.15) {
+      hints.push(hint(
+        "Primary lap is slower than the reference",
+        loss > 1 ? "critical" : "warning",
+        "high",
+        `Lap ${currentLap.lapNumber} vs lap ${refLap.lapNumber}`,
+        `The selected lap is ${formatRaceTime(loss)} slower than the reference. Treat this as the main lap to dissect before chasing setup changes.`,
+        [`Selected ${formatRaceTime(currentLap.duration)}`, `Reference ${formatRaceTime(refLap.duration)}`],
+        "Start with speed, brake release, and throttle pickup differences before changing the car.",
+      ));
+    } else if (Math.abs(loss) <= 0.15) {
+      hints.push(hint("Selected lap is close to reference pace", "info", "medium", `Lap ${currentLap.lapNumber}`, "The selected lap is within a small margin of the reference, so improvements are likely in details rather than one obvious mistake.", [`Difference ${formatRaceTime(loss)}`], "Use the smaller channel hints below to look for repeatable gains."));
+    }
+  }
+  const deltaValues = valuesFor(selected, channelByName(session, "Delta Best") ? "Delta Best" : "Realtime Loss");
+  if (deltaValues.length > 5) {
+    const first = deltaValues[0];
+    const worst = Math.max(...deltaValues);
+    const gainLoss = worst - first;
+    const worstIndex = deltaValues.indexOf(worst);
+    const worstTime = numeric(selected[worstIndex], "Lap-relative time");
+    if (gainLoss > 0.2) {
+      hints.push(hint(
+        "Largest time-loss zone detected",
+        gainLoss > 0.7 ? "critical" : "warning",
+        "medium",
+        `Around ${timeValue(worstTime)}`,
+        "The delta trace gets worse in this region. That usually points to a braking, minimum-speed, or exit phase problem near this part of the lap.",
+        [`Delta worsens by ${formatRaceTime(gainLoss)}`, `Peak loss near ${timeValue(worstTime)}`],
+        "Open Compare or Speed / Delta and inspect speed, brake, and throttle around this timestamp.",
+      ));
+    }
+  }
+  if (reference.length) {
+    const selectedMinSpeed = minValue(selected, "Ground Speed");
+    const referenceMinSpeed = minValue(reference, "Ground Speed");
+    if (selectedMinSpeed != null && referenceMinSpeed != null && referenceMinSpeed - selectedMinSpeed > 4) {
+      hints.push(hint("Minimum speed is low versus reference", "warning", "medium", `Lap ${lapA}`, "The selected lap carries less minimum speed than the reference. If this happens in the same corner repeatedly, the car is either over-slowed or the entry is forcing too much rotation/scrub.", [`Selected min ${fmt(selectedMinSpeed, 1)} km/h`, `Reference min ${fmt(referenceMinSpeed, 1)} km/h`], "Compare the braking phase: release the brake more progressively or avoid adding steering while still heavily braking."));
+    }
+    const selectedThrottle = avgChannel(selected, "Throttle Pos");
+    const referenceThrottle = avgChannel(reference, "Throttle Pos");
+    if (selectedThrottle != null && referenceThrottle != null && referenceThrottle - selectedThrottle > 4) {
+      hints.push(hint("Throttle application is weaker than reference", "warning", "medium", `Lap ${lapA}`, "Average throttle is lower than the reference lap. This often means the car is not being opened up early enough on exits or there is hesitation after apex.", [`Selected avg throttle ${fmt(selectedThrottle, 1)}%`, `Reference avg throttle ${fmt(referenceThrottle, 1)}%`], "Check exits in Compare: look for places where reference throttle rises earlier without extra steering correction."));
+    }
+  }
+  const overlap = valuesFor(selected, "Brake/Throttle Overlap").filter(Boolean).length / Math.max(selected.length, 1);
+  if (overlap > 0.03) {
+    hints.push(hint("Brake and throttle overlap is visible", overlap > 0.08 ? "critical" : "warning", "medium", `Lap ${lapA}`, "There is measurable overlap between brake and throttle. A little overlap can be normal in some cars, but too much costs fuel and can destabilize entries or exits.", [`Overlap in ${fmt(overlap * 100, 1)}% of samples`], "Review pedal traces and remove accidental overlap unless it is intentional for rotation or turbo/traction management."));
+  }
+  const steeringAbs = valuesFor(selected, "Steering").map(Math.abs);
+  const steeringAvg = steeringAbs.length ? avgValue(steeringAbs) : null;
+  if (steeringAvg != null && steeringAvg > 35) {
+    hints.push(hint("High average steering demand", "warning", "low", `Lap ${lapA}`, "The steering trace suggests the car is spending a lot of time with significant steering angle. That can indicate understeer, late rotation, or over-driving the front tyres.", [`Average absolute steering ${fmt(steeringAvg, 1)}%/deg channel units`], "Check corners with low minimum speed and high steering: try earlier rotation, cleaner trail brake release, or setup changes that help front response."));
+  }
+  if (!hints.length) hints.push(hint("No major driving issue detected", "info", "medium", `Lap ${lapA}`, "The available driving channels do not show a large obvious weakness in this pass.", ["Speed, throttle, brake, and steering checks stayed within simple thresholds."], "Use Compare for detailed corner-by-corner work, or select a slower lap to expose clearer differences."));
+  return hints;
+}
+
+function analyzeSetup(session: MotecSession, samples: MotecSample[]) {
+  const hints: EngineerHint[] = [];
+  if (!samples.length) return [hint("Not enough setup data", "info", "high", "Session", "No full-session setup samples are loaded yet.", ["No setup samples returned."], "Import a CSV with tyre, brake, and ride-height channels.")];
+  const tyreTempHints = (["FL", "FR", "RL", "RR"] as const).flatMap((wheel) => {
+    const inner = avgChannel(samples, `Tyre Temp ${wheel} Inner`);
+    const centre = avgChannel(samples, `Tyre Temp ${wheel} Centre`);
+    const outer = avgChannel(samples, `Tyre Temp ${wheel} Outer`);
+    if (inner == null || centre == null || outer == null) return [];
+    const shoulderDelta = inner - outer;
+    const centreDelta = centre - ((inner + outer) / 2);
+    const results: EngineerHint[] = [];
+    if (Math.abs(shoulderDelta) > 8) {
+      results.push(hint(`${wheel} tyre shoulder imbalance`, Math.abs(shoulderDelta) > 15 ? "critical" : "warning", "medium", "Session average", shoulderDelta > 0 ? "Inner shoulder is much hotter than outer. This can point to excess camber, too much entry energy, or sustained loaded cornering." : "Outer shoulder is much hotter than inner. This can point to insufficient camber, rolling onto the shoulder, or sliding.", [`Inner ${fmt(inner, 1)} C`, `Outer ${fmt(outer, 1)} C`, `Delta ${fmt(shoulderDelta, 1)} C`], "Use tyre page by lap/stint. For repeatable imbalance, consider camber/pressure changes after confirming driving is not causing the temperature split."));
+    }
+    if (Math.abs(centreDelta) > 6) {
+      results.push(hint(`${wheel} centre temperature balance`, "warning", "medium", "Session average", centreDelta > 0 ? "Centre is hotter than the shoulders, which often suggests pressure is too high for the load/track condition." : "Centre is cooler than the shoulders, which often suggests pressure is too low or the tyre is working mostly on the shoulders.", [`Centre ${fmt(centre, 1)} C`, `Shoulder avg ${fmt((inner + outer) / 2, 1)} C`], "Check hot pressure targets and compare with wear. Adjust pressure only after the tyres are up to stable operating temperature."));
+    }
+    return results;
+  });
+  hints.push(...tyreTempHints.slice(0, 4));
+  const pressures = ["Tyre Pressure FL", "Tyre Pressure FR", "Tyre Pressure RL", "Tyre Pressure RR"].map((channel) => avgChannel(samples, channel)).filter((value): value is number => value != null);
+  if (pressures.length >= 2 && Math.max(...pressures) - Math.min(...pressures) > 8) {
+    hints.push(hint("Tyre pressure spread is large", "warning", "medium", "Session average", "The tyre pressure spread is large enough to affect balance and tyre response.", [`Lowest avg ${fmt(Math.min(...pressures), 1)} kPa`, `Highest avg ${fmt(Math.max(...pressures), 1)} kPa`], "Compare left/right and front/rear pressure evolution, then adjust starting pressures for a tighter hot-pressure window."));
+  }
+  const brakeTemps = ["Brake Temp FL", "Brake Temp FR", "Brake Temp RL", "Brake Temp RR"].map((channel) => avgChannel(samples, channel)).filter((value): value is number => value != null);
+  if (brakeTemps.length >= 2 && Math.max(...brakeTemps) - Math.min(...brakeTemps) > 80) {
+    hints.push(hint("Brake temperature imbalance", "warning", "medium", "Session average", "Brake temperatures are not balanced across the car. This may come from lockups, brake bias, ducting, or track layout loading one side heavily.", [`Coolest avg ${fmt(Math.min(...brakeTemps), 0)} C`, `Hottest avg ${fmt(Math.max(...brakeTemps), 0)} C`], "Check brake traces and wheel-speed page for lockup signs before changing bias or duct settings."));
+  }
+  const frontMin = minValue(samples, "Front Ride Height Min");
+  const rearMin = minValue(samples, "Rear Ride Height Min");
+  if ((frontMin != null && frontMin < 15) || (rearMin != null && rearMin < 15)) {
+    hints.push(hint("Bottoming risk detected", "critical", "medium", "Session", "Ride height gets very low in the imported data. If this happens at speed or under braking it can hurt platform consistency and aero balance.", [`Front min ${fmt(frontMin, 1)} mm`, `Rear min ${fmt(rearMin, 1)} mm`], "Inspect Ride Height / Platform around high-speed and heavy-braking zones. Consider ride height, spring, packer, or aero platform changes."));
+  }
+  const rake = avgChannel(samples, "Rake");
+  if (rake != null && Math.abs(rake) > 25) {
+    hints.push(hint("Large average rake value", "info", "low", "Session average", "The average rake is large. That may be intended, but it is worth checking against speed and braking stability.", [`Average rake ${fmt(rake, 1)} mm`], "Use Ride Height / Platform to see whether rake changes sharply with speed, braking, or throttle."));
+  }
+  if (!hints.length) hints.push(hint("Setup channels look broadly stable", "info", "medium", "Session", "The available tyre, brake, and ride-height channels did not trip the first-pass setup thresholds.", ["No large temperature, pressure, brake, or bottoming warnings detected."], "Use the detailed setup worksheets for deeper corner/stint analysis."));
+  return hints;
+}
+
+function analyzeStrategy(session: MotecSession) {
+  const hints: EngineerHint[] = [];
+  const rows = buildFuelLapRows(session);
+  const usage = rows.map((row) => row.fuelUsed).filter((value): value is number => value != null && value >= 0);
+  const avgFuel = usage.length ? avgValue(usage) : null;
+  const maxFuel = usage.length ? Math.max(...usage) : null;
+  const minFuel = usage.length ? Math.min(...usage) : null;
+  const currentFuel = [...rows].reverse().find((row) => row.fuelEnd != null)?.fuelEnd ?? null;
+  const pitStops = rows.filter((row) => row.pitStop);
+  if (avgFuel == null) {
+    return [hint("Fuel strategy needs Fuel Level", "info", "high", "Session", "Fuel Level is missing or incomplete, so stint and fuel-per-lap advice cannot be generated.", ["No valid fuel-used laps found."], "Import CSV with Fuel Level and Lap Number to enable fuel analysis.")];
+  }
+  hints.push(hint("Fuel consumption baseline", "info", "high", "Session", "This is the current fuel model from the imported CSV. Use it as the baseline before making stint decisions.", [`Average ${fmt(avgFuel, 3)} L/lap`, `Range ${fmt(minFuel, 3)}-${fmt(maxFuel, 3)} L/lap`, `Current ${fmt(currentFuel, 2)} L`], "For race planning, add a safety margin and verify whether consumption changes in traffic or behind safety car."));
+  if (maxFuel != null && minFuel != null && maxFuel - minFuel > avgFuel * 0.12) {
+    hints.push(hint("Fuel use varies noticeably lap to lap", "warning", "medium", "Session", "Fuel consumption is not stable. That usually comes from traffic, push laps, lift-and-coast variation, or inconsistent throttle time.", [`Spread ${fmt(maxFuel - minFuel, 3)} L/lap`, `Average ${fmt(avgFuel, 3)} L/lap`], "Compare high-consumption laps against low-consumption laps and look at throttle trace plus top-speed sections."));
+  }
+  if (currentFuel != null && avgFuel > 0) {
+    hints.push(hint("Estimated fuel range", "info", "medium", "End of imported data", "Based on the current average, this is the approximate range left at the end of the imported data.", [`Estimated ${fmt(currentFuel / avgFuel, 1)} laps remaining`], "Do not use this alone for final strategy; add reserve for formation, traffic, mistakes, and race-control phases."));
+  }
+  if (pitStops.length) {
+    hints.push(hint("Pit stops detected from refuelling", "info", "high", "Session", "The importer detected pit stops from fuel increases. These stops define stint boundaries for later degradation and pace analysis.", pitStops.map((pit, index) => `Stop ${index + 1}: lap ${pit.lapNumber}, +${fmt(pit.fuelAdded, 2)} L`), "Review stint pace before and after each stop to judge tyre degradation and refuel strategy."));
+  } else {
+    hints.push(hint("No pit stop detected", "info", "medium", "Session", "No fuel increase above the pit detection threshold was found.", ["Pit threshold: fuel increase greater than 2 L"], "If the session includes stops without refuelling, pit detection will need pit-state or speed-based logic later."));
+  }
+  return hints;
+}
+
+function analyzeStints(session: MotecSession, samples: MotecSample[]) {
+  const summaries = buildStintSummaries(session, samples);
+  if (!summaries.length) {
+    return [hint("No stint data available", "info", "high", "Session", "No lap rows are available to build stint summaries.", ["No laps returned for this session."], "Import a CSV with Lap Number and timing data.")];
+  }
+  const hints: EngineerHint[] = [];
+  if (summaries.length === 1) {
+    hints.push(hint("Single stint session", "info", "high", `Laps ${summaries[0].startLap}-${summaries[0].endLap}`, "No refuelling split was detected, so the whole imported run is treated as one stint.", [`${summaries[0].lapCount} laps in stint`], "Use this as a continuous-run analysis. If the session had pit stops without refuelling, add pit-state detection later."));
+  } else {
+    hints.push(hint("Multiple stints detected", "info", "high", "Session", "Fuel increases split the run into multiple stints. This lets the engineer compare pace, degradation, and fuel behavior stint by stint.", summaries.map((stint) => `Stint ${stint.stint}: laps ${stint.startLap}-${stint.endLap}`), "Compare stint averages and degradation before deciding whether the tyre or fuel strategy is working."));
+  }
+  summaries.forEach((summary) => {
+    if (summary.degradationPerLap != null && summary.degradationPerLap > 0.12) {
+      hints.push(hint("Stint pace degradation", summary.degradationPerLap > 0.25 ? "critical" : "warning", "medium", `Stint ${summary.stint}`, "The second half of this stint is noticeably slower than the first half. That can indicate tyre degradation, fuel-saving, traffic, or thermal drift.", [`First half avg ${timeValue(summary.firstHalfAverage)}`, `Second half avg ${timeValue(summary.secondHalfAverage)}`, `Drift ${formatRaceTime(summary.degradationPerLap)}/lap`], "Overlay early-stint and late-stint laps, then check tyres, brake temps, and minimum speed loss."));
+    }
+    if (summary.fuelVariance != null && summary.averageFuelPerLap != null && Math.sqrt(summary.fuelVariance) > summary.averageFuelPerLap * 0.08) {
+      hints.push(hint("Fuel use is inconsistent within stint", "warning", "medium", `Stint ${summary.stint}`, "Fuel consumption varies enough inside this stint to matter for strategy. This usually comes from traffic, lift-and-coast inconsistency, or push laps.", [`Average ${fmt(summary.averageFuelPerLap, 3)} L/lap`, `Std dev ${fmt(Math.sqrt(summary.fuelVariance), 3)} L`], "Identify high-consumption laps and compare throttle time, top speed, and braking zones."));
+    }
+    if (summary.tyreWearDelta != null && summary.tyreWearDelta > 8) {
+      hints.push(hint("High tyre wear across stint", summary.tyreWearDelta > 15 ? "critical" : "warning", "medium", `Stint ${summary.stint}`, "Average tyre wear rises significantly across this stint. If pace also degrades, the stint may be too long or the car is sliding too much.", [`Tyre wear delta ${fmt(summary.tyreWearDelta, 1)}%`, `${summary.lapCount} laps`], "Check tyre pressure/temperature balance and compare steering/minimum-speed traces late in the stint."));
+    }
+    if (summary.lapCount <= 2 && summaries.length > 1) {
+      hints.push(hint("Very short stint detected", "info", "medium", `Stint ${summary.stint}`, "This stint is very short. It may be a real short run, an out/in lap sequence, or an artifact of fuel-based stint detection.", [`Lap count ${summary.lapCount}`, `Laps ${summary.startLap}-${summary.endLap}`], "Verify pit stop detection in Fuel Strategy before using this stint for degradation conclusions."));
+    }
+  });
+  const paceComparable = summaries.filter((summary) => summary.averageLap != null);
+  if (paceComparable.length >= 2) {
+    const best = [...paceComparable].sort((a, b) => (a.averageLap ?? Infinity) - (b.averageLap ?? Infinity))[0];
+    const worst = [...paceComparable].sort((a, b) => (b.averageLap ?? 0) - (a.averageLap ?? 0))[0];
+    if (best.averageLap != null && worst.averageLap != null && worst.averageLap - best.averageLap > 0.5) {
+      hints.push(hint("Stint pace spread", "warning", "medium", "Session", "Average pace differs meaningfully between stints. That may be fuel load, tyres, traffic, or track evolution.", [`Best stint ${best.stint}: ${timeValue(best.averageLap)}`, `Slowest stint ${worst.stint}: ${timeValue(worst.averageLap)}`], "Compare stint conditions and fuel load before attributing the difference to setup or driving."));
+    }
+  }
+  if (!hints.length) hints.push(hint("Stint performance is stable", "info", "medium", "Session", "The detected stints do not show major pace, fuel, or tyre-wear warnings with the current thresholds.", ["Stint averages and degradation checks stayed within simple thresholds."], "Use the stint table for details and compare representative laps if you want to find smaller gains."));
+  return hints;
+}
+
+function HintSection({ title, hints }: { title: string; hints: EngineerHint[] }) {
+  return (
+    <section className="card span-12">
+      <h2>{title}</h2>
+      <div className="grid">
+        {hints.map((item, index) => (
+          <div className="card span-4 compact" key={`${item.title}-${index}`}>
+            <div className="row"><strong>{item.title}</strong><span className={`badge ${item.severity === "critical" ? "red" : item.severity === "warning" ? "amber" : "blue"}`}>{item.severity}</span></div>
+            <p className="muted">{item.explanation}</p>
+            <div className="row"><span className="subvalue">Confidence {item.confidence}</span><span className="subvalue">{item.affected}</span></div>
+            <div className="metric"><span className="label">Evidence</span>{item.evidence.slice(0, 4).map((line) => <span className="subvalue" key={line}>{line}</span>)}</div>
+            <div className="metric"><span className="label">Engineer action</span><span className="subvalue">{item.action}</span></div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function StintSummaryPanel({ summaries }: { summaries: StintSummary[] }) {
+  if (!summaries.length) return <section className="card span-12"><h2>Stint Summary</h2><Empty message="No stint summary can be built from the imported laps." /></section>;
+  return (
+    <section className="card span-12">
+      <h2>Stint Summary</h2>
+      <div className="grid">
+        {summaries.map((summary) => (
+          <div className="card span-3 compact" key={summary.stint}>
+            <h2>Stint {summary.stint}</h2>
+            <div className="metric"><span className="label">Laps</span><span className="value">{summary.startLap}-{summary.endLap}</span><span className="subvalue">{summary.lapCount} laps</span></div>
+            <div className="metric"><span className="label">Average / fastest</span><span className="subvalue">{timeValue(summary.averageLap)} / {timeValue(summary.fastestLap)}</span></div>
+            <div className="metric"><span className="label">Degradation</span><span className="subvalue">{summary.degradationPerLap != null ? `${formatRaceTime(summary.degradationPerLap)}/lap` : "--"}</span></div>
+            <div className="metric"><span className="label">Fuel</span><span className="subvalue">{fmt(summary.fuelUsed, 2)} L total / {fmt(summary.averageFuelPerLap, 3)} L/lap</span></div>
+          </div>
+        ))}
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead><tr><th>Stint</th><th>Laps</th><th>Count</th><th>Fastest</th><th>Average</th><th>Median</th><th>First half</th><th>Second half</th><th>Deg/lap</th><th>Fuel</th><th>Fuel/lap</th><th>Fuel variance</th><th>Fuel added</th><th>Tyre wear delta</th></tr></thead>
+          <tbody>{summaries.map((summary) => <tr key={summary.stint}><td>{summary.stint}</td><td>{summary.startLap}-{summary.endLap}</td><td>{summary.lapCount}</td><td>{timeValue(summary.fastestLap)}</td><td>{timeValue(summary.averageLap)}</td><td>{timeValue(summary.medianLap)}</td><td>{timeValue(summary.firstHalfAverage)}</td><td>{timeValue(summary.secondHalfAverage)}</td><td>{summary.degradationPerLap != null ? `${formatRaceTime(summary.degradationPerLap)}/lap` : "--"}</td><td>{fmt(summary.fuelUsed, 2)} L</td><td>{fmt(summary.averageFuelPerLap, 3)} L</td><td>{summary.fuelVariance != null ? fmt(summary.fuelVariance, 4) : "--"}</td><td>{summary.fuelAdded != null ? `${fmt(summary.fuelAdded, 2)} L` : "--"}</td><td>{summary.tyreWearDelta != null ? `${fmt(summary.tyreWearDelta, 1)}%` : "--"}</td></tr>)}</tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+function RaceEngineerWorksheet({ session, lapA, lapB, setLapA, setLapB }: { session: MotecSession; lapA: string; lapB: string; setLapA: (lap: string) => void; setLapB: (lap: string) => void }) {
+  const bestLap = session.laps.filter((lap) => lap.duration != null && lap.lapNumber !== lapA).sort((a, b) => (a.duration ?? Infinity) - (b.duration ?? Infinity))[0] || session.laps[0];
+  const referenceLap = lapB || bestLap?.lapNumber || "";
+  const selectedSamples = useMotecSamples(session, lapA, engineerChannels, 7000);
+  const referenceSamples = useMotecSamples(session, referenceLap, engineerChannels, 7000);
+  const sessionSamples = useMotecSamples(session, "__all__", engineerChannels, 10000);
+  const drivingHints = useMemo(() => analyzeDriving(session, lapA, referenceLap, selectedSamples, referenceSamples), [session, lapA, referenceLap, selectedSamples, referenceSamples]);
+  const setupHints = useMemo(() => analyzeSetup(session, sessionSamples), [session, sessionSamples]);
+  const strategyHints = useMemo(() => analyzeStrategy(session), [session]);
+  const stintSummaries = useMemo(() => buildStintSummaries(session, sessionSamples), [session, sessionSamples]);
+  const stintHints = useMemo(() => analyzeStints(session, sessionSamples), [session, sessionSamples]);
+  const allHints = [...drivingHints, ...setupHints, ...strategyHints, ...stintHints];
+  const criticalCount = allHints.filter((item) => item.severity === "critical").length;
+  const warningCount = allHints.filter((item) => item.severity === "warning").length;
+  return (
+    <div className="page grid">
+      <LapSelectors session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />
+      <section className="card span-12">
+        <h2>Race Engineer Overview</h2>
+        <p className="muted">Rules-first analysis. No LLM is used here: every hint is generated from imported CSV channels and lap metadata.</p>
+        <div className="motec-value-grid">
+          <div><span className="label">Primary lap</span><strong>{lapA || "--"}</strong></div>
+          <div><span className="label">Reference lap</span><strong>{referenceLap || "--"}</strong><span className="subvalue">{lapB ? "manual compare lap" : "fastest available lap"}</span></div>
+          <div><span className="label">Critical hints</span><strong>{criticalCount}</strong></div>
+          <div><span className="label">Warnings</span><strong>{warningCount}</strong></div>
+        </div>
+      </section>
+      <HintSection title="Lap Time And Driving" hints={drivingHints} />
+      <HintSection title="Setup Health" hints={setupHints} />
+      <HintSection title="Strategy" hints={strategyHints} />
+      <StintSummaryPanel summaries={stintSummaries} />
+      <HintSection title="Entire Stint Analysis" hints={stintHints} />
+    </div>
+  );
 }
 
 function FuelStrategyWorksheet({ session, lapA, lapB, setLapA, setLapB }: { session: MotecSession; lapA: string; lapB: string; setLapA: (lap: string) => void; setLapB: (lap: string) => void }) {
@@ -428,6 +797,7 @@ function Worksheet({ session, worksheet, lapA, lapB, setLapA, setLapB }: { sessi
   if (worksheet === "xy") return <XYWorksheet session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} x={xyX} y={xyY} setX={setXyX} setY={setXyY} numericChannels={allNumeric} />;
   if (worksheet === "powertrain") return stack("Powertrain", [["Engine RPM", ["Engine RPM"]], ["Gear", ["Gear"]], ["Ground Speed", ["Ground Speed"]], ["Temperatures", ["Eng Water Temp", "Eng Oil Temp"]], ["Fuel / Battery", ["Fuel Level", "Battery Charge Level"]]], ["Engine RPM", "Fuel Level", "Battery Charge Level", "Eng Water Temp", "Eng Oil Temp"]);
   if (worksheet === "fuel-strategy") return <FuelStrategyWorksheet session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />;
+  if (worksheet === "race-engineer") return <RaceEngineerWorksheet session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />;
   if (worksheet === "wheel-speeds") return stack("Wheel Speeds", [["Wheel Rotation", ["Wheel Rot Speed FL", "Wheel Rot Speed FR", "Wheel Rot Speed RL", "Wheel Rot Speed RR"]], ["Ground Speed", ["Ground Speed"]], ["Inputs", ["Brake Pos", "Throttle Pos"]], ["G Force Long", ["G Force Long"]]]);
   if (worksheet === "environment") return stack("Environment", [["Ambient / Track", ["Ambient Temperature", "Track Temperature"]], ["Ground Speed", ["Ground Speed"]], ["Tyre Pressure", ["Tyre Pressure FL", "Tyre Pressure FR", "Tyre Pressure RL", "Tyre Pressure RR"]], ["Tyre Temps", ["Tyre Temp Avg FL", "Tyre Temp Avg FR", "Tyre Temp Avg RL", "Tyre Temp Avg RR"]]], ["Ambient Temperature", "Track Temperature"]);
   if (worksheet === "speed-delta") return stack("Speed / Delta", [["Ground Speed", ["Ground Speed"]], ["Delta Best", ["Delta Best"]], ["Realtime Loss", ["Realtime Loss"]], ["Straight / Corner", ["Max Straight Speed", "Min Corner Speed"]]], ["Delta Best", "Realtime Loss", "Ground Speed"]);
