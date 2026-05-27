@@ -17,9 +17,8 @@ import {
   Wrench,
 } from "lucide-react";
 
-const items = [
+const liveItems = [
   ["live", "Live Dashboard", Gauge],
-  ["motec", "MoTeC CSV", FileSpreadsheet],
   ["race-info", "Race Info", Activity],
   ["driving", "Driving", Wrench],
   ["track-map", "Track Map", Map],
@@ -39,15 +38,51 @@ const items = [
   ["review", "Session Review", BarChart3],
 ] as const;
 
+const csvItems = [
+  ["motec", "MoTeC Workspace", FileSpreadsheet],
+] as const;
+
+const modes = [
+  ["live", "Live Mode", "Real-time telemetry", Gauge, liveItems],
+  ["csv", "CSV Analysis", "Offline MoTeC-style tools", FileSpreadsheet, csvItems],
+] as const;
+
+const items = [...liveItems, ...csvItems] as const;
+
 export type PageKey = (typeof items)[number][0];
+type ModeKey = (typeof modes)[number][0];
+
+const firstPageByMode: Record<ModeKey, PageKey> = {
+  live: "live",
+  csv: "motec",
+};
+
+function modeForPage(page: PageKey) {
+  return modes.find(([, , , , modeItems]) => modeItems.some(([key]) => key === page)) || modes[0];
+}
 
 export function Layout({ page, setPage, connected, children }: { page: PageKey; setPage: (page: PageKey) => void; connected: boolean; children: React.ReactNode }) {
+  const activeMode = modeForPage(page);
+  const [, modeLabel, , , activeItems] = activeMode;
+  const isCsvMode = activeMode[0] === "csv";
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <h1 className="brand">LMU Race Strategy Assistant</h1>
+        <div className="mode-menu" aria-label="Main modes">
+          {modes.map(([key, label, description, Icon]) => (
+            <button key={key} className={activeMode[0] === key ? "active" : ""} onClick={() => setPage(firstPageByMode[key])}>
+              <Icon size={18} />
+              <span>
+                <strong>{label}</strong>
+                <small>{description}</small>
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="nav-section-title">{modeLabel}</div>
         <nav className="nav">
-          {items.map(([key, label, Icon]) => (
+          {activeItems.map(([key, label, Icon]) => (
             <button key={key} className={page === key ? "active" : ""} onClick={() => setPage(key)}>
               <Icon size={16} style={{ verticalAlign: "text-bottom", marginRight: 8 }} />{label}
             </button>
@@ -56,8 +91,11 @@ export function Layout({ page, setPage, connected, children }: { page: PageKey; 
       </aside>
       <main className="main">
         <header className="topbar">
-          <strong>{items.find(([key]) => key === page)?.[1]}</strong>
-          <span className={connected ? "badge green" : "badge red"}>{connected ? "Live socket" : "Reconnecting"}</span>
+          <div>
+            <strong>{items.find(([key]) => key === page)?.[1]}</strong>
+            <span className="topbar-mode">{modeLabel}</span>
+          </div>
+          <span className={isCsvMode ? "badge blue" : connected ? "badge green" : "badge red"}>{isCsvMode ? "Offline analysis" : connected ? "Live socket" : "Reconnecting"}</span>
         </header>
         {children}
       </main>
