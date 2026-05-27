@@ -39,13 +39,29 @@ def attr(obj: Any, *names: str, default: Any = None) -> Any:
 
 
 def normalize_lmu_snapshot(raw: Any) -> TelemetrySnapshot:
-    scoring = attr(raw, "scoring", "mScoringInfo", default=raw)
-    telemetry = attr(raw, "telemetry", "mTelemetryInfo", default=raw)
-    vehicles = list(attr(scoring, "mVehicles", "vehicles", default=[]) or [])
-    player_index = int(attr(scoring, "mPlayerVehScoringId", "mPlayerVehicleIndex", default=0) or 0)
+    scoring_data = attr(raw, "scoring", "mScoringData", default=raw)
+    scoring = attr(scoring_data, "scoringInfo", "mScoringInfo", default=scoring_data)
+    telemetry_data = attr(raw, "telemetry", "mTelemetryData", default=raw)
+    vehicle_count = attr(scoring, "mNumVehicles", default=None)
+    vehicles_source = attr(scoring_data, "vehScoringInfo", "mVehicles", "vehicles", default=[]) or []
+    vehicles = list(vehicles_source)
+    if vehicle_count is not None:
+        vehicles = vehicles[: int(vehicle_count or 0)]
+    player_index = int(
+        attr(
+            telemetry_data,
+            "playerVehicleIdx",
+            "mPlayerVehScoringId",
+            "mPlayerVehicleIndex",
+            default=attr(scoring, "mPlayerVehScoringId", "mPlayerVehicleIndex", default=0),
+        )
+        or 0
+    )
     player_raw = vehicles[player_index] if 0 <= player_index < len(vehicles) else None
+    telem_info = attr(telemetry_data, "telemInfo", default=None)
+    player_telemetry = telem_info[player_index] if telem_info is not None and 0 <= player_index < len(telem_info) else telemetry_data
     competitors = [_normalize_competitor(v, idx == player_index) for idx, v in enumerate(vehicles[:104])]
-    player = _normalize_player(player_raw, telemetry)
+    player = _normalize_player(player_raw, player_telemetry)
     session = SessionState(
         track_name=decode_c_string(attr(scoring, "mTrackName", default="")),
         session_type=str(attr(scoring, "mSession", default="Race")),

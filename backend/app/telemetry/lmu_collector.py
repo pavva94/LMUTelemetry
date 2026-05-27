@@ -70,15 +70,12 @@ class LMUTelemetryCollector:
             return
         self._last_connect_attempt = now
         try:
+            from pyLMUSharedMemory import lmu_data
             from pyLMUSharedMemory.lmu_data import LMUConstants
             from pyLMUSharedMemory.lmu_mmap import MMapControl
 
-            try:
-                self._mmap = MMapControl(LMUConstants.LMU_SHARED_MEMORY_FILE, copy_access=True)
-            except TypeError:
-                self._mmap = MMapControl(LMUConstants.LMU_SHARED_MEMORY_FILE)
-            if hasattr(self._mmap, "start"):
-                self._mmap.start()
+            self._mmap = MMapControl(LMUConstants.LMU_SHARED_MEMORY_FILE, lmu_data.LMUObjectOut)
+            self._mmap.create(0)
             self._connected = True
         except Exception as exc:
             logger.info("LMU shared memory unavailable: %s", exc)
@@ -86,6 +83,10 @@ class LMUTelemetryCollector:
             self._connected = False
 
     def _read_copy(self):
+        if hasattr(self._mmap, "update") and self._mmap.update:
+            self._mmap.update()
+        if hasattr(self._mmap, "data"):
+            return self._mmap.data
         if hasattr(self._mmap, "read"):
             return self._mmap.read()
         if hasattr(self._mmap, "get_data"):
