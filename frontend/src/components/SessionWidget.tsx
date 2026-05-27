@@ -1,11 +1,9 @@
 import type { EnvironmentState, SessionState } from "../types/telemetry";
+import { formatRaceTime } from "../lib/timeFormat";
 import { StatusBadge } from "./StatusBadge";
 
 function time(value?: number) {
-  if (value == null) return "--";
-  const mins = Math.floor(value / 60);
-  const secs = Math.floor(value % 60);
-  return `${mins}:${secs.toString().padStart(2, "0")}`;
+  return formatRaceTime(value);
 }
 
 export function SessionWidget({ session, env, connected }: { session?: SessionState; env?: EnvironmentState; connected: boolean }) {

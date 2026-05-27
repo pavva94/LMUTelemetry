@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api/client";
+import { formatRaceGap, formatRaceTime } from "../lib/timeFormat";
 import type { SessionReview } from "../types/session";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { CompetitorState, PlayerState, TelemetrySnapshot, TyreState, TyreTemps } from "../types/telemetry";
@@ -40,13 +41,9 @@ const fmt = (value?: number | null, digits = 1, suffix = "") =>
   value == null || Number.isNaN(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
 const pct = (value?: number | null) => (value == null || Number.isNaN(value) ? "--" : `${Math.round(value * 100)}%`);
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
-const seconds = (value?: number | null) => fmt(value, 1, "s");
+const seconds = (value?: number | null) => formatRaceGap(value);
 const tyreTemp = (value?: TyreTemps) => fmt(value?.center_c ?? value?.left_c ?? value?.right_c ?? value?.carcass_c, 1, " C");
-const lapTime = (value?: number | null) => {
-  if (value == null || Number.isNaN(value) || value <= 0) return "--";
-  const minutes = Math.floor(value / 60);
-  return `${minutes}:${(value - minutes * 60).toFixed(3).padStart(6, "0")}`;
-};
+const lapTime = (value?: number | null) => formatRaceTime(value);
 
 const asNumber = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
 const validLap = (value?: number | null) => (value != null && value > 0 ? value : null);
@@ -95,6 +92,7 @@ const maxField = (rows: Field[], key: string) => {
   const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
   return values.length ? Math.max(...values) : null;
 };
+const isRaceTimeField = (key: string) => key.includes("time") || key.includes("gap");
 
 function useSessionReview() {
   const [review, setReview] = useState<SessionReview | null>(null);
@@ -162,7 +160,7 @@ function PageHeader({ telemetry, connected }: { telemetry: TelemetrySnapshot | n
         <Metric label="Car" value={text(player?.vehicle_name)} />
         <Metric label="Driver" value={text((telemetry?.competitors || []).find((c) => c.is_player)?.driver_name || "Player")} />
         <Metric label="Lap" value={text(player?.lap_number ?? session?.current_lap)} />
-        <Metric label="Remaining" value={seconds(session?.time_remaining)} />
+        <Metric label="Remaining" value={formatRaceTime(session?.time_remaining)} />
       </div>
     </section>
   );
@@ -260,14 +258,15 @@ function CompetitorRows({ competitors, limit = 10, filter = "all" }: { competito
 }
 
 function BasicLineChart({ data, lines, xKey = "lap_number", height = 220 }: { data: Field[]; lines: Array<[string, string]>; xKey?: string; height?: number }) {
+  const timeAxis = lines.some(([key]) => isRaceTimeField(key));
   if (!data.length) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data}>
         <CartesianGrid stroke="#27313a" />
         <XAxis dataKey={xKey} stroke="#8896a3" />
-        <YAxis stroke="#8896a3" />
-        <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} />
+        <YAxis stroke="#8896a3" tickFormatter={(value) => timeAxis ? formatRaceTime(Number(value)) : String(value)} />
+        <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} formatter={(value, name) => isRaceTimeField(String(name)) ? formatRaceTime(Number(value)) : value} />
         <Legend />
         {lines.map(([key, color]) => <Line key={key} dataKey={key} stroke={color} dot={false} connectNulls />)}
       </LineChart>
@@ -634,7 +633,7 @@ export function StintData({ telemetry, strategy }: EngineeringProps) {
 
 function LapTable({ rows }: { rows: Field[] }) {
   if (!rows.length) return <EmptyState />;
-  return <div className="table-wrap"><table><thead><tr><th>Lap</th><th>Lap time</th><th>S1</th><th>S2</th><th>S3</th><th>Fuel</th><th>Tyre wear</th><th>Top speed</th><th>Valid</th><th>Notes</th></tr></thead><tbody>{rows.map((row, index) => <tr key={index}><td>{text(row.lap_number)}</td><td>{lapTime(row.lap_time as number)}</td><td>{text(row.sector_1)}</td><td>{text(row.sector_2)}</td><td>{text(row.sector_3)}</td><td>{fmt(row.fuel_liters as number)}</td><td>{pct(row.tyre_wear_fl as number)}</td><td>{fmt(row.speed_kph as number, 0)}</td><td>{row.valid === false ? "Invalid" : "Valid/unknown"}</td><td>{text(row.event)}</td></tr>)}</tbody></table></div>;
+  return <div className="table-wrap"><table><thead><tr><th>Lap</th><th>Lap time</th><th>S1</th><th>S2</th><th>S3</th><th>Fuel</th><th>Tyre wear</th><th>Top speed</th><th>Valid</th><th>Notes</th></tr></thead><tbody>{rows.map((row, index) => <tr key={index}><td>{text(row.lap_number)}</td><td>{lapTime(row.lap_time as number)}</td><td>{lapTime(row.sector_1 as number)}</td><td>{lapTime(row.sector_2 as number)}</td><td>{lapTime(row.sector_3 as number)}</td><td>{fmt(row.fuel_liters as number)}</td><td>{pct(row.tyre_wear_fl as number)}</td><td>{fmt(row.speed_kph as number, 0)}</td><td>{row.valid === false ? "Invalid" : "Valid/unknown"}</td><td>{text(row.event)}</td></tr>)}</tbody></table></div>;
 }
 
 export function OpponentStats({ competitors }: EngineeringProps) {
@@ -725,7 +724,7 @@ export function SettingsPage({ telemetry, strategy }: EngineeringProps) {
       <section className="card span-4"><h2>Connection</h2><Metric label="Data source" value={text(settings.source || "Mock/LMU auto")} /><Metric label="Status" value={telemetry?.connected ? "Connected" : "Not connected"} /><label>Refresh rate<input type="number" min="1" max="60" value={Number(settings.refreshRate || 10)} onChange={(e) => set("refreshRate", Math.max(1, Number(e.target.value)))} /></label><label><input type="checkbox" checked={Boolean(settings.autoReconnect ?? true)} onChange={(e) => set("autoReconnect", e.target.checked)} /> Auto-reconnect</label></section>
       <section className="card span-4"><h2>Recording</h2><label><input type="checkbox" checked={Boolean(settings.recording ?? true)} onChange={(e) => set("recording", e.target.checked)} /> Enable recording</label><label>Sample rate<input type="number" min="1" max="60" value={Number(settings.sampleRate || 5)} onChange={(e) => set("sampleRate", Math.max(1, Number(e.target.value)))} /></label><Metric label="Data folder" value="data/sessions" /><label><input type="checkbox" checked={Boolean(settings.validOnly)} onChange={(e) => set("validOnly", e.target.checked)} /> Save only valid laps</label></section>
       <section className="card span-4"><h2>UI</h2><Metric label="Theme" value={text(settings.theme || "dark")} /><Metric label="Units" value={text(settings.units || "metric")} /><label><input type="checkbox" checked={Boolean(settings.smoothing ?? true)} onChange={(e) => set("smoothing", e.target.checked)} /> Chart smoothing</label><label><input type="checkbox" checked={Boolean(settings.advanced ?? true)} onChange={(e) => set("advanced", e.target.checked)} /> Advanced engineering data</label></section>
-      <section className="card span-4"><h2>Strategy</h2><Metric label="Fuel margin" value={text(strategy?.assumptions?.fuel_safety_margin_liters ?? settings.fuelMargin ?? "--")} /><Metric label="Pit loss" value={text(strategy?.assumptions?.pit_loss_seconds ?? settings.pitLoss ?? "--")} /><Metric label="Race length" value={text(strategy?.assumptions?.race_duration_minutes ?? settings.raceLength ?? "--")} /><Metric label="Tyre warning" value={text(settings.tyreWarning || "75%")} /></section>
+      <section className="card span-4"><h2>Strategy</h2><Metric label="Fuel margin" value={text(strategy?.assumptions?.fuel_safety_margin_liters ?? settings.fuelMargin ?? "--")} /><Metric label="Pit loss" value={formatRaceTime(Number(strategy?.assumptions?.pit_loss_seconds ?? settings.pitLoss ?? NaN))} /><Metric label="Race length" value={formatRaceTime(Number(strategy?.assumptions?.race_duration_minutes ?? settings.raceLength ?? NaN) * 60)} /><Metric label="Tyre warning" value={text(settings.tyreWarning || "75%")} /></section>
       <section className="card span-4"><h2>Track Map</h2><label><input type="checkbox" checked={Boolean(settings.autoMap ?? true)} onChange={(e) => set("autoMap", e.target.checked)} /> Auto-generate map</label><button>Rebuild current map</button><label><input type="checkbox" checked={Boolean(settings.mapLabels ?? true)} onChange={(e) => set("mapLabels", e.target.checked)} /> Show labels</label><Metric label="Class colors" value="Default palette" /></section>
       <section className="card span-4"><h2>AI And Coaching</h2><label><input type="checkbox" checked={Boolean(settings.ruleInsights ?? true)} onChange={(e) => set("ruleInsights", e.target.checked)} /> Rule-based insights</label><label><input type="checkbox" checked={Boolean(settings.aiInsights)} onChange={(e) => set("aiInsights", e.target.checked)} /> AI insights later</label><Metric label="Insight frequency" value={text(settings.insightFrequency || "Per lap")} /><Metric label="Modes" value="Driving coach / race engineer" /></section>
     </div>

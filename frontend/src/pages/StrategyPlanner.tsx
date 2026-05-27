@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api } from "../api/client";
+import { formatRaceTime } from "../lib/timeFormat";
 import type { StrategyState } from "../types/strategy";
 
 export function StrategyPlanner({ strategy }: { strategy: StrategyState | null }) {
@@ -34,7 +35,7 @@ export function StrategyPlanner({ strategy }: { strategy: StrategyState | null }
         <section className="card span-4" key={plan.name}>
           <h2>{plan.name}</h2>
           <div className="metric"><span className="label">Stops</span><span className="value">{plan.stops}</span></div>
-          <div className="metric"><span className="label">Estimated total</span><span className="value">{Math.round(Number(plan.time))} s</span></div>
+          <div className="metric"><span className="label">Estimated total</span><span className="value">{formatRaceTime(Number(plan.time))}</span></div>
           <div className="subvalue">Risk {plan.risk}</div>
         </section>
       ))}

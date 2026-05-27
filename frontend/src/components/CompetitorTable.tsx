@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
+import { formatRaceGap, formatRaceTime } from "../lib/timeFormat";
 import type { CompetitorState } from "../types/telemetry";
 import { StatusBadge } from "./StatusBadge";
 
-const n = (value?: number, digits = 1) => value == null ? "--" : value.toFixed(digits);
 type SortDirection = "asc" | "desc";
 
 function valueFor(car: CompetitorState, key: keyof CompetitorState) {
@@ -52,7 +52,7 @@ export function CompetitorTable({ competitors }: { competitors: CompetitorState[
             {rows.map((c) => (
               <tr key={c.vehicle_id}>
                 <td>{c.position}</td><td>{c.driver_name || (c.is_player ? "Player" : "--")}</td><td>{c.vehicle_name || "--"}</td><td>{c.vehicle_class || "--"}</td>
-                <td>{n(c.last_lap_time)}</td><td>{n(c.best_lap_time)}</td><td>{n(c.time_behind_next)}</td><td>{c.pitstops ?? "--"}</td>
+                <td>{formatRaceTime(c.last_lap_time)}</td><td>{formatRaceTime(c.best_lap_time)}</td><td>{formatRaceGap(c.time_behind_next)}</td><td>{c.pitstops ?? "--"}</td>
                 <td>{c.in_pits ? "Yes" : "No"}</td><td>{c.estimated_strategy_group || "UNKNOWN"} estimated</td><td><StatusBadge value={c.threat_level} /></td>
               </tr>
             ))}

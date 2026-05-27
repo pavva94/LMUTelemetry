@@ -1,5 +1,6 @@
 import { CompetitorTable } from "../components/CompetitorTable";
 import { RecommendationPanel } from "../components/RecommendationPanel";
+import { formatRaceTime } from "../lib/timeFormat";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { PlayerState, TelemetrySnapshot, TyreState, TyreTemps } from "../types/telemetry";
 
@@ -9,11 +10,6 @@ const pct = (value?: number | null) => (value == null || Number.isNaN(value) ? "
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
 const tyreTemp = (value?: TyreTemps) => fmt(value?.center_c ?? value?.left_c ?? value?.right_c ?? value?.carcass_c, 0);
 const tyreIOM = (value?: TyreTemps) => `${fmt(value?.left_c, 0)} / ${fmt(value?.center_c, 0)} / ${fmt(value?.right_c, 0)} C`;
-const lapTime = (value?: number | null) => {
-  if (value == null || Number.isNaN(value) || value <= 0) return "--";
-  const minutes = Math.floor(value / 60);
-  return `${minutes}:${(value - minutes * 60).toFixed(3).padStart(6, "0")}`;
-};
 
 function InputBar({ label, value, color = "#e6b450" }: { label: string; value?: number; color?: string }) {
   return (
@@ -49,7 +45,7 @@ function Header({ telemetry, connected }: { telemetry: TelemetrySnapshot | null;
         <div><span className="label">Car</span><strong>{text(player?.vehicle_name)}</strong></div>
         <div><span className="label">Driver</span><strong>{driver}</strong></div>
         <div><span className="label">Lap</span><strong>{text(player?.lap_number ?? session?.current_lap)}</strong></div>
-        <div><span className="label">Remaining</span><strong>{fmt(session?.time_remaining, 0, "s")}</strong></div>
+        <div><span className="label">Remaining</span><strong>{formatRaceTime(session?.time_remaining)}</strong></div>
       </div>
     </section>
   );
@@ -85,8 +81,8 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected }
       <section className="card span-3">
         <h2>Lap Timing</h2>
         <div className="metric"><span className="label">Current lap</span><span className="value">--</span></div>
-        <div className="metric"><span className="label">Last lap</span><span className="value">{lapTime(telemetry?.competitors?.find((c) => c.is_player)?.last_lap_time)}</span></div>
-        <div className="metric"><span className="label">Best lap</span><span className="value">{lapTime(telemetry?.competitors?.find((c) => c.is_player)?.best_lap_time)}</span></div>
+        <div className="metric"><span className="label">Last lap</span><span className="value">{formatRaceTime(telemetry?.competitors?.find((c) => c.is_player)?.last_lap_time)}</span></div>
+        <div className="metric"><span className="label">Best lap</span><span className="value">{formatRaceTime(telemetry?.competitors?.find((c) => c.is_player)?.best_lap_time)}</span></div>
         <div className="row"><span className="subvalue">Delta best --</span><span className="subvalue">S1/S2/S3 --</span></div>
         {invalid && <span className="badge red">Lap invalidated</span>}
         {player?.track_limits_steps != null && <span className="badge amber">Track limits {player.track_limits_steps}</span>}

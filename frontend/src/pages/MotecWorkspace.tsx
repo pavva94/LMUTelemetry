@@ -14,11 +14,12 @@ import {
 } from "recharts";
 import { api } from "../api/client";
 import { channelByName, numeric } from "../lib/motecCsv";
+import { formatRaceTime } from "../lib/timeFormat";
 import type { ChannelDefinition, MotecSample, MotecSession } from "../types/motec";
 
 type WorksheetKey =
   | "import" | "laps" | "compare" | "driver" | "tyre-temp" | "tyre-pressure" | "brakes" | "ride-height"
-  | "g-force" | "map" | "histograms" | "xy" | "powertrain" | "wheel-speeds" | "environment" | "speed-delta" | "inputs";
+  | "g-force" | "map" | "histograms" | "xy" | "powertrain" | "fuel-strategy" | "wheel-speeds" | "environment" | "speed-delta" | "inputs";
 
 const worksheets: Array<[WorksheetKey, string]> = [
   ["import", "CSV Import"],
@@ -34,6 +35,7 @@ const worksheets: Array<[WorksheetKey, string]> = [
   ["histograms", "Histograms"],
   ["xy", "X-Y Plotter"],
   ["powertrain", "Powertrain"],
+  ["fuel-strategy", "Fuel Strategy"],
   ["wheel-speeds", "Wheel Speeds"],
   ["environment", "Environment"],
   ["speed-delta", "Speed / Delta"],
@@ -42,6 +44,13 @@ const worksheets: Array<[WorksheetKey, string]> = [
 
 const colors = ["#e6b450", "#6dd6ff", "#ff6961", "#91e48f", "#c7a8ff", "#ff8c69", "#ff7da7"];
 const fmt = (value: number | null | undefined, digits = 1) => value == null || Number.isNaN(value) ? "--" : value.toFixed(digits);
+const timeValue = (value: number | null | undefined) => formatRaceTime(value);
+const isTimeChannel = (name: string) => ["Time", "Session Elapsed Time", "Lap-relative time", "Delta Best", "Realtime Loss"].includes(name) || name.toLowerCase().includes("time");
+const displayChannelValue = (sample: MotecSample, channel: string, session: MotecSession | null) => {
+  const value = numeric(sample, channel);
+  if (isTimeChannel(channel)) return timeValue(value);
+  return `${fmt(value, channelByName(session, channel)?.defaultPrecision ?? 1)} ${channelByName(session, channel)?.unit || ""}`.trim();
+};
 
 function metric(samples: MotecSample[], channel: string) {
   const values = samples.map((sample) => numeric(sample, channel)).filter((value): value is number => value != null);
@@ -64,12 +73,12 @@ function useMotecSamples(session: MotecSession | null, lap: string, channels: st
   const [samples, setSamples] = useState<MotecSample[]>([]);
   const key = channels.join(",");
   useEffect(() => {
-    if (!session || !lap || channels.length === 0) {
+    if (!session || (!lap && lap !== "__all__") || channels.length === 0) {
       setSamples([]);
       return;
     }
     let cancelled = false;
-    void api.motecSamples(session.id, channels, lap, maxPoints).then((payload) => {
+    void api.motecSamples(session.id, channels, lap === "__all__" ? undefined : lap, maxPoints).then((payload) => {
       if (!cancelled) setSamples(payload.samples);
     }).catch(() => {
       if (!cancelled) setSamples([]);
@@ -129,9 +138,13 @@ function ChartBlock({ session, title, channels, lapA, lapB, xKey = "Lap-relative
       <ResponsiveContainer width="100%" height={height}>
         <LineChart data={chartData} onMouseMove={(state) => state && typeof state.activeTooltipIndex === "number" && setCursor((state.activeTooltipIndex / Math.max(chartData.length - 1, 1)) * 100)}>
           <CartesianGrid stroke="#27313a" />
-          <XAxis dataKey="x" stroke="#8896a3" />
+          <XAxis dataKey="x" stroke="#8896a3" tickFormatter={(value) => isTimeChannel(xKey) ? timeValue(Number(value)) : String(value)} />
           <YAxis stroke="#8896a3" />
-          <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} />
+          <Tooltip
+            contentStyle={{ background: "#141a20", border: "1px solid #27313a" }}
+            labelFormatter={(value) => isTimeChannel(xKey) ? timeValue(Number(value)) : String(value)}
+            formatter={(value, name) => isTimeChannel(String(name).replace(" B", "")) ? timeValue(Number(value)) : value}
+          />
           {channels.map((channel, index) => <Line key={channel} dataKey={channel} stroke={colors[index % colors.length]} dot={false} connectNulls />)}
           {lapB && channels.map((channel, index) => <Line key={`${channel} B`} dataKey={`${channel} B`} stroke={colors[index % colors.length]} strokeDasharray="4 4" dot={false} connectNulls />)}
         </LineChart>
@@ -146,7 +159,7 @@ function CursorValues({ session, lapA, channels, cursor }: { session: MotecSessi
     <section className="card span-12">
       <h2>Cursor Values</h2>
       <div className="motec-value-grid">
-        {channels.map((channel) => <div key={channel}><span className="label">{channel}</span><strong>{String(valueAt(samples, channel, cursor) ?? "--")}</strong></div>)}
+        {channels.map((channel) => <div key={channel}><span className="label">{channel}</span><strong>{displayChannelValue({ [channel]: valueAt(samples, channel, cursor) }, channel, session)}</strong></div>)}
       </div>
     </section>
   );
@@ -215,7 +228,7 @@ function ImportPage({ onImported }: { onImported: (session: MotecSession, openAn
             <div><span className="label">Channels</span><strong>{preview.channels.length}</strong></div>
             <div><span className="label">Samples</span><strong>{preview.samples.length}</strong></div>
             <div><span className="label">Laps</span><strong>{preview.laps.length}</strong></div>
-            <div><span className="label">Session time</span><strong>{fmt(preview.minSessionTime, 2)} - {fmt(preview.maxSessionTime, 2)} s</strong></div>
+            <div><span className="label">Session time</span><strong>{timeValue(preview.minSessionTime)} - {timeValue(preview.maxSessionTime)}</strong></div>
           </div>
         ) : <Empty message="Choose a two-header-row telemetry CSV." />}
         {preview?.warnings.map((warning) => <p className="motec-warning" key={warning}>{warning}</p>)}
@@ -243,8 +256,144 @@ function LapBrowser({ session, setLapA, setLapB }: { session: MotecSession | nul
   if (!session) return <div className="page"><section className="card"><Empty /></section></div>;
   return (
     <div className="page grid">
-      <section className="card span-12"><h2>Lap Browser</h2><div className="table-wrap"><table><thead><tr><th>Lap</th><th>Start</th><th>End</th><th>Duration</th><th>Max Speed</th><th>Min Corner</th><th>Max RPM</th><th>Fuel Start</th><th>Fuel End</th><th>Select</th></tr></thead><tbody>{session.laps.map((lap) => <tr key={lap.lapNumber}><td>{lap.lapNumber}</td><td>{fmt(lap.startTime, 3)}</td><td>{fmt(lap.endTime, 3)}</td><td>{fmt(lap.duration, 3)}</td><td>{fmt(lap.maxSpeed)}</td><td>{fmt(lap.minCornerSpeed)}</td><td>{fmt(lap.maxRpm, 0)}</td><td>{fmt(lap.fuelStart)}</td><td>{fmt(lap.fuelEnd)}</td><td><button onClick={() => setLapA(lap.lapNumber)}>Primary</button><button onClick={() => setLapB(lap.lapNumber)}>Compare</button></td></tr>)}</tbody></table></div></section>
+      <section className="card span-12"><h2>Lap Browser</h2><div className="table-wrap"><table><thead><tr><th>Lap</th><th>Start</th><th>End</th><th>Duration</th><th>Max Speed</th><th>Min Corner</th><th>Max RPM</th><th>Fuel Start</th><th>Fuel End</th><th>Select</th></tr></thead><tbody>{session.laps.map((lap) => <tr key={lap.lapNumber}><td>{lap.lapNumber}</td><td>{timeValue(lap.startTime)}</td><td>{timeValue(lap.endTime)}</td><td>{timeValue(lap.duration)}</td><td>{fmt(lap.maxSpeed)}</td><td>{fmt(lap.minCornerSpeed)}</td><td>{fmt(lap.maxRpm, 0)}</td><td>{fmt(lap.fuelStart)}</td><td>{fmt(lap.fuelEnd)}</td><td><button onClick={() => setLapA(lap.lapNumber)}>Primary</button><button onClick={() => setLapB(lap.lapNumber)}>Compare</button></td></tr>)}</tbody></table></div></section>
       <section className="card span-12"><h2>Registry</h2><ChannelRegistry channels={session.channels} /></section>
+    </div>
+  );
+}
+
+type FuelLapRow = {
+  lapNumber: string;
+  stint: number;
+  startTime: number | null;
+  duration: number | null;
+  fuelStart: number | null;
+  fuelEnd: number | null;
+  fuelUsed: number | null;
+  pitStop: boolean;
+  fuelAdded: number | null;
+};
+
+function buildFuelLapRows(session: MotecSession) {
+  let stint = 1;
+  let previousFuelEnd: number | null = null;
+  return session.laps.map((lap) => {
+    const refillFromPrevious = previousFuelEnd != null && lap.fuelStart != null ? lap.fuelStart - previousFuelEnd : null;
+    const refillInsideLap = lap.fuelStart != null && lap.fuelEnd != null ? lap.fuelEnd - lap.fuelStart : null;
+    const fuelAdded = Math.max(refillFromPrevious ?? 0, refillInsideLap ?? 0);
+    const pitStop = fuelAdded > 2;
+    if (pitStop) stint += 1;
+    const fuelUsed = lap.fuelStart != null && lap.fuelEnd != null && lap.fuelEnd <= lap.fuelStart ? lap.fuelStart - lap.fuelEnd : null;
+    previousFuelEnd = lap.fuelEnd ?? previousFuelEnd;
+    return {
+      lapNumber: lap.lapNumber,
+      stint,
+      startTime: lap.startTime,
+      duration: lap.duration,
+      fuelStart: lap.fuelStart,
+      fuelEnd: lap.fuelEnd,
+      fuelUsed,
+      pitStop,
+      fuelAdded: pitStop ? fuelAdded : null,
+    };
+  });
+}
+
+function FuelStrategyWorksheet({ session, lapA, lapB, setLapA, setLapB }: { session: MotecSession; lapA: string; lapB: string; setLapA: (lap: string) => void; setLapB: (lap: string) => void }) {
+  const samples = useMotecSamples(session, "__all__", ["Fuel Level", "Session Elapsed Time", "Lap Number"], 8000);
+  const rows = useMemo(() => buildFuelLapRows(session), [session]);
+  const validUsage = rows.map((row) => row.fuelUsed).filter((value): value is number => value != null && value >= 0);
+  const averageFuel = validUsage.reduce((sum, value) => sum + value, 0) / Math.max(validUsage.length, 1);
+  const currentFuel = [...rows].reverse().find((row) => row.fuelEnd != null)?.fuelEnd ?? null;
+  const pitStops = rows.filter((row) => row.pitStop);
+  const chartRows = rows.map((row) => ({
+    lap: row.lapNumber,
+    fuelUsed: row.fuelUsed,
+    fuelStart: row.fuelStart,
+    fuelEnd: row.fuelEnd,
+    fuelAdded: row.fuelAdded,
+  }));
+  const fuelTrace = samples.map((sample, index) => ({
+    index,
+    time: numeric(sample, "Session Elapsed Time") ?? index,
+    fuel: numeric(sample, "Fuel Level"),
+    lap: sample["Lap Number"],
+  }));
+  return (
+    <div className="page grid">
+      <LapSelectors session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />
+      <section className="card span-12">
+        <h2>Fuel Consumption Summary</h2>
+        {!channelByName(session, "Fuel Level") && <div className="motec-warning">Missing channel: Fuel Level</div>}
+        <div className="motec-value-grid">
+          <div><span className="label">Current fuel</span><strong>{fmt(currentFuel, 2)} L</strong></div>
+          <div><span className="label">Average per lap</span><strong>{fmt(averageFuel, 3)} L/lap</strong></div>
+          <div><span className="label">Total fuel used</span><strong>{fmt(validUsage.reduce((sum, value) => sum + value, 0), 2)} L</strong></div>
+          <div><span className="label">Estimated laps remaining</span><strong>{currentFuel != null && averageFuel > 0 ? fmt(currentFuel / averageFuel, 1) : "--"}</strong></div>
+          <div><span className="label">Pit stops detected</span><strong>{pitStops.length}</strong></div>
+          <div><span className="label">Stints detected</span><strong>{Math.max(1, ...rows.map((row) => row.stint))}</strong></div>
+        </div>
+      </section>
+      <section className="card span-8">
+        <h2>Fuel Level Timeline</h2>
+        {fuelTrace.length ? (
+          <ResponsiveContainer width="100%" height={320}>
+            <LineChart data={fuelTrace}>
+              <CartesianGrid stroke="#27313a" />
+              <XAxis dataKey="time" stroke="#8896a3" tickFormatter={(value) => timeValue(Number(value))} />
+              <YAxis stroke="#8896a3" />
+              <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => timeValue(Number(value))} />
+              <Line dataKey="fuel" name="Fuel Level" stroke="#e6b450" dot={false} connectNulls />
+            </LineChart>
+          </ResponsiveContainer>
+        ) : <Empty message="Fuel Level samples are needed for the full-session fuel trace." />}
+      </section>
+      <section className="card span-4">
+        <h2>Pit Stop Strategy</h2>
+        {pitStops.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Pit</th><th>Lap</th><th>Time</th><th>Fuel Added</th></tr></thead>
+              <tbody>{pitStops.map((pit, index) => <tr key={`${pit.lapNumber}-${index}`}><td>{index + 1}</td><td>{pit.lapNumber}</td><td>{timeValue(pit.startTime)}</td><td>{fmt(pit.fuelAdded, 2)} L</td></tr>)}</tbody>
+            </table>
+          </div>
+        ) : <Empty message="No pit stops detected. A stop is inferred when fuel increases by more than 2 L between or within laps." />}
+      </section>
+      <section className="card span-6">
+        <h2>Fuel Used Per Lap</h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={chartRows}>
+            <CartesianGrid stroke="#27313a" />
+            <XAxis dataKey="lap" stroke="#8896a3" />
+            <YAxis stroke="#8896a3" />
+            <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} />
+            <Bar dataKey="fuelUsed" name="Fuel Used" fill="#6dd6ff" />
+            <Bar dataKey="fuelAdded" name="Fuel Added" fill="#91e48f" />
+          </BarChart>
+        </ResponsiveContainer>
+      </section>
+      <section className="card span-6">
+        <h2>Fuel By Lap</h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={chartRows}>
+            <CartesianGrid stroke="#27313a" />
+            <XAxis dataKey="lap" stroke="#8896a3" />
+            <YAxis stroke="#8896a3" />
+            <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} />
+            <Line dataKey="fuelStart" name="Fuel Start" stroke="#e6b450" dot={false} connectNulls />
+            <Line dataKey="fuelEnd" name="Fuel End" stroke="#ff8c69" dot={false} connectNulls />
+          </LineChart>
+        </ResponsiveContainer>
+      </section>
+      <section className="card span-12">
+        <h2>Lap Fuel Table</h2>
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Lap</th><th>Stint</th><th>Start Time</th><th>Duration</th><th>Fuel Start</th><th>Fuel End</th><th>Fuel Used</th><th>Pit Stop</th><th>Fuel Added</th></tr></thead>
+            <tbody>{rows.map((row) => <tr key={row.lapNumber}><td>{row.lapNumber}</td><td>{row.stint}</td><td>{timeValue(row.startTime)}</td><td>{timeValue(row.duration)}</td><td>{fmt(row.fuelStart, 2)} L</td><td>{fmt(row.fuelEnd, 2)} L</td><td>{fmt(row.fuelUsed, 3)} L</td><td>{row.pitStop ? "Yes" : "No"}</td><td>{row.fuelAdded != null ? `${fmt(row.fuelAdded, 2)} L` : "--"}</td></tr>)}</tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }
@@ -278,6 +427,7 @@ function Worksheet({ session, worksheet, lapA, lapB, setLapA, setLapB }: { sessi
   if (worksheet === "histograms") return <HistogramWorksheet session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} channel={histChannel} setChannel={setHistChannel} numericChannels={allNumeric} />;
   if (worksheet === "xy") return <XYWorksheet session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} x={xyX} y={xyY} setX={setXyX} setY={setXyY} numericChannels={allNumeric} />;
   if (worksheet === "powertrain") return stack("Powertrain", [["Engine RPM", ["Engine RPM"]], ["Gear", ["Gear"]], ["Ground Speed", ["Ground Speed"]], ["Temperatures", ["Eng Water Temp", "Eng Oil Temp"]], ["Fuel / Battery", ["Fuel Level", "Battery Charge Level"]]], ["Engine RPM", "Fuel Level", "Battery Charge Level", "Eng Water Temp", "Eng Oil Temp"]);
+  if (worksheet === "fuel-strategy") return <FuelStrategyWorksheet session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />;
   if (worksheet === "wheel-speeds") return stack("Wheel Speeds", [["Wheel Rotation", ["Wheel Rot Speed FL", "Wheel Rot Speed FR", "Wheel Rot Speed RL", "Wheel Rot Speed RR"]], ["Ground Speed", ["Ground Speed"]], ["Inputs", ["Brake Pos", "Throttle Pos"]], ["G Force Long", ["G Force Long"]]]);
   if (worksheet === "environment") return stack("Environment", [["Ambient / Track", ["Ambient Temperature", "Track Temperature"]], ["Ground Speed", ["Ground Speed"]], ["Tyre Pressure", ["Tyre Pressure FL", "Tyre Pressure FR", "Tyre Pressure RL", "Tyre Pressure RR"]], ["Tyre Temps", ["Tyre Temp Avg FL", "Tyre Temp Avg FR", "Tyre Temp Avg RL", "Tyre Temp Avg RR"]]], ["Ambient Temperature", "Track Temperature"]);
   if (worksheet === "speed-delta") return stack("Speed / Delta", [["Ground Speed", ["Ground Speed"]], ["Delta Best", ["Delta Best"]], ["Realtime Loss", ["Realtime Loss"]], ["Straight / Corner", ["Max Straight Speed", "Min Corner Speed"]]], ["Delta Best", "Realtime Loss", "Ground Speed"]);

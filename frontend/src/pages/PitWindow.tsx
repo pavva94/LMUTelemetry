@@ -1,6 +1,7 @@
 import { PitWindowChart } from "../components/PitWindowChart";
 import { StatusBadge } from "../components/StatusBadge";
 import type { StrategyState } from "../types/strategy";
+import { formatRaceGap } from "../lib/timeFormat";
 
 export function PitWindow({ strategy }: { strategy: StrategyState | null }) {
   const pit = strategy?.pit_window;
@@ -23,7 +24,7 @@ export function PitWindow({ strategy }: { strategy: StrategyState | null }) {
       <section className="card span-12">
         <h2>Possible Pit Laps</h2>
         <div className="table-wrap"><table><thead><tr><th>Lap</th><th>Can Pit?</th><th>Fuel Risk</th><th>Tyre Risk</th><th>Projected Rejoin</th><th>Traffic</th><th>Delta</th></tr></thead><tbody>
-          {rows.map((row) => <tr key={row.lap}><td>{row.lap}</td><td>{row.can ? "Yes" : "No"}</td><td>{row.fuel}</td><td>{row.tyre}</td><td>P{row.rejoin}</td><td>{row.traffic}</td><td>{row.delta.toFixed(1)} s</td></tr>)}
+          {rows.map((row) => <tr key={row.lap}><td>{row.lap}</td><td>{row.can ? "Yes" : "No"}</td><td>{row.fuel}</td><td>{row.tyre}</td><td>P{row.rejoin}</td><td>{row.traffic}</td><td>{formatRaceGap(row.delta)}</td></tr>)}
         </tbody></table></div>
       </section>
     </div>
