@@ -1,0 +1,25 @@
+event:
+  race_type: timed
+  race_duration_minutes: 120
+  max_laps: null
+  track_name: auto
+  car_class: auto
+
+strategy:
+  pit_loss_seconds: 28.0
+  pit_stationary_seconds: 12.0
+  safety_car_pit_loss_seconds: 16.0
+  fuel_safety_margin_liters: 2.0
+  fuel_safety_margin_laps: 1.0
+  max_tyre_wear: 0.75
+  minimum_stint_laps: null
+  maximum_driver_time_minutes: null
+
+display:
+  telemetry_update_hz: 5
+  log_update_hz: 1
+  show_ai_panel: true
+  show_competitor_table: true
+
+dev:
+  use_mock_telemetry: true
