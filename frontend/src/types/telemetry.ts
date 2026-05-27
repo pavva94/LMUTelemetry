@@ -1,3 +1,10 @@
+export type TyreTemps = {
+  left_c?: number;
+  center_c?: number;
+  right_c?: number;
+  carcass_c?: number;
+};
+
 export type TyreState = {
   compound_front?: string;
   compound_rear?: string;
@@ -9,6 +16,10 @@ export type TyreState = {
   pressure_fr?: number;
   pressure_rl?: number;
   pressure_rr?: number;
+  temp_fl?: TyreTemps;
+  temp_fr?: TyreTemps;
+  temp_rl?: TyreTemps;
+  temp_rr?: TyreTemps;
   average_wear?: number;
   average_temp_c?: number;
 };
@@ -23,11 +34,24 @@ export type PlayerState = {
   speed_kph?: number;
   gear?: number;
   rpm?: number;
+  max_rpm?: number;
+  engine_torque?: number;
   fuel_liters?: number;
   fuel_capacity_liters?: number;
   throttle?: number;
   brake?: number;
   steering?: number;
+  clutch?: number;
+  speed_limiter?: boolean;
+  abs_active?: boolean;
+  tc_active?: boolean;
+  front_ride_height?: number;
+  rear_ride_height?: number;
+  front_downforce?: number;
+  rear_downforce?: number;
+  drag?: number;
+  track_limits_steps?: number;
+  lap_invalidated?: boolean;
   gap_car_ahead?: number;
   gap_car_behind?: number;
   gap_place_ahead?: number;
@@ -62,11 +86,22 @@ export type CompetitorState = {
   vehicle_class?: string;
   position?: number;
   class_position?: number;
+  current_lap?: number;
+  total_laps?: number;
+  lap_distance?: number;
   best_lap_time?: number;
   last_lap_time?: number;
+  estimated_lap_time?: number;
   pitstops?: number;
+  pit_state?: string;
+  penalties?: number;
+  fuel_fraction?: number;
+  last_pit_lap?: number;
+  current_stint_lap?: number;
   in_pits?: boolean;
   time_behind_next?: number;
+  time_behind_leader?: number;
+  gap_to_player?: number;
   estimated_strategy_group?: string;
   threat_level?: string;
   is_player?: boolean;

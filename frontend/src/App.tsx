@@ -1,9 +1,26 @@
 import { useEffect, useState } from "react";
 import { api } from "./api/client";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Layout, type PageKey } from "./components/Layout";
 import { Competitors } from "./pages/Competitors";
 import { LiveDashboard } from "./pages/LiveDashboard";
+import { MotecWorkspace } from "./pages/MotecWorkspace";
 import { PitWindow } from "./pages/PitWindow";
+import {
+  CircleMap,
+  Driving,
+  FieldSpread,
+  LapCompare,
+  OneLapTiming,
+  OpponentStats,
+  RaceControl,
+  RaceHistory,
+  RaceInfo,
+  SettingsPage,
+  StintData,
+  TrackMap,
+  XYPlotter,
+} from "./pages/RaceEngineeringPages";
 import { SessionReview } from "./pages/SessionReview";
 import { StrategyPlanner } from "./pages/StrategyPlanner";
 import { useStrategySocket } from "./hooks/useStrategySocket";
@@ -22,11 +39,27 @@ export default function App() {
   const currentCompetitors = telemetry?.competitors?.length ? telemetry.competitors : competitors;
   return (
     <Layout page={page} setPage={setPage} connected={telemetryConnected || strategyConnected}>
-      {page === "live" && <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} />}
-      {page === "planner" && <StrategyPlanner strategy={strategy} />}
-      {page === "pit" && <PitWindow strategy={strategy} />}
-      {page === "competitors" && <Competitors competitors={currentCompetitors} />}
-      {page === "review" && <SessionReview />}
+      <ErrorBoundary key={page}>
+        {page === "live" && <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} />}
+        {page === "motec" && <MotecWorkspace />}
+        {page === "race-info" && <RaceInfo telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "driving" && <Driving telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "track-map" && <TrackMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "circle-map" && <CircleMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "lap-compare" && <LapCompare telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "one-lap" && <OneLapTiming telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "field-spread" && <FieldSpread telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "race-history" && <RaceHistory telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "xy-plotter" && <XYPlotter telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "stint-data" && <StintData telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "opponent-stats" && <OpponentStats telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "race-control" && <RaceControl telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "settings" && <SettingsPage telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
+        {page === "planner" && <StrategyPlanner strategy={strategy} />}
+        {page === "pit" && <PitWindow strategy={strategy} />}
+        {page === "competitors" && <Competitors competitors={currentCompetitors} />}
+        {page === "review" && <SessionReview />}
+      </ErrorBoundary>
     </Layout>
   );
 }

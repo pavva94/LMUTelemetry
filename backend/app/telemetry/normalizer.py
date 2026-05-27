@@ -23,9 +23,9 @@ def kelvin_to_celsius(value: float | None) -> float | None:
 
 def vector_speed_kph(vector: Any) -> float | None:
     try:
-        x = float(getattr(vector, "x", vector[0]))
-        y = float(getattr(vector, "y", vector[1]))
-        z = float(getattr(vector, "z", vector[2]))
+        x = float(getattr(vector, "x") if hasattr(vector, "x") else vector[0])
+        y = float(getattr(vector, "y") if hasattr(vector, "y") else vector[1])
+        z = float(getattr(vector, "z") if hasattr(vector, "z") else vector[2])
     except Exception:
         return None
     return sqrt(x * x + y * y + z * z) * 3.6
