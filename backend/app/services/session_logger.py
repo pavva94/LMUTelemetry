@@ -17,6 +17,10 @@ class SessionLogger:
         self._last_log = 0.0
         self._last_rec_type: str | None = None
 
+    def reset(self) -> None:
+        self._last_log = 0.0
+        self._last_rec_type = None
+
     def log(self, session_id: str, snapshot: TelemetrySnapshot, recommendation: StrategyRecommendation) -> None:
         now = time.monotonic()
         if now - self._last_log < self.log_interval:

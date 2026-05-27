@@ -31,6 +31,24 @@ def vector_speed_kph(vector: Any) -> float | None:
     return sqrt(x * x + y * y + z * z) * 3.6
 
 
+def session_type_name(value: Any) -> str:
+    names = {
+        0: "Test Day",
+        1: "Practice",
+        2: "Practice 2",
+        3: "Practice 3",
+        4: "Practice 4",
+        5: "Qualifying",
+        6: "Warmup",
+        7: "Race",
+    }
+    try:
+        numeric = int(value)
+        return names.get(numeric, str(value))
+    except Exception:
+        return str(value or "Unknown")
+
+
 def attr(obj: Any, *names: str, default: Any = None) -> Any:
     for name in names:
         if hasattr(obj, name):
@@ -64,7 +82,7 @@ def normalize_lmu_snapshot(raw: Any) -> TelemetrySnapshot:
     player = _normalize_player(player_raw, player_telemetry)
     session = SessionState(
         track_name=decode_c_string(attr(scoring, "mTrackName", default="")),
-        session_type=str(attr(scoring, "mSession", default="Race")),
+        session_type=session_type_name(attr(scoring, "mSession", default="Race")),
         game_phase=str(attr(scoring, "mGamePhase", default="unknown")),
         current_time=safe_float(attr(scoring, "mCurrentET", default=None)),
         end_time=safe_float(attr(scoring, "mEndET", default=None)),
@@ -96,6 +114,10 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
     if vehicle is None:
         return None
     tyres = _normalize_tyres(vehicle, telemetry)
+    wheels = list(attr(telemetry, "mWheels", default=[]) or [])
+    def wheel_value(index: int, name: str) -> float | None:
+        return safe_float(attr(wheels[index], name, default=None)) if index < len(wheels) else None
+
     return PlayerState(
         vehicle_id=attr(vehicle, "mID", "mVehicleID", default=0),
         vehicle_name=decode_c_string(attr(vehicle, "mVehicleName", default="")),
@@ -112,6 +134,29 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         throttle=safe_float(attr(telemetry, "mUnfilteredThrottle", "mThrottle", default=None)),
         brake=safe_float(attr(telemetry, "mUnfilteredBrake", "mBrake", default=None)),
         steering=safe_float(attr(telemetry, "mUnfilteredSteering", "mSteering", default=None)),
+        clutch=safe_float(attr(telemetry, "mUnfilteredClutch", "mClutch", default=None)),
+        speed_limiter=bool(attr(telemetry, "mSpeedLimiter", default=False)),
+        brake_temp_fl=wheel_value(0, "mBrakeTemp"),
+        brake_temp_fr=wheel_value(1, "mBrakeTemp"),
+        brake_temp_rl=wheel_value(2, "mBrakeTemp"),
+        brake_temp_rr=wheel_value(3, "mBrakeTemp"),
+        brake_pressure_fl=wheel_value(0, "mBrakePressure"),
+        brake_pressure_fr=wheel_value(1, "mBrakePressure"),
+        brake_pressure_rl=wheel_value(2, "mBrakePressure"),
+        brake_pressure_rr=wheel_value(3, "mBrakePressure"),
+        ride_height_fl=wheel_value(0, "mRideHeight"),
+        ride_height_fr=wheel_value(1, "mRideHeight"),
+        ride_height_rl=wheel_value(2, "mRideHeight"),
+        ride_height_rr=wheel_value(3, "mRideHeight"),
+        suspension_deflection_fl=wheel_value(0, "mSuspensionDeflection"),
+        suspension_deflection_fr=wheel_value(1, "mSuspensionDeflection"),
+        suspension_deflection_rl=wheel_value(2, "mSuspensionDeflection"),
+        suspension_deflection_rr=wheel_value(3, "mSuspensionDeflection"),
+        front_ride_height=safe_float(attr(telemetry, "mFrontRideHeight", default=None)),
+        rear_ride_height=safe_float(attr(telemetry, "mRearRideHeight", default=None)),
+        front_downforce=safe_float(attr(telemetry, "mFrontDownforce", default=None)),
+        rear_downforce=safe_float(attr(telemetry, "mRearDownforce", default=None)),
+        drag=safe_float(attr(telemetry, "mDrag", default=None)),
         track_limits_steps=attr(vehicle, "mCutTrackWarnings", default=None),
         lap_invalidated=bool(attr(vehicle, "mLapInvalidated", default=False)),
         gap_car_ahead=safe_float(attr(vehicle, "mTimeBehindNext", default=None)),
@@ -124,25 +169,46 @@ def _normalize_tyres(vehicle: Any, telemetry: Any) -> TyreState:
     wear = list(attr(telemetry, "mWear", default=[]) or [])
     temps = list(attr(telemetry, "mTireTemp", "mTyreTemp", default=[]) or [])
     pressures = list(attr(telemetry, "mPressure", default=[]) or [])
+    wheels = list(attr(telemetry, "mWheels", default=[]) or [])
     def item(values: list, index: int) -> float | None:
         return safe_float(values[index]) if index < len(values) else None
-    temp_values = [kelvin_to_celsius(item(temps, i)) for i in range(4)]
+    def wheel_value(index: int, name: str) -> float | None:
+        return safe_float(attr(wheels[index], name, default=None)) if index < len(wheels) else None
+    def wheel_array(index: int, name: str) -> list[float | None]:
+        raw = attr(wheels[index], name, default=[]) if index < len(wheels) else []
+        return [kelvin_to_celsius(safe_float(value)) for value in list(raw or [])[:3]]
+    def wear_value(index: int) -> float | None:
+        return item(wear, index) if wear else wheel_value(index, "mWear")
+    def pressure_value(index: int) -> float | None:
+        return item(pressures, index) if pressures else wheel_value(index, "mPressure")
+    def temp_value(index: int) -> TyreTemps:
+        if temps:
+            return TyreTemps(center_c=kelvin_to_celsius(item(temps, index)))
+        inner = wheel_array(index, "mTireInnerLayerTemperature")
+        carcass = kelvin_to_celsius(wheel_value(index, "mTireCarcassTemperature"))
+        return TyreTemps(left_c=inner[0] if len(inner) > 0 else None, center_c=inner[1] if len(inner) > 1 else None, right_c=inner[2] if len(inner) > 2 else None, carcass_c=carcass)
+    temp_states = [temp_value(i) for i in range(4)]
+    temp_values = [state.center_c if state.center_c is not None else state.carcass_c for state in temp_states]
     return TyreState(
         compound_front=decode_c_string(attr(vehicle, "mFrontTireCompoundName", default="")),
         compound_rear=decode_c_string(attr(vehicle, "mRearTireCompoundName", default="")),
-        wear_fl=item(wear, 0),
-        wear_fr=item(wear, 1),
-        wear_rl=item(wear, 2),
-        wear_rr=item(wear, 3),
-        pressure_fl=item(pressures, 0),
-        pressure_fr=item(pressures, 1),
-        pressure_rl=item(pressures, 2),
-        pressure_rr=item(pressures, 3),
-        temp_fl=TyreTemps(center_c=temp_values[0]),
-        temp_fr=TyreTemps(center_c=temp_values[1]),
-        temp_rl=TyreTemps(center_c=temp_values[2]),
-        temp_rr=TyreTemps(center_c=temp_values[3]),
-        average_wear=average([item(wear, i) for i in range(4)]),
+        wear_fl=wear_value(0),
+        wear_fr=wear_value(1),
+        wear_rl=wear_value(2),
+        wear_rr=wear_value(3),
+        pressure_fl=pressure_value(0),
+        pressure_fr=pressure_value(1),
+        pressure_rl=pressure_value(2),
+        pressure_rr=pressure_value(3),
+        load_fl=wheel_value(0, "mTireLoad"),
+        load_fr=wheel_value(1, "mTireLoad"),
+        load_rl=wheel_value(2, "mTireLoad"),
+        load_rr=wheel_value(3, "mTireLoad"),
+        temp_fl=temp_states[0],
+        temp_fr=temp_states[1],
+        temp_rl=temp_states[2],
+        temp_rr=temp_states[3],
+        average_wear=average([wear_value(i) for i in range(4)]),
         average_temp_c=average(temp_values),
     )
 

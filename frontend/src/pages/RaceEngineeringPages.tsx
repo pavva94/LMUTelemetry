@@ -82,8 +82,28 @@ const sampleWithLive = (review: SessionReview | null, telemetry: TelemetrySnapsh
       brake: player.brake,
       steering: player.steering,
       fuel_liters: player.fuel_liters,
+      brake_temp_fl: player.brake_temp_fl,
+      brake_temp_fr: player.brake_temp_fr,
+      brake_temp_rl: player.brake_temp_rl,
+      brake_temp_rr: player.brake_temp_rr,
+      brake_pressure_fl: player.brake_pressure_fl,
+      brake_pressure_fr: player.brake_pressure_fr,
+      brake_pressure_rl: player.brake_pressure_rl,
+      brake_pressure_rr: player.brake_pressure_rr,
+      ride_height_fl: player.ride_height_fl,
+      ride_height_fr: player.ride_height_fr,
+      ride_height_rl: player.ride_height_rl,
+      ride_height_rr: player.ride_height_rr,
+      front_ride_height: player.front_ride_height,
+      rear_ride_height: player.rear_ride_height,
       tyre_wear_fl: player.tyre_state?.wear_fl,
       tyre_wear_fr: player.tyre_state?.wear_fr,
+      tyre_wear_rl: player.tyre_state?.wear_rl,
+      tyre_wear_rr: player.tyre_state?.wear_rr,
+      tyre_load_fl: player.tyre_state?.load_fl,
+      tyre_load_fr: player.tyre_state?.load_fr,
+      tyre_load_rl: player.tyre_state?.load_rl,
+      tyre_load_rr: player.tyre_state?.load_rr,
       timestamp: telemetry?.timestamp,
     },
   ];
@@ -91,6 +111,14 @@ const sampleWithLive = (review: SessionReview | null, telemetry: TelemetrySnapsh
 const maxField = (rows: Field[], key: string) => {
   const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
   return values.length ? Math.max(...values) : null;
+};
+const minField = (rows: Field[], key: string) => {
+  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  return values.length ? Math.min(...values) : null;
+};
+const avgField = (rows: Field[], key: string) => {
+  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 };
 const isRaceTimeField = (key: string) => key.includes("time") || key.includes("gap");
 
@@ -180,7 +208,7 @@ function FourCornerTyres({ tyres, dense = false }: { tyres?: TyreState; dense?: 
               <span>Inner --</span>
               <span>Middle --</span>
               <span>Outer --</span>
-              <span>Load --</span>
+              <span>Load {fmt(tyres?.[`load_${key}` as keyof TyreState] as number | undefined, 0, " N")}</span>
             </>
           )}
         </div>
@@ -189,15 +217,15 @@ function FourCornerTyres({ tyres, dense = false }: { tyres?: TyreState; dense?: 
   );
 }
 
-function BrakeGrid({ dense = false }: { dense?: boolean }) {
+function BrakeGrid({ player, dense = false }: { player?: PlayerState; dense?: boolean }) {
   return (
     <div className="corner-grid">
-      {wheels.map(([label]) => (
+      {wheels.map(([label, key]) => (
         <div className="corner-cell" key={label}>
           <strong>{label}</strong>
-          <span>Temp --</span>
-          <span>Pressure --</span>
-          {dense && <span>Status not available</span>}
+          <span>Temp {fmt(player?.[`brake_temp_${key}` as keyof PlayerState] as number | undefined, 0, " C")}</span>
+          <span>Pressure {fmt(player?.[`brake_pressure_${key}` as keyof PlayerState] as number | undefined, 2)}</span>
+          {dense && <span>Status {(player?.[`brake_temp_${key}` as keyof PlayerState] as number | undefined) ? "Live" : "Not exposed"}</span>}
         </div>
       ))}
     </div>
@@ -279,8 +307,87 @@ function lastSamples(review: SessionReview | null, limit = 40) {
 }
 
 function sampleLapRows(review: SessionReview | null) {
-  const laps = review?.laps?.length ? review.laps : review?.telemetry_samples || [];
+  const laps = review?.laps?.length ? review.laps : [];
   return (laps as Field[]).slice(-12);
+}
+
+function numericSampleFields(samples: Field[]) {
+  const preferred = [
+    "game_time",
+    "lap_number",
+    "speed_kph",
+    "gear",
+    "rpm",
+    "fuel_liters",
+    "throttle",
+    "brake",
+    "steering",
+    "brake_temp_fl",
+    "brake_temp_fr",
+    "brake_temp_rl",
+    "brake_temp_rr",
+    "brake_pressure_fl",
+    "brake_pressure_fr",
+    "brake_pressure_rl",
+    "brake_pressure_rr",
+    "tyre_wear_fl",
+    "tyre_wear_fr",
+    "tyre_wear_rl",
+    "tyre_wear_rr",
+    "tyre_load_fl",
+    "tyre_load_fr",
+    "tyre_load_rl",
+    "tyre_load_rr",
+    "ride_height_fl",
+    "ride_height_fr",
+    "ride_height_rl",
+    "ride_height_rr",
+    "tyre_temp_fl",
+    "tyre_temp_fr",
+    "tyre_temp_rl",
+    "tyre_temp_rr",
+    "track_temp",
+    "ambient_temp",
+    "rain",
+    "wetness",
+  ];
+  const discovered = new Set<string>();
+  samples.forEach((sample) => {
+    Object.entries(sample).forEach(([key, value]) => {
+      if (typeof value === "number" && Number.isFinite(value)) discovered.add(key);
+    });
+  });
+  return [...preferred.filter((key) => discovered.has(key)), ...[...discovered].filter((key) => !preferred.includes(key)).sort()];
+}
+
+function buildStints(laps: Field[]) {
+  const stints: Array<{ number: number; rows: Field[]; summary: Field }> = [];
+  let current: Field[] = [];
+  laps.forEach((lap) => {
+    if (current.length && Number(lap.fuel_added || 0) > 2) {
+      stints.push({ number: stints.length + 1, rows: current, summary: {} });
+      current = [];
+    }
+    current.push(lap);
+  });
+  if (current.length) stints.push({ number: stints.length + 1, rows: current, summary: {} });
+  return stints.map((stint) => {
+    const rows = stint.rows;
+    const fuelUsed = rows.map((row) => Number(row.fuel_used)).filter(Number.isFinite).reduce((sum, value) => sum + value, 0);
+    const summary = {
+      stint_number: stint.number,
+      start_lap: rows[0]?.lap_number,
+      end_lap: rows[rows.length - 1]?.lap_number,
+      lap_count: rows.length,
+      fastest_lap: minField(rows, "lap_time"),
+      average_lap: avgField(rows, "lap_time"),
+      top_speed: maxField(rows, "top_speed"),
+      fuel_used: fuelUsed || null,
+      fuel_per_lap: fuelUsed && rows.length ? fuelUsed / rows.length : null,
+      tyre_wear_delta: (Number(rows[rows.length - 1]?.tyre_wear_end) || 0) - (Number(rows[0]?.tyre_wear_start) || 0),
+    };
+    return { ...stint, summary };
+  });
 }
 
 export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
@@ -289,6 +396,7 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
   const fuel = strategy?.fuel;
   const tyres = telemetry?.player?.tyre_state;
   const rows = sampleWithLive(review, telemetry, 80);
+  const lapRows = sampleLapRows(review);
   const playerCar = (telemetry?.competitors || []).find((c) => c.is_player);
   return (
     <div className="page grid">
@@ -321,7 +429,7 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
       </section>
       <section className="card span-6">
         <h2>Lap Pace Trend</h2>
-        <BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["best_lap_time", "#6dd6ff"], ["last_lap_time", "#ff8c69"]]} />
+        <BasicLineChart data={lapRows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"]]} />
       </section>
       <section className="card span-6">
         <h2>Stint Summary</h2>
@@ -331,9 +439,9 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
           <Metric label="Best lap" value={lapTime(playerCar?.best_lap_time)} />
           <Metric label="Current stint" value={text(strategy?.stint?.current_stint_lap)} />
           <Metric label="Top speed" value={fmt(maxField(rows, "speed_kph"), 0, " km/h")} />
-          <Metric label="Samples" value={rows.length} />
+          <Metric label="Saved laps" value={lapRows.length} />
         </div>
-        <p className="muted">Stint table will fill as pit events are recorded. Current data is summarized from live telemetry.</p>
+        <p className="muted">Lap pace is derived from the recorded live session samples. Use Session Review to open older saved sessions.</p>
       </section>
     </div>
   );
@@ -365,9 +473,11 @@ export function Driving({ telemetry }: EngineeringProps) {
       <section className="card span-6">
         <h2>Suspension And Aero</h2>
         <div className="header-grid">
-          <Metric label="Front ride" value={fmt(player?.front_ride_height)} />
-          <Metric label="Rear ride" value={fmt(player?.rear_ride_height)} />
-          <Metric label="Deflection" value="--" />
+          <Metric label="Front ride" value={fmt(player?.front_ride_height ?? avgField([{ value: player?.ride_height_fl }, { value: player?.ride_height_fr }], "value"), 3, " m")} />
+          <Metric label="Rear ride" value={fmt(player?.rear_ride_height ?? avgField([{ value: player?.ride_height_rl }, { value: player?.ride_height_rr }], "value"), 3, " m")} />
+          <Metric label="FL / FR ride" value={`${fmt(player?.ride_height_fl, 3, " m")} / ${fmt(player?.ride_height_fr, 3, " m")}`} />
+          <Metric label="RL / RR ride" value={`${fmt(player?.ride_height_rl, 3, " m")} / ${fmt(player?.ride_height_rr, 3, " m")}`} />
+          <Metric label="Deflection" value={fmt(player?.suspension_deflection_fl, 3, " m")} />
           <Metric label="Camber" value="--" />
           <Metric label="Front DF" value={fmt(player?.front_downforce, 0)} />
           <Metric label="Rear DF" value={fmt(player?.rear_downforce, 0)} />
@@ -375,7 +485,7 @@ export function Driving({ telemetry }: EngineeringProps) {
         </div>
       </section>
       <section className="card span-6"><h2>Tyre Engineering</h2><FourCornerTyres tyres={player?.tyre_state} dense /></section>
-      <section className="card span-3"><h2>Brake Engineering</h2><BrakeGrid dense /></section>
+      <section className="card span-3"><h2>Brake Engineering</h2><BrakeGrid player={player} dense /></section>
       <section className="card span-3"><h2>Ahead Telemetry</h2><EmptyState detail="Selected-car live inputs are not exposed by the current shared-memory layer." /></section>
     </div>
   );
@@ -597,14 +707,17 @@ export function FieldSpread({ telemetry, competitors }: EngineeringProps) {
 
 export function RaceHistory({ telemetry }: EngineeringProps) {
   const { review, error } = useSessionReview();
-  const samples = sampleWithLive(review, telemetry, 120);
+  const samples = sampleWithLive(review, telemetry, 300);
+  const laps = sampleLapRows(review);
   if (error && !samples.length) return <div className="page"><section className="card"><EmptyState title="No saved sessions" detail="Session history will appear after recording telemetry samples." /></section></div>;
   return (
     <div className="page grid">
-      <section className="card span-6"><h2>Position History</h2><BasicLineChart data={samples} lines={[["position", "#e6b450"]]} /></section>
-      <section className="card span-6"><h2>Lap Time History</h2><BasicLineChart data={sampleLapRows(review)} lines={[["lap_time", "#6dd6ff"], ["last_lap_time", "#ff8c69"]]} /></section>
-      <section className="card span-6"><h2>Gap History</h2><BasicLineChart data={samples} lines={[["gap_car_ahead", "#69d28f"], ["gap_car_behind", "#ff6961"]]} /></section>
-      <section className="card span-6"><h2>Fuel And Tyres</h2><BasicLineChart data={samples} lines={[["fuel_liters", "#e6b450"], ["tyre_wear_fl", "#6dd6ff"], ["tyre_wear_fr", "#ff8c69"]]} /></section>
+      <section className="card span-6"><h2>Lap Time History</h2><BasicLineChart data={laps} lines={[["lap_time", "#6dd6ff"]]} /></section>
+      <section className="card span-6"><h2>Lap Fuel Usage</h2><BasicLineChart data={laps} lines={[["fuel_used", "#e6b450"]]} /></section>
+      <section className="card span-6"><h2>Fuel Over Session</h2><BasicLineChart data={samples} xKey="game_time" lines={[["fuel_liters", "#e6b450"]]} /></section>
+      <section className="card span-6"><h2>Tyre Wear History</h2><BasicLineChart data={samples} xKey="game_time" lines={[["tyre_wear_fl", "#6dd6ff"], ["tyre_wear_fr", "#ff8c69"], ["tyre_wear_rl", "#91e48f"], ["tyre_wear_rr", "#c7a8ff"]]} /></section>
+      <section className="card span-6"><h2>Speed Trace</h2><BasicLineChart data={samples} xKey="game_time" lines={[["speed_kph", "#e6b450"], ["rpm", "#6dd6ff"]]} /></section>
+      <section className="card span-6"><h2>Driver Inputs</h2><BasicLineChart data={samples} xKey="game_time" lines={[["throttle", "#69d28f"], ["brake", "#ff6961"], ["steering", "#c7a8ff"]]} /></section>
       <section className="card span-12"><h2>Event Timeline</h2><EventList review={review} /></section>
     </div>
   );
@@ -619,13 +732,17 @@ function EventList({ review }: { review: SessionReview | null }) {
 export function StintData({ telemetry, strategy }: EngineeringProps) {
   const { review } = useSessionReview();
   const [selectedStint, setSelectedStint] = useState(1);
-  const rows = sampleWithLive(review, telemetry, 120);
+  const laps = sampleLapRows(review);
+  const stints = buildStints((review?.laps || []) as Field[]);
+  const selected = stints.find((stint) => stint.number === selectedStint) || stints[0];
+  const rows = selected?.rows || laps;
+  const summary = selected?.summary || {};
   return (
     <div className="page grid">
-      <section className="card span-12"><h2>Stint Selector</h2><div className="control-row"><button className={selectedStint === 1 ? "active-control" : ""} onClick={() => setSelectedStint(1)}>Stint 1</button><button className={selectedStint === 2 ? "active-control" : ""} onClick={() => setSelectedStint(2)}>Stint 2</button><button>Compare stints</button><span className="muted">Splits use pit events when available, otherwise fuel and pit-state estimates.</span></div></section>
-      <section className="card span-3"><h2>Summary</h2><Metric label="Stint length" value={text(strategy?.stint?.current_stint_lap)} /><Metric label="Fastest lap" value="--" /><Metric label="Average lap" value="--" /><Metric label="Fuel used" value={`${fmt(telemetry?.player?.fuel_liters)} L`} /></section>
+      <section className="card span-12"><h2>Stint Selector</h2><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<button>Compare stints</button><span className="muted">Splits are inferred from fuel increases greater than 2 L.</span></div></section>
+      <section className="card span-3"><h2>Summary</h2><Metric label="Stint length" value={text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Fuel used" value={`${fmt(summary.fuel_used as number ?? telemetry?.player?.fuel_liters)} L`} /></section>
       <section className="card span-3"><h2>Tyres</h2><Metric label="Wear delta" value={pct(strategy?.tyres?.average_wear)} /><Metric label="Deg per lap" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
-      <section className="card span-6"><h2>Stint Comparison</h2><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["fuel_liters", "#6dd6ff"], ["tyre_wear_fl", "#ff8c69"]]} /></section>
+      <section className="card span-6"><h2>Stint Comparison</h2><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
       <section className="card span-12"><h2>Stint Lap Table</h2><LapTable rows={rows} /></section>
     </div>
   );
@@ -633,7 +750,7 @@ export function StintData({ telemetry, strategy }: EngineeringProps) {
 
 function LapTable({ rows }: { rows: Field[] }) {
   if (!rows.length) return <EmptyState />;
-  return <div className="table-wrap"><table><thead><tr><th>Lap</th><th>Lap time</th><th>S1</th><th>S2</th><th>S3</th><th>Fuel</th><th>Tyre wear</th><th>Top speed</th><th>Valid</th><th>Notes</th></tr></thead><tbody>{rows.map((row, index) => <tr key={index}><td>{text(row.lap_number)}</td><td>{lapTime(row.lap_time as number)}</td><td>{lapTime(row.sector_1 as number)}</td><td>{lapTime(row.sector_2 as number)}</td><td>{lapTime(row.sector_3 as number)}</td><td>{fmt(row.fuel_liters as number)}</td><td>{pct(row.tyre_wear_fl as number)}</td><td>{fmt(row.speed_kph as number, 0)}</td><td>{row.valid === false ? "Invalid" : "Valid/unknown"}</td><td>{text(row.event)}</td></tr>)}</tbody></table></div>;
+  return <div className="table-wrap"><table><thead><tr><th>Lap</th><th>Lap time</th><th>Start</th><th>End</th><th>Fuel used</th><th>Tyre wear delta</th><th>Top speed</th><th>Samples</th><th>Valid</th><th>Notes</th></tr></thead><tbody>{rows.map((row, index) => <tr key={index}><td>{text(row.lap_number)}</td><td>{lapTime(row.lap_time as number)}</td><td>{formatRaceTime(row.start_time as number)}</td><td>{formatRaceTime(row.end_time as number)}</td><td>{fmt(row.fuel_used as number, 2, " L")}</td><td>{pct(row.tyre_wear_delta as number)}</td><td>{fmt((row.top_speed ?? row.speed_kph) as number, 0, " km/h")}</td><td>{text(row.sample_count)}</td><td>{row.valid_lap === false ? "Invalid" : "Valid/unknown"}</td><td>{Number(row.fuel_added || 0) > 2 ? `Refuel +${fmt(row.fuel_added as number, 1, " L")}` : text(row.event)}</td></tr>)}</tbody></table></div>;
 }
 
 export function OpponentStats({ competitors }: EngineeringProps) {
@@ -665,15 +782,20 @@ export function XYPlotter({ telemetry }: EngineeringProps) {
   const { review } = useSessionReview();
   const [xKey, setXKey] = useState("lap_number");
   const [yKey, setYKey] = useState("speed_kph");
-  const samples = sampleWithLive(review, telemetry, 160);
+  const samples = sampleWithLive(review, telemetry, 600);
+  const options = numericSampleFields(samples);
   const stats = useMemo(() => {
     const values = samples.map((sample) => Number(sample[yKey])).filter((value) => Number.isFinite(value));
     const avg = values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
     const variance = values.reduce((sum, value) => sum + (value - avg) ** 2, 0) / Math.max(values.length, 1);
     return { min: Math.min(...values), max: Math.max(...values), avg, sd: Math.sqrt(variance), count: values.length };
   }, [samples, yKey]);
-  const options = ["lap_number", "speed_kph", "rpm", "throttle", "brake", "steering", "fuel_liters", "tyre_wear_fl", "tyre_wear_fr"];
+  useEffect(() => {
+    if (options.length && !options.includes(xKey)) setXKey(options[0]);
+    if (options.length && !options.includes(yKey)) setYKey(options.includes("speed_kph") ? "speed_kph" : options[0]);
+  }, [options, xKey, yKey]);
   const presets: Array<[string, string, string]> = [
+    ["Speed vs time", "game_time", "speed_kph"],
     ["Speed vs lap", "lap_number", "speed_kph"],
     ["Brake vs lap", "lap_number", "brake"],
     ["Throttle vs lap", "lap_number", "throttle"],
@@ -684,10 +806,10 @@ export function XYPlotter({ telemetry }: EngineeringProps) {
   ];
   return (
     <div className="page grid">
-      <section className="card span-12"><h2>Data Selectors</h2><div className="input-grid"><select value={xKey} onChange={(e) => setXKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><select value={yKey} onChange={(e) => setYKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><input value="Smoothing off" readOnly /><input value="Compare lap off" readOnly /></div></section>
+      <section className="card span-12"><h2>Data Selectors</h2><div className="input-grid"><select value={xKey} onChange={(e) => setXKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><select value={yKey} onChange={(e) => setYKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><input value={`${options.length} numeric fields available`} readOnly /><input value="Compare lap off" readOnly /></div></section>
       <section className="card span-8"><h2>Plot Area</h2>{samples.length ? <ResponsiveContainer width="100%" height={320}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey={xKey} name={xKey} stroke="#8896a3" /><YAxis dataKey={yKey} name={yKey} stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Scatter data={samples} fill="#e6b450" line /></ScatterChart></ResponsiveContainer> : <EmptyState detail="Choose fields after recorded samples are available." />}</section>
       <section className="card span-4"><h2>Stats</h2><Metric label="Min" value={Number.isFinite(stats.min) ? fmt(stats.min) : "--"} /><Metric label="Max" value={Number.isFinite(stats.max) ? fmt(stats.max) : "--"} /><Metric label="Average" value={fmt(stats.avg)} /><Metric label="Std dev" value={fmt(stats.sd)} /><Metric label="Samples" value={stats.count} /></section>
-      <section className="card span-12"><h2>Preset Plots</h2><div className="control-row">{presets.map(([label, x, y]) => <button key={label} onClick={() => { setXKey(x); setYKey(y); }}>{label}</button>)}</div></section>
+      <section className="card span-12"><h2>Preset Plots</h2><div className="control-row">{presets.filter(([, x, y]) => options.includes(x) && options.includes(y)).map(([label, x, y]) => <button key={label} onClick={() => { setXKey(x); setYKey(y); }}>{label}</button>)}</div></section>
     </div>
   );
 }

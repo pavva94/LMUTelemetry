@@ -1,6 +1,6 @@
 import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
-import type { SessionReview } from "../types/session";
+import type { SavedSession, SessionReview } from "../types/session";
 import type { MotecSession, MotecSample } from "../types/motec";
 
 export const API_BASE = "http://127.0.0.1:8000";
@@ -18,7 +18,14 @@ export const api = {
   strategy: () => getJson<StrategyState>("/api/strategy/current"),
   competitors: () => getJson<CompetitorState[]>("/api/competitors"),
   recommendation: () => getJson<RecommendationPayload>("/api/recommendations/current"),
-  review: () => getJson<SessionReview>("/api/session/review"),
+  sessions: () => getJson<SavedSession[]>("/api/sessions"),
+  review: (limit = 5000) => getJson<SessionReview>(`/api/session/review?limit=${limit}`),
+  reviewSession: (id: string, limit = 5000) => getJson<SessionReview>(`/api/session/review/${encodeURIComponent(id)}?limit=${limit}`),
+  finalizeCurrentSession: async () => {
+    const response = await fetch(`${API_BASE}/api/session/current/finalize`, { method: "POST" });
+    if (!response.ok) throw new Error("session finalize failed");
+    return response.json() as Promise<SavedSession>;
+  },
   updateAssumptions: async (body: Record<string, number>) => {
     const response = await fetch(`${API_BASE}/api/strategy/assumptions`, {
       method: "POST",

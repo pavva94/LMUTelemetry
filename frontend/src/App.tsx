@@ -18,7 +18,6 @@ import {
   RaceInfo,
   SettingsPage,
   StintData,
-  TrackMap,
   XYPlotter,
 } from "./pages/RaceEngineeringPages";
 import { SessionReview } from "./pages/SessionReview";
@@ -44,7 +43,6 @@ export default function App() {
         {page === "motec" && <MotecWorkspace />}
         {page === "race-info" && <RaceInfo telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "driving" && <Driving telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
-        {page === "track-map" && <TrackMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "circle-map" && <CircleMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "lap-compare" && <LapCompare telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "one-lap" && <OneLapTiming telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}

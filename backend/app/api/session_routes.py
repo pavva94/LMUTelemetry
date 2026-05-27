@@ -18,6 +18,24 @@ def current_session(request: Request):
 
 
 @router.get("/session/review")
-def session_review(request: Request):
+def session_review(request: Request, limit: int = 5000):
     service = request.app.state.telemetry_service
-    return service.repository.review(service.session_id)
+    return service.repository.review(service.session_id, sample_limit=limit)
+
+
+@router.get("/session/review/{session_id}")
+def saved_session_review(session_id: str, request: Request, limit: int = 5000):
+    service = request.app.state.telemetry_service
+    return service.repository.review(session_id, sample_limit=limit)
+
+
+@router.get("/sessions")
+def sessions(request: Request):
+    service = request.app.state.telemetry_service
+    return service.repository.list_sessions()
+
+
+@router.post("/session/current/finalize")
+def finalize_current_session(request: Request):
+    service = request.app.state.telemetry_service
+    return service.repository.finalize_session(service.session_id, service.latest_snapshot)

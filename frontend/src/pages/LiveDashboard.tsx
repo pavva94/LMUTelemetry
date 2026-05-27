@@ -112,9 +112,15 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected }
       <section className="card span-3">
         <h2>Brakes</h2>
         <div className="corner-grid">
-          {["FL", "FR", "RL", "RR"].map((wheel) => <div className="corner-cell" key={wheel}><strong>{wheel}</strong><span>Temp --</span><span>Pressure --</span></div>)}
+          {(["fl", "fr", "rl", "rr"] as const).map((wheel) => (
+            <div className="corner-cell" key={wheel}>
+              <strong>{wheel.toUpperCase()}</strong>
+              <span>Temp {fmt(player?.[`brake_temp_${wheel}` as keyof PlayerState] as number | undefined, 0)} C</span>
+              <span>Pressure {fmt(player?.[`brake_pressure_${wheel}` as keyof PlayerState] as number | undefined, 2)}</span>
+            </div>
+          ))}
         </div>
-        <span className="badge blue">Brake data unavailable</span>
+        <span className="badge blue">Shared-memory brake channels</span>
       </section>
       <RecommendationPanel payload={recommendation} />
       <CompetitorTable competitors={(telemetry?.competitors || []).slice(0, 8)} />
