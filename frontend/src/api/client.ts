@@ -6,6 +6,7 @@ import type { ProfileLap, ProfileLapResponse, ProfileSummary } from "../types/pr
 
 export const API_BASE = "";
 export const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
+export const REVIEW_SAMPLE_LIMIT = 1200;
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`);
@@ -20,8 +21,8 @@ export const api = {
   competitors: () => getJson<CompetitorState[]>("/api/competitors"),
   recommendation: () => getJson<RecommendationPayload>("/api/recommendations/current"),
   sessions: () => getJson<SavedSession[]>("/api/sessions"),
-  review: (limit = 5000) => getJson<SessionReview>(`/api/session/review?limit=${limit}`),
-  reviewSession: (id: string, limit = 5000) => getJson<SessionReview>(`/api/session/review/${encodeURIComponent(id)}?limit=${limit}`),
+  review: (limit = REVIEW_SAMPLE_LIMIT) => getJson<SessionReview>(`/api/session/review?limit=${limit}`),
+  reviewSession: (id: string, limit = REVIEW_SAMPLE_LIMIT) => getJson<SessionReview>(`/api/session/review/${encodeURIComponent(id)}?limit=${limit}`),
   sessionDashboard: (id: string) => getJson<SessionDashboard>(`/api/session/review/${encodeURIComponent(id)}/dashboard`),
   finalizeCurrentSession: async () => {
     const response = await fetch(`${API_BASE}/api/session/current/finalize`, { method: "POST" });

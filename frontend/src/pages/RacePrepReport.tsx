@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
+import { chartValueFormatter } from "../lib/telemetryFields";
 import { buildRacePrepReport, type RacePrepReport as RacePrepReportModel, type Wheel } from "../lib/racePrepReport";
 import { formatRaceTime } from "../lib/timeFormat";
 import type { SavedSession, SessionReview } from "../types/session";
@@ -37,7 +38,7 @@ function ReportChart({ report }: { report: RacePrepReportModel }) {
         <CartesianGrid stroke="#27313a" />
         <XAxis dataKey="lap" stroke="#8896a3" />
         <YAxis stroke="#8896a3" />
-        <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} formatter={(value, key) => key === "lap_time" ? formatRaceTime(Number(value)) : fmt(Number(value), 3, " s")} />
+        <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} formatter={chartValueFormatter} />
         <Line dataKey="lap_time" stroke="#6dd6ff" dot={false} />
         <Line dataKey="delta" stroke="#e6b450" dot={false} />
       </LineChart>
@@ -67,7 +68,7 @@ export function RacePrepReport({ strategy }: Props) {
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      const request = selected === "current" ? api.review(5000) : api.reviewSession(selected, 5000);
+      const request = selected === "current" ? api.review() : api.reviewSession(selected);
       request
         .then((data) => {
           if (!cancelled) {
@@ -78,7 +79,12 @@ export function RacePrepReport({ strategy }: Props) {
         .catch((exc) => !cancelled && setStatus(exc instanceof Error ? exc.message : "Could not load report data"));
     };
     load();
-    const id = window.setInterval(load, selected === "current" ? 5000 : 15000);
+    if (selected !== "current") {
+      return () => {
+        cancelled = true;
+      };
+    }
+    const id = window.setInterval(load, 10000);
     return () => {
       cancelled = true;
       window.clearInterval(id);

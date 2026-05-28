@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import json
 import math
 import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.db.database import SessionLocal
-from app.db.models import SessionModel, TelemetrySampleModel
+from app.db.models import LapSummaryModel, SessionModel, TelemetrySampleModel
 from app.db.repository import Repository
 from app.services.motec_repository import DB_PATH as MOTEC_DB_PATH, init_motec_db
 
@@ -78,10 +77,14 @@ class ProfileFilters:
     track: str | None = None
     car: str | None = None
     car_class: str | None = None
+    session: str | None = None
+    layout: str | None = None
+    lap_number: str | None = None
     source: str | None = None
     date_from: str | None = None
     date_to: str | None = None
     valid_only: bool = False
+    valid_status: str | None = None
     tyre_compound: str | None = None
     track_temp_min: float | None = None
     track_temp_max: float | None = None
@@ -89,8 +92,22 @@ class ProfileFilters:
     ambient_temp_max: float | None = None
     fuel_min: float | None = None
     fuel_max: float | None = None
+    fuel_used_min: float | None = None
+    fuel_used_max: float | None = None
     lap_time_min: float | None = None
     lap_time_max: float | None = None
+    tyre_wear_min: float | None = None
+    tyre_wear_max: float | None = None
+    tyre_pressure_min: float | None = None
+    tyre_pressure_max: float | None = None
+    brake_temp_min: float | None = None
+    brake_temp_max: float | None = None
+    oil_temp_min: float | None = None
+    oil_temp_max: float | None = None
+    water_temp_min: float | None = None
+    water_temp_max: float | None = None
+    speed_min: float | None = None
+    speed_max: float | None = None
     search: str | None = None
     sort: str = "date"
     direction: str = "desc"
@@ -102,6 +119,17 @@ class ProfileRepository:
     min_lap_time_ratio = 0.75
     max_lap_time_ratio = 1.80
     min_distance_ratio = 0.75
+    _all_laps_cache_key: tuple[int | None, int, str | None, float | None, float | None] | None = None
+    _all_laps_cache: list[dict] | None = None
+
+    def _all_laps_cache_token(self) -> tuple[int | None, int, str | None, float | None, float | None]:
+        with SessionLocal() as db:
+            latest_live_sample_id = db.scalar(select(func.max(TelemetrySampleModel.id)))
+            live_session_count = db.scalar(select(func.count(SessionModel.id))) or 0
+            latest_session_created = db.scalar(select(func.max(SessionModel.created_at)))
+            latest_session_end = db.scalar(select(func.max(SessionModel.ended_at_game_time)))
+        motec_mtime = MOTEC_DB_PATH.stat().st_mtime if MOTEC_DB_PATH.exists() else None
+        return latest_live_sample_id, int(live_session_count), latest_session_created, latest_session_end, motec_mtime
 
     def _live_laps(self) -> list[dict]:
         repository = Repository()
@@ -118,6 +146,64 @@ class ProfileRepository:
                 for sample in samples:
                     if sample.lap_number is not None:
                         grouped[int(sample.lap_number)].append(sample)
+                stored_laps = db.scalars(
+                    select(LapSummaryModel)
+                    .where(LapSummaryModel.session_id == session.id)
+                    .order_by(LapSummaryModel.lap_number.asc())
+                ).all()
+                if stored_laps:
+                    for lap in stored_laps:
+                        lap_samples = grouped.get(int(lap.lap_number), [])
+                        dict_samples = [_sample_dict(sample) for sample in lap_samples]
+                        distance = _integrate_distance(dict_samples, "game_time", "speed_kph")
+                        speed_values = [sample.speed_kph for sample in lap_samples if sample.speed_kph is not None]
+                        last = lap_samples[-1] if lap_samples else None
+                        rows.append(
+                            {
+                                "id": f"live:{session.id}:{lap.lap_number}",
+                                "source": "live",
+                                "session_id": session.id,
+                                "session_name": session.session_type or "Live session",
+                                "source_file": None,
+                                "date": session.created_at,
+                                "track": session.track_name or "Unknown track",
+                                "layout": session.track_layout or "",
+                                "car": session.vehicle_name or "Unknown car",
+                                "car_class": session.vehicle_class or "Unknown class",
+                                "session_type": repository._session_type_name(session.session_type),
+                                "lap_number": lap.lap_number,
+                                "lap_time": lap.lap_time,
+                                "valid_lap": lap.valid_lap,
+                                "in_pit": lap.in_pit,
+                                "distance_km": distance,
+                                "fuel_start": lap.fuel_start,
+                                "fuel_end": lap.fuel_end,
+                                "fuel_used": lap.fuel_used,
+                                "fuel_added": None,
+                                "tyre_compound": None,
+                                "tyre_wear_fl": last.tyre_wear_fl if last else lap.tyre_wear_end,
+                                "tyre_wear_fr": last.tyre_wear_fr if last else lap.tyre_wear_end,
+                                "tyre_wear_rl": last.tyre_wear_rl if last else lap.tyre_wear_end,
+                                "tyre_wear_rr": last.tyre_wear_rr if last else lap.tyre_wear_end,
+                                "tyre_pressure_fl": last.tyre_pressure_fl if last else None,
+                                "tyre_pressure_fr": last.tyre_pressure_fr if last else None,
+                                "tyre_pressure_rl": last.tyre_pressure_rl if last else None,
+                                "tyre_pressure_rr": last.tyre_pressure_rr if last else None,
+                                "brake_temp_fl": _max([sample.brake_temp_fl for sample in lap_samples]),
+                                "brake_temp_fr": _max([sample.brake_temp_fr for sample in lap_samples]),
+                                "brake_temp_rl": _max([sample.brake_temp_rl for sample in lap_samples]),
+                                "brake_temp_rr": _max([sample.brake_temp_rr for sample in lap_samples]),
+                                "track_temp": _avg([sample.track_temp for sample in lap_samples]),
+                                "ambient_temp": _avg([sample.ambient_temp for sample in lap_samples]),
+                                "engine_oil_temp": _max([sample.engine_oil_temp for sample in lap_samples]),
+                                "engine_water_temp": _max([sample.engine_water_temp for sample in lap_samples]),
+                                "max_speed": max(speed_values) if speed_values else None,
+                                "average_speed": distance / (lap.lap_time / 3600) if distance is not None and lap.lap_time and lap.lap_time > 0 else _avg(speed_values),
+                                "finish_position": session.final_position,
+                                "finish_status": session.classified_status,
+                            }
+                        )
+                    continue
                 built_laps = repository._build_laps(samples)
                 for lap in built_laps:
                     lap_number = int(lap["lap_number"])
@@ -187,21 +273,8 @@ class ProfileRepository:
             for session in sessions:
                 lap_rows = db.execute("select * from motec_laps where session_id = ? order by cast(lap_number as real)", (session["id"],)).fetchall()
                 for lap in lap_rows:
-                    needs_sample_fallback = lap["distance_km"] is None
-                    samples = []
-                    if needs_sample_fallback:
-                        samples = [
-                            json.loads(row["values_json"])
-                            for row in db.execute(
-                                "select values_json from motec_samples where session_id = ? and lap_number = ? order by row_index",
-                                (session["id"], lap["lap_number"]),
-                            )
-                        ]
-                    first = samples[0] if samples else {}
-                    last = samples[-1] if samples else {}
-                    distance = lap["distance_km"] if lap["distance_km"] is not None else _integrate_distance(samples, "Time", "Ground Speed")
+                    distance = lap["distance_km"]
                     duration = _num(lap["duration"])
-                    speed_values = [_num(sample.get("Ground Speed")) for sample in samples]
                     rows.append(
                         {
                             "id": f"csv:{session['id']}:{lap['lap_number']}",
@@ -223,24 +296,24 @@ class ProfileRepository:
                             "fuel_end": lap["fuel_end"],
                             "fuel_used": lap["fuel_start"] - lap["fuel_end"] if lap["fuel_start"] is not None and lap["fuel_end"] is not None and lap["fuel_start"] >= lap["fuel_end"] else None,
                             "tyre_compound": None,
-                            "tyre_wear_fl": lap["tyre_wear_fl"] if lap["tyre_wear_fl"] is not None else last.get("Tyre Wear FL"),
-                            "tyre_wear_fr": lap["tyre_wear_fr"] if lap["tyre_wear_fr"] is not None else last.get("Tyre Wear FR"),
-                            "tyre_wear_rl": lap["tyre_wear_rl"] if lap["tyre_wear_rl"] is not None else last.get("Tyre Wear RL"),
-                            "tyre_wear_rr": lap["tyre_wear_rr"] if lap["tyre_wear_rr"] is not None else last.get("Tyre Wear RR"),
-                            "tyre_pressure_fl": lap["tyre_pressure_fl"] if lap["tyre_pressure_fl"] is not None else last.get("Tyre Pressure FL"),
-                            "tyre_pressure_fr": lap["tyre_pressure_fr"] if lap["tyre_pressure_fr"] is not None else last.get("Tyre Pressure FR"),
-                            "tyre_pressure_rl": lap["tyre_pressure_rl"] if lap["tyre_pressure_rl"] is not None else last.get("Tyre Pressure RL"),
-                            "tyre_pressure_rr": lap["tyre_pressure_rr"] if lap["tyre_pressure_rr"] is not None else last.get("Tyre Pressure RR"),
-                            "brake_temp_fl": lap["brake_temp_fl"] if lap["brake_temp_fl"] is not None else _max([_num(sample.get("Brake Temp FL")) for sample in samples]),
-                            "brake_temp_fr": lap["brake_temp_fr"] if lap["brake_temp_fr"] is not None else _max([_num(sample.get("Brake Temp FR")) for sample in samples]),
-                            "brake_temp_rl": lap["brake_temp_rl"] if lap["brake_temp_rl"] is not None else _max([_num(sample.get("Brake Temp RL")) for sample in samples]),
-                            "brake_temp_rr": lap["brake_temp_rr"] if lap["brake_temp_rr"] is not None else _max([_num(sample.get("Brake Temp RR")) for sample in samples]),
-                            "track_temp": lap["track_temp"] if lap["track_temp"] is not None else _avg([_num(sample.get("Track Temperature")) for sample in samples]),
-                            "ambient_temp": lap["ambient_temp"] if lap["ambient_temp"] is not None else _avg([_num(sample.get("Ambient Temperature")) for sample in samples]),
-                            "engine_oil_temp": lap["engine_oil_temp"] if lap["engine_oil_temp"] is not None else _max([_num(sample.get("Eng Oil Temp")) for sample in samples]),
-                            "engine_water_temp": lap["engine_water_temp"] if lap["engine_water_temp"] is not None else _max([_num(sample.get("Eng Water Temp")) for sample in samples]),
+                            "tyre_wear_fl": lap["tyre_wear_fl"],
+                            "tyre_wear_fr": lap["tyre_wear_fr"],
+                            "tyre_wear_rl": lap["tyre_wear_rl"],
+                            "tyre_wear_rr": lap["tyre_wear_rr"],
+                            "tyre_pressure_fl": lap["tyre_pressure_fl"],
+                            "tyre_pressure_fr": lap["tyre_pressure_fr"],
+                            "tyre_pressure_rl": lap["tyre_pressure_rl"],
+                            "tyre_pressure_rr": lap["tyre_pressure_rr"],
+                            "brake_temp_fl": lap["brake_temp_fl"],
+                            "brake_temp_fr": lap["brake_temp_fr"],
+                            "brake_temp_rl": lap["brake_temp_rl"],
+                            "brake_temp_rr": lap["brake_temp_rr"],
+                            "track_temp": lap["track_temp"],
+                            "ambient_temp": lap["ambient_temp"],
+                            "engine_oil_temp": lap["engine_oil_temp"],
+                            "engine_water_temp": lap["engine_water_temp"],
                             "max_speed": lap["max_speed"],
-                            "average_speed": lap["average_speed"] if lap["average_speed"] is not None else (distance / (duration / 3600) if distance is not None and duration and duration > 0 else _avg(speed_values)),
+                            "average_speed": lap["average_speed"] if lap["average_speed"] is not None else (distance / (duration / 3600) if distance is not None and duration and duration > 0 else None),
                             "finish_position": session["finish_position"],
                             "finish_status": session["finish_status"],
                         }
@@ -248,7 +321,13 @@ class ProfileRepository:
         return rows
 
     def all_laps(self) -> list[dict]:
-        return self._with_lap_quality(self._live_laps() + self._motec_laps())
+        token = self._all_laps_cache_token()
+        if self.__class__._all_laps_cache_key == token and self.__class__._all_laps_cache is not None:
+            return self.__class__._all_laps_cache
+        laps = self._with_lap_quality(self._live_laps() + self._motec_laps())
+        self.__class__._all_laps_cache_key = token
+        self.__class__._all_laps_cache = laps
+        return laps
 
     def _with_lap_quality(self, laps: list[dict]) -> list[dict]:
         grouped: dict[str, list[dict]] = defaultdict(list)
@@ -264,7 +343,10 @@ class ProfileRepository:
                 distance_ratio = distance / normal_distance if distance is not None and normal_distance else None
                 valid = True
                 reason = "estimated_full_lap"
-                if lap.get("in_pit"):
+                if lap.get("valid_lap") is False:
+                    valid = False
+                    reason = "recorded_invalid_lap"
+                elif lap.get("in_pit"):
                     valid = False
                     reason = "pit_lap"
                 elif lap_time is None or normal_time is None:
@@ -314,9 +396,20 @@ class ProfileRepository:
             session["duration"] += _num(lap.get("lap_time")) or 0
         return sessions
 
+    def _persisted_session_counts(self) -> dict[str, int]:
+        with SessionLocal() as db:
+            live_sessions = db.scalar(select(func.count(SessionModel.id))) or 0
+        csv_sessions = 0
+        init_motec_db()
+        if MOTEC_DB_PATH.exists():
+            with sqlite3.connect(MOTEC_DB_PATH) as db:
+                csv_sessions = int(db.execute("select count(*) from motec_sessions").fetchone()[0] or 0)
+        return {"live": int(live_sessions), "csv": csv_sessions, "total": int(live_sessions) + csv_sessions}
+
     def summary(self) -> dict:
         laps = self.all_laps()
         sessions = self._sessions_from_laps(laps)
+        persisted_sessions = self._persisted_session_counts()
         total_distance = sum((_num(lap.get("distance_km")) or 0) for lap in laps)
         total_driving_time = sum((_num(lap.get("lap_time")) or 0) for lap in laps)
         valid_laps = [lap for lap in laps if lap.get("valid_lap")]
@@ -343,22 +436,22 @@ class ProfileRepository:
         return {
             "totals": {
                 "total_distance_km": total_distance,
-                "total_sessions": len(sessions),
+                "total_sessions": max(len(sessions), persisted_sessions["total"]),
                 "total_laps": len(laps),
                 "valid_laps": len(valid_laps),
                 "total_driving_time": total_driving_time,
                 "different_cars": len({lap["car"] for lap in laps if lap.get("car")}),
                 "different_tracks": len({lap["track"] for lap in laps if lap.get("track")}),
-                "average_session_duration": total_driving_time / len(sessions) if sessions else None,
-                "average_distance_per_session": total_distance / len(sessions) if sessions else None,
-                "average_laps_per_session": len(laps) / len(sessions) if sessions else None,
+                "average_session_duration": total_driving_time / max(len(sessions), 1) if sessions else None,
+                "average_distance_per_session": total_distance / max(len(sessions), 1) if sessions else None,
+                "average_laps_per_session": len(laps) / max(len(sessions), 1) if sessions else None,
                 "wins": wins,
                 "podiums": podiums,
                 "top10": top10,
                 "dnf_dns": dnf_dns,
                 "race_sessions": len(race_sessions),
-                "live_sessions": len({lap["session_id"] for lap in laps if lap["source"] == "live"}),
-                "csv_sessions": len({lap["session_id"] for lap in laps if lap["source"] == "csv"}),
+                "live_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "live"}), persisted_sessions["live"]),
+                "csv_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "csv"}), persisted_sessions["csv"]),
                 "best_lap_count": len(self.best_laps()),
             },
             "distance_by_class": by_class,
@@ -463,7 +556,20 @@ class ProfileRepository:
         for expected, actual in checks:
             if expected and str(expected).lower() != str(actual or "").lower():
                 return False
+        contains_checks = [
+            (filters.session, lap.get("session_name")),
+            (filters.layout, lap.get("layout")),
+        ]
+        for expected, actual in contains_checks:
+            if expected and expected.lower() not in str(actual or "").lower():
+                return False
+        if filters.lap_number and filters.lap_number.lower() not in str(lap.get("lap_number") or "").lower():
+            return False
         if filters.valid_only and not lap.get("valid_lap"):
+            return False
+        if filters.valid_status == "valid" and not lap.get("valid_lap"):
+            return False
+        if filters.valid_status == "invalid" and lap.get("valid_lap"):
             return False
         if filters.date_from and str(lap.get("date") or "") < filters.date_from:
             return False
@@ -473,6 +579,7 @@ class ProfileRepository:
             ("track_temp", filters.track_temp_min, filters.track_temp_max),
             ("ambient_temp", filters.ambient_temp_min, filters.ambient_temp_max),
             ("fuel_start", filters.fuel_min, filters.fuel_max),
+            ("fuel_used", filters.fuel_used_min, filters.fuel_used_max),
             ("lap_time", filters.lap_time_min, filters.lap_time_max),
         ]
         for key, min_value, max_value in ranges:
@@ -480,6 +587,25 @@ class ProfileRepository:
             if min_value is not None and (value is None or value < min_value):
                 return False
             if max_value is not None and (value is None or value > max_value):
+                return False
+        wheel_ranges = [
+            (("tyre_wear_fl", "tyre_wear_fr", "tyre_wear_rl", "tyre_wear_rr"), filters.tyre_wear_min, filters.tyre_wear_max),
+            (("tyre_pressure_fl", "tyre_pressure_fr", "tyre_pressure_rl", "tyre_pressure_rr"), filters.tyre_pressure_min, filters.tyre_pressure_max),
+            (("brake_temp_fl", "brake_temp_fr", "brake_temp_rl", "brake_temp_rr"), filters.brake_temp_min, filters.brake_temp_max),
+            (("engine_oil_temp",), filters.oil_temp_min, filters.oil_temp_max),
+            (("engine_water_temp",), filters.water_temp_min, filters.water_temp_max),
+            (("max_speed", "average_speed"), filters.speed_min, filters.speed_max),
+        ]
+        for keys, min_value, max_value in wheel_ranges:
+            if min_value is None and max_value is None:
+                continue
+            values = [_num(lap.get(key)) for key in keys]
+            clean = [value for value in values if value is not None]
+            if not clean:
+                return False
+            if min_value is not None and max(clean) < min_value:
+                return False
+            if max_value is not None and min(clean) > max_value:
                 return False
         if filters.search:
             haystack = " ".join(str(lap.get(key) or "") for key in ("car", "track", "car_class", "session_name", "source_file")).lower()

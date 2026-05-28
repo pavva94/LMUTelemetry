@@ -12,7 +12,6 @@ import {
   RaceHistory,
   RaceInfo,
   SettingsPage,
-  StintData,
   XYPlotter,
 } from "./pages/RaceEngineeringPages";
 import { SessionReview } from "./pages/SessionReview";
@@ -45,7 +44,6 @@ export default function App() {
         {page === "one-lap" && <OneLapTiming telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "race-history" && <RaceHistory telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "xy-plotter" && <XYPlotter telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
-        {page === "stint-data" && <StintData telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "settings" && <SettingsPage telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "planner" && <StrategyPlanner strategy={strategy} telemetry={telemetry} />}
         {page === "race-prep" && <RacePrepReport strategy={strategy} />}

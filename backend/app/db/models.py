@@ -93,6 +93,9 @@ class TelemetrySampleModel(Base):
     ambient_temp: Mapped[Optional[float]] = mapped_column(Float)
     rain: Mapped[Optional[float]] = mapped_column(Float)
     wetness: Mapped[Optional[float]] = mapped_column(Float)
+    pitstops: Mapped[Optional[int]] = mapped_column(Integer)
+    in_pits: Mapped[Optional[bool]] = mapped_column(Boolean)
+    pit_state: Mapped[Optional[str]] = mapped_column(String)
 
 
 class LapSummaryModel(Base):

@@ -1,4 +1,5 @@
 import type { SavedSession, SessionReview } from "../types/session";
+import { average, maximum, median as medianValue, minimum, splitTrend, standardDeviation as deviation, toFiniteNumber, validSessionLaps } from "./sessionAnalysis";
 
 export type Row = Record<string, unknown>;
 export type Wheel = "fl" | "fr" | "rl" | "rr";
@@ -103,47 +104,14 @@ export type RacePrepOptions = {
 const wheels: Wheel[] = ["fl", "fr", "rl", "rr"];
 const wheelLabel: Record<Wheel, string> = { fl: "front-left", fr: "front-right", rl: "rear-left", rr: "rear-right" };
 
-function num(value: unknown): number | null {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function avg(values: Array<number | null>): number | null {
-  const clean = values.filter((value): value is number => value != null && Number.isFinite(value));
-  return clean.length ? clean.reduce((sum, value) => sum + value, 0) / clean.length : null;
-}
-
-function median(values: Array<number | null>): number | null {
-  const clean = values.filter((value): value is number => value != null && Number.isFinite(value)).sort((a, b) => a - b);
-  if (!clean.length) return null;
-  const middle = Math.floor(clean.length / 2);
-  return clean.length % 2 ? clean[middle] : (clean[middle - 1] + clean[middle]) / 2;
-}
-
-function min(values: Array<number | null>): number | null {
-  const clean = values.filter((value): value is number => value != null && Number.isFinite(value));
-  return clean.length ? Math.min(...clean) : null;
-}
-
-function max(values: Array<number | null>): number | null {
-  const clean = values.filter((value): value is number => value != null && Number.isFinite(value));
-  return clean.length ? Math.max(...clean) : null;
-}
-
-function std(values: number[], average: number | null): number | null {
-  if (!values.length || average == null) return null;
-  return Math.sqrt(values.reduce((sum, value) => sum + (value - average) ** 2, 0) / values.length);
-}
+const num = toFiniteNumber;
+const avg = average;
+const median = medianValue;
+const min = minimum;
+const max = maximum;
 
 function trend(values: number[], threshold: number): "rising" | "falling" | "stable" | "unavailable" {
-  if (values.length < 4) return "unavailable";
-  const split = Math.floor(values.length / 2);
-  const first = avg(values.slice(0, split));
-  const second = avg(values.slice(split));
-  if (first == null || second == null) return "unavailable";
-  const diff = second - first;
-  if (Math.abs(diff) <= threshold) return "stable";
-  return diff > 0 ? "rising" : "falling";
+  return splitTrend(values, threshold);
 }
 
 function lapTrend(values: number[]): RacePrepReport["pace"]["trend"] {
@@ -155,19 +123,6 @@ function lapTrend(values: number[]): RacePrepReport["pace"]["trend"] {
 
 function rowTime(row: Row): number {
   return num(row.game_time) ?? num(row.end_time) ?? num(row.start_time) ?? 0;
-}
-
-function validLaps(review: SessionReview): Row[] {
-  const candidates = (review.laps || []).filter((lap) => {
-    const lapTime = num(lap.lap_time);
-    const fuelAdded = num(lap.fuel_added) || 0;
-    return lapTime != null && lapTime >= 40 && lapTime <= 900 && lap.valid_lap !== false && lap.in_pit !== true && fuelAdded <= 2;
-  });
-  const normal = median(candidates.map((lap) => num(lap.lap_time)));
-  return candidates.filter((lap) => {
-    const lapTime = num(lap.lap_time);
-    return lapTime != null && (!normal || (lapTime >= normal * 0.75 && lapTime <= normal * 1.8));
-  });
 }
 
 function latestSessionDuration(session: SavedSession | null | undefined, samples: Row[], laps: Row[]): number | null {
@@ -245,7 +200,7 @@ function sectorReport(laps: Row[], bestLap: number | null, bestLapNumber: number
 export function buildRacePrepReport(review: SessionReview, options: RacePrepOptions = {}): RacePrepReport {
   const samples = [...((review.telemetry_samples || []) as Row[])].sort((a, b) => rowTime(a) - rowTime(b));
   const allLaps = (review.laps || []) as Row[];
-  const cleanLaps = validLaps(review);
+  const cleanLaps = validSessionLaps(review);
   const lapTimes = cleanLaps.map((lap) => num(lap.lap_time)).filter((value): value is number => value != null);
   const averageLap = avg(lapTimes);
   const medianLap = median(lapTimes);
@@ -254,7 +209,7 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
   const bestLapRow = cleanLaps.find((lap) => num(lap.lap_time) === bestLap);
   const bestLapNumber = num(bestLapRow?.lap_number);
   const spread = bestLap != null && worstLap != null ? worstLap - bestLap : null;
-  const standardDeviation = std(lapTimes, averageLap);
+  const standardDeviation = deviation(lapTimes, averageLap);
   const consistency = standardDeviation == null || medianLap == null ? "unknown" : standardDeviation <= 0.35 ? "high" : standardDeviation <= 0.9 ? "medium" : "low";
   const deltas = cleanLaps
     .map((lap) => ({ lap: num(lap.lap_number), lapTime: num(lap.lap_time), delta: bestLap != null && num(lap.lap_time) != null ? num(lap.lap_time)! - bestLap : null }))

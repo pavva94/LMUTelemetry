@@ -99,6 +99,7 @@ class TelemetryService:
                 await self._task
             except asyncio.CancelledError:
                 pass
+        self._finish_active_session("service stopped")
         self.collector.stop()
 
     def update_assumptions(self, assumptions: StrategyAssumptions) -> StrategyState:
@@ -189,6 +190,19 @@ class TelemetryService:
         self.feed_paused = False
         self.pause_reason = None
 
+    def _finish_active_session(self, reason: str) -> None:
+        if self._last_session_snapshot is None:
+            return
+        logger.info("Finalizing telemetry session %s (%s)", self.session_id, reason)
+        self.repository.finalize_session(self.session_id, self._last_session_snapshot)
+        self.session_id = str(uuid.uuid4())
+        self._session_signature = None
+        self._last_session_snapshot = None
+        self._last_game_time = None
+        self._last_lap_number = None
+        self.session_logger.reset()
+        self._reset_live_models()
+
     def _maybe_rotate_session(self, snapshot: TelemetrySnapshot) -> None:
         session = snapshot.session
         player = snapshot.player
@@ -222,12 +236,8 @@ class TelemetryService:
 
         if reason:
             logger.info("Detected new LMU session (%s): %s -> %s", reason, self._session_signature, signature)
-            self.repository.finalize_session(self.session_id, self._last_session_snapshot)
-            self.session_id = str(uuid.uuid4())
+            self._finish_active_session(reason)
             self._session_signature = signature
-            self._last_session_snapshot = None
-            self.session_logger.reset()
-            self._reset_live_models()
 
         self._last_game_time = current_time
         self._last_lap_number = lap_number
@@ -252,10 +262,12 @@ class TelemetryService:
 
     def _process(self, snapshot: TelemetrySnapshot) -> None:
         if not snapshot.connected or not snapshot.player:
+            self._finish_active_session("telemetry unavailable")
             self._pause_live_feed(snapshot, "telemetry unavailable")
             return
         on_track, reason = self._is_on_track(snapshot)
         if not on_track:
+            self._finish_active_session(reason or "not on track")
             self._pause_live_feed(snapshot, reason or "not on track")
             return
         self._resume_live_feed()

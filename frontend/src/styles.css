@@ -87,6 +87,10 @@ select { width: 100%; border: 1px solid #33414d; background: #0f1419; color: #ff
 .control-row button, .card button { border: 1px solid #33414d; background: #0f1419; color: #d9e3ea; border-radius: 6px; padding: 8px 10px; cursor: pointer; }
 .control-row button.active-control { border-color: #e6b450; color: #e6b450; }
 .table-sort { padding: 0; border: 0; background: transparent; color: #8794a0; font: inherit; font-weight: 700; cursor: pointer; }
+.filter-row th { vertical-align: top; background: #10151a; }
+.table-filter { min-width: 86px; padding: 6px 7px; border-radius: 5px; font-size: 12px; }
+.range-filter { display: grid; grid-template-columns: repeat(2, minmax(58px, 1fr)); gap: 4px; min-width: 124px; }
+.range-filter + .range-filter { margin-top: 4px; }
 .svg-clickable { cursor: pointer; }
 .motec-workspace { display: grid; grid-template-columns: 210px 1fr; min-height: calc(100vh - 64px); }
 .motec-worksheets { border-right: 1px solid #222a32; background: #0f1419; padding: 12px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }

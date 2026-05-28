@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { formatRaceTime } from "../lib/timeFormat";
-import type { ProfileLap, ProfileLapResponse, ProfileSummary } from "../types/profile";
+import type { ProfileLap, ProfileSummary } from "../types/profile";
 
 const fmt = (value?: number | null, digits = 1, suffix = "") =>
   value == null || Number.isNaN(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
@@ -23,65 +23,25 @@ function SortButton({ label, field, sort, direction, onSort }: { label: string; 
 export function UserProfile() {
   const [summary, setSummary] = useState<ProfileSummary | null>(null);
   const [bestLaps, setBestLaps] = useState<ProfileLap[]>([]);
-  const [lapData, setLapData] = useState<ProfileLapResponse | null>(null);
-  const [filters, setFilters] = useState({
-    search: "",
-    track: "",
-    car: "",
-    class: "",
-    source: "",
-    date_from: "",
-    date_to: "",
-    valid_only: false,
-    track_temp_min: "",
-    track_temp_max: "",
-    ambient_temp_min: "",
-    ambient_temp_max: "",
-    fuel_min: "",
-    fuel_max: "",
-    lap_time_min: "",
-    lap_time_max: "",
-  });
   const [sort, setSort] = useState("date");
   const [direction, setDirection] = useState("desc");
-  const [page, setPage] = useState(1);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    Promise.all([api.profileSummary(), api.profileBestLaps()])
-      .then(([summaryData, bestData]) => {
+    api.profileSummary()
+      .then((summaryData) => {
         setSummary(summaryData);
+        setError("");
+        return api.profileBestLaps();
+      })
+      .then((bestData) => {
         setBestLaps(bestData);
         setError("");
       })
       .catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
   }, []);
 
-  useEffect(() => {
-    api.profileLaps({ ...filters, sort, direction, page, page_size: 100 })
-      .then((data) => {
-        setLapData(data);
-        setError("");
-      })
-      .catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
-  }, [filters, sort, direction, page]);
-
   const totals = summary?.totals || {};
-  const filterOptions = useMemo(() => {
-    const options = lapData?.filter_options || summary?.filter_options;
-    if (options) return options;
-    const laps = lapData?.laps || [];
-    return {
-      tracks: Array.from(new Set(laps.map((lap) => lap.track).filter(Boolean))).sort(),
-      cars: Array.from(new Set(laps.map((lap) => lap.car).filter(Boolean))).sort(),
-      classes: Array.from(new Set(laps.map((lap) => lap.car_class).filter(Boolean))).sort(),
-      sources: Array.from(new Set(laps.map((lap) => lap.source).filter(Boolean))).sort(),
-    };
-  }, [lapData, summary]);
-  const setFilter = (key: keyof typeof filters, value: string | boolean) => {
-    setFilters((current) => ({ ...current, [key]: value }));
-    setPage(1);
-  };
   const onSort = (field: string) => {
     if (sort === field) setDirection((current) => current === "asc" ? "desc" : "asc");
     else {
@@ -121,31 +81,6 @@ export function UserProfile() {
         <h2>Best Laps</h2>
         {bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once live or CSV laps are stored." />}
       </section>
-
-      <section className="card span-12">
-        <h2>Full Lap History</h2>
-        <div className="input-grid">
-          <input placeholder="Search car, track, class, session, file" value={filters.search} onChange={(event) => setFilter("search", event.target.value)} />
-          <select value={filters.track} onChange={(event) => setFilter("track", event.target.value)}><option value="">All tracks</option>{filterOptions.tracks.map((track) => <option key={track}>{track}</option>)}</select>
-          <select value={filters.car} onChange={(event) => setFilter("car", event.target.value)}><option value="">All cars</option>{filterOptions.cars.map((car) => <option key={car}>{car}</option>)}</select>
-          <select value={filters.class} onChange={(event) => setFilter("class", event.target.value)}><option value="">All classes</option>{filterOptions.classes.map((kind) => <option key={kind}>{kind}</option>)}</select>
-          <select value={filters.source} onChange={(event) => setFilter("source", event.target.value)}><option value="">All sources</option><option value="live">Live</option><option value="csv">CSV</option></select>
-          <input type="date" value={filters.date_from} onChange={(event) => setFilter("date_from", event.target.value)} />
-          <input type="date" value={filters.date_to} onChange={(event) => setFilter("date_to", event.target.value)} />
-          <input placeholder="Min fuel" value={filters.fuel_min} onChange={(event) => setFilter("fuel_min", event.target.value)} />
-          <input placeholder="Max fuel" value={filters.fuel_max} onChange={(event) => setFilter("fuel_max", event.target.value)} />
-          <input placeholder="Min lap s" value={filters.lap_time_min} onChange={(event) => setFilter("lap_time_min", event.target.value)} />
-          <input placeholder="Max lap s" value={filters.lap_time_max} onChange={(event) => setFilter("lap_time_max", event.target.value)} />
-          <label><input type="checkbox" checked={filters.valid_only} onChange={(event) => setFilter("valid_only", event.target.checked)} /> Valid only</label>
-        </div>
-        <p className="subvalue">{lapData?.total ?? 0} laps found</p>
-        {lapData?.laps.length ? <LapTable rows={lapData.laps} sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Adjust filters or record/import sessions." />}
-        <div className="control-row">
-          <button disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>Previous</button>
-          <span className="subvalue">Page {page}</span>
-          <button disabled={!lapData || page * lapData.page_size >= lapData.total} onClick={() => setPage((current) => current + 1)}>Next</button>
-        </div>
-      </section>
     </div>
   );
 }
@@ -155,7 +90,19 @@ function SimpleTable({ rows, columns }: { rows: Array<Record<string, unknown>>; 
   return <div className="table-wrap"><table><thead><tr>{columns.map((column) => <th key={column}>{column.replace(/_/g, " ")}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={index}>{columns.map((column) => <td key={column}>{formatCell(column, row[column])}</td>)}</tr>)}</tbody></table></div>;
 }
 
-function LapTable({ rows, compact = false, sort, direction, onSort }: { rows: ProfileLap[]; compact?: boolean; sort: string; direction: string; onSort: (field: string) => void }) {
+function LapTable({
+  rows,
+  compact = false,
+  sort,
+  direction,
+  onSort,
+}: {
+  rows: ProfileLap[];
+  compact?: boolean;
+  sort: string;
+  direction: string;
+  onSort: (field: string) => void;
+}) {
   return (
     <div className="table-wrap">
       <table>

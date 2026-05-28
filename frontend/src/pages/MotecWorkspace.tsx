@@ -15,6 +15,7 @@ import {
 import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
 import { channelByName, numeric } from "../lib/motecCsv";
+import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceTime } from "../lib/timeFormat";
 import type { ChannelDefinition, MotecSample, MotecSession } from "../types/motec";
 
@@ -114,7 +115,7 @@ const worksheetHelp = (title: string) => {
   if (key.includes("engineer")) return "Summarizes rule-based findings from the data. Treat each hint as a hypothesis supported by the listed evidence.";
   return "Shows this worksheet's telemetry context. Look for trends, outliers, and repeatable changes before making setup decisions.";
 };
-const isTimeChannel = (name: string) => ["Time", "Session Elapsed Time", "Lap-relative time", "Delta Best", "Realtime Loss"].includes(name) || name.toLowerCase().includes("time");
+const isTimeChannel = (name: string) => ["Time", "Session Elapsed Time", "Lap-relative time", "Delta Best", "Realtime Loss"].includes(name) || isRaceTimeField(name);
 const displayChannelValue = (sample: MotecSample, channel: string, session: MotecSession | null) => {
   const value = numeric(sample, channel);
   if (isTimeChannel(channel)) return timeValue(value);
@@ -207,12 +208,12 @@ function ChartBlock({ session, title, channels, lapA, lapB, xKey = "Lap-relative
       <ResponsiveContainer width="100%" height={height}>
         <LineChart data={chartData} onMouseMove={(state) => state && typeof state.activeTooltipIndex === "number" && setCursor((state.activeTooltipIndex / Math.max(chartData.length - 1, 1)) * 100)}>
           <CartesianGrid stroke="#27313a" />
-          <XAxis dataKey="x" stroke="#8896a3" tickFormatter={(value) => isTimeChannel(xKey) ? timeValue(Number(value)) : String(value)} />
+          <XAxis dataKey="x" stroke="#8896a3" tickFormatter={(value) => isTimeChannel(xKey) ? chartLabelFormatter(value, xKey) : String(value)} />
           <YAxis stroke="#8896a3" />
           <Tooltip
             contentStyle={{ background: "#141a20", border: "1px solid #27313a" }}
-            labelFormatter={(value) => isTimeChannel(xKey) ? timeValue(Number(value)) : String(value)}
-            formatter={(value, name) => isTimeChannel(String(name).replace(" B", "")) ? timeValue(Number(value)) : value}
+            labelFormatter={(value) => isTimeChannel(xKey) ? chartLabelFormatter(value, xKey) : String(value)}
+            formatter={(value, name) => isTimeChannel(String(name).replace(" B", "")) ? chartValueFormatter(value, String(name)) : value}
           />
           {channels.map((channel, index) => <Line key={channel} dataKey={channel} stroke={colors[index % colors.length]} dot={false} connectNulls />)}
           {lapB && channels.map((channel, index) => <Line key={`${channel} B`} dataKey={`${channel} B`} stroke={colors[index % colors.length]} strokeDasharray="4 4" dot={false} connectNulls />)}
@@ -967,7 +968,7 @@ function XYWorksheet({ session, lapA, lapB, setLapA, setLapB, x, y, setX, setY, 
     <div className="page grid">
       <LapSelectors session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />
       <section className="card span-12"><SectionTitle title="X-Y Controls" help="Chooses channels for relationship plotting. Presets cover common driver, setup, and powertrain questions." /><div className="input-grid"><select value={x} onChange={(event) => setX(event.target.value)}>{numericChannels.map((item) => <option key={item.originalName}>{item.originalName}</option>)}</select><select value={y} onChange={(event) => setY(event.target.value)}>{numericChannels.map((item) => <option key={item.originalName}>{item.originalName}</option>)}</select></div><div className="control-row">{presets.map(([label, px, py]) => <button key={label} onClick={() => { setX(px); setY(py); }}>{label}</button>)}</div></section>
-      <section className="card span-8"><SectionTitle title={`${y} vs ${x}`} help={worksheetHelp("X-Y Plot")} /><ResponsiveContainer width="100%" height={380}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey="x" stroke="#8896a3" /><YAxis dataKey="y" stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Scatter fill="#e6b450" data={samples.map((sample) => ({ x: numeric(sample, x), y: numeric(sample, y) }))} /></ScatterChart></ResponsiveContainer></section>
+      <section className="card span-8"><SectionTitle title={`${y} vs ${x}`} help={worksheetHelp("X-Y Plot")} /><ResponsiveContainer width="100%" height={380}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey="x" stroke="#8896a3" tickFormatter={(value) => formatTelemetryValue(value, x)} /><YAxis dataKey="y" stroke="#8896a3" tickFormatter={(value) => formatTelemetryValue(value, y)} /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} formatter={(value, name) => formatTelemetryValue(value, String(name) === "x" ? x : y)} labelFormatter={(value) => formatTelemetryValue(value, x)} /><Scatter fill="#e6b450" data={samples.map((sample) => ({ x: numeric(sample, x), y: numeric(sample, y) }))} /></ScatterChart></ResponsiveContainer></section>
       <section className="card span-4"><SectionTitle title="Stats" help="Summarizes the plotted channels. Check sample count and ranges before trusting a relationship." /><AnalysisCards samples={samples} channels={[x, y]} /></section>
     </div>
   );

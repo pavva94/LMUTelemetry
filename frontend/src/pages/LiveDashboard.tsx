@@ -82,7 +82,12 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected, 
   const playerCar = telemetry?.competitors?.find((c) => c.is_player);
   const tyres = player?.tyre_state;
   const fuel = strategy?.fuel;
+  const tyreModel = strategy?.tyres;
   const fuelLapsNeeded = Math.max(0, (fuel?.valid_laps_required ?? 3) - (fuel?.valid_laps_observed ?? 0));
+  const tyreLapsNeeded = Math.max(0, (tyreModel?.laps_required ?? 3) - (tyreModel?.observed_laps ?? 0));
+  const tyreFinishLap = player?.lap_number != null && tyreModel?.estimated_remaining_tyre_life_laps != null
+    ? Math.floor(player.lap_number + tyreModel.estimated_remaining_tyre_life_laps)
+    : null;
   const invalid = player?.lap_invalidated;
   return (
     <div className="page grid">
@@ -110,14 +115,20 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected, 
         </div>
       </section>
       <section className="card span-6">
-        <SectionTitle title="Tyres" help="Shows pressure, wear, and temperature by corner. Large left/right or front/rear differences point to balance, setup, or driving-load issues." />
+        <SectionTitle title="Tyres" help="Shows pressure, wear, temperature, and predicted tyre life. Remaining laps are estimated from observed wear rate, so confidence improves after clean laps." />
         <div className="corner-grid">
           <TyreCorner label="FL" tyres={tyres} keyName="fl" />
           <TyreCorner label="FR" tyres={tyres} keyName="fr" />
           <TyreCorner label="RL" tyres={tyres} keyName="rl" />
           <TyreCorner label="RR" tyres={tyres} keyName="rr" />
         </div>
-        <span className={strategy?.tyres?.tyre_risk_level === "high" ? "badge red" : "badge green"}>{strategy?.tyres?.tyre_risk_level || "No tyre warning"}</span>
+        <div className="header-grid two">
+          <div><span className="label">Average wear</span><strong>{pct(tyreModel?.average_wear ?? tyres?.average_wear)}</strong></div>
+          <div><span className="label">Wear rate</span><strong>{pct(tyreModel?.wear_rate_per_lap)}/lap</strong><span className="subvalue">{tyreLapsNeeded > 0 ? `Need ${tyreLapsNeeded} clean lap${tyreLapsNeeded === 1 ? "" : "s"}` : `${tyreModel?.observed_laps ?? 0} observed laps`}</span></div>
+          <div><span className="label">Tyre life</span><strong>{fmt(tyreModel?.estimated_remaining_tyre_life_laps)} laps</strong></div>
+          <div><span className="label">Limit lap</span><strong>{text(tyreFinishLap)}</strong><span className="subvalue">{tyreModel?.confidence || "low"} confidence</span></div>
+        </div>
+        <span className={tyreModel?.tyre_risk_level === "high" ? "badge red" : "badge green"}>{tyreModel?.tyre_risk_level || "No tyre warning"}</span>
       </section>
       <section className="card span-3">
         <SectionTitle title="Brakes" help="Shows brake temperature and pressure by wheel. Overheated or imbalanced brakes can cause longer stops, locking, and unstable corner entry." />

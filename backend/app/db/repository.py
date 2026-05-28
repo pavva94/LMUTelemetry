@@ -7,13 +7,16 @@ from datetime import datetime
 from sqlalchemy import desc, func, select
 
 from app.db.database import SessionLocal
-from app.db.models import RecommendationModel, SessionModel, TelemetrySampleModel
+from app.db.models import LapSummaryModel, RecommendationModel, SessionModel, TelemetrySampleModel
 from app.schemas.recommendations import RecommendationPayload, StrategyRecommendation
 from app.schemas.strategy import FuelState, PitWindowState, StrategyAssumptions, StrategyState, StintState, TyreStrategyState
 from app.schemas.telemetry import CompetitorState, EnvironmentState, PlayerState, SessionState, TelemetrySnapshot, TyreState
 
 
 class Repository:
+    def __init__(self) -> None:
+        self._review_cache: dict[tuple[str, int, int | None, int | None], dict] = {}
+
     def _session_type_name(self, value: object) -> str | None:
         names = {
             "0": "Test Day",
@@ -66,6 +69,8 @@ class Repository:
         tyre = player.tyre_state if player else None
         env = snapshot.environment
         state = snapshot.session
+        player_id = player.vehicle_id if player else None
+        player_comp = next((c for c in snapshot.competitors if c.is_player or c.vehicle_id == player_id), None)
         with SessionLocal() as db:
             db.add(
                 TelemetrySampleModel(
@@ -134,6 +139,9 @@ class Repository:
                     ambient_temp=env.ambient_temp_c if env else None,
                     rain=env.raining if env else None,
                     wetness=env.avg_wetness if env else None,
+                    pitstops=player_comp.pitstops if player_comp else None,
+                    in_pits=player_comp.in_pits if player_comp else None,
+                    pit_state=player_comp.pit_state if player_comp else None,
                 )
             )
             db.commit()
@@ -158,19 +166,42 @@ class Repository:
     def list_sessions(self) -> list[dict]:
         with SessionLocal() as db:
             sessions = db.scalars(select(SessionModel).order_by(desc(SessionModel.created_at)).limit(50)).all()
+            session_ids = [session.id for session in sessions]
+            sample_stats = {}
+            latest_ids = []
+            latest_samples = {}
+            if session_ids:
+                stats_rows = db.execute(
+                    select(
+                        TelemetrySampleModel.session_id,
+                        func.count(TelemetrySampleModel.id),
+                        func.max(TelemetrySampleModel.id),
+                        func.max(TelemetrySampleModel.game_time),
+                    )
+                    .where(TelemetrySampleModel.session_id.in_(session_ids))
+                    .group_by(TelemetrySampleModel.session_id)
+                ).all()
+                for session_id, count, latest_id, latest_game_time in stats_rows:
+                    sample_stats[session_id] = {
+                        "sample_count": count or 0,
+                        "latest_id": latest_id,
+                        "latest_game_time": latest_game_time,
+                    }
+                    if latest_id is not None:
+                        latest_ids.append(latest_id)
+                if latest_ids:
+                    latest_samples = {
+                        sample.id: sample
+                        for sample in db.scalars(select(TelemetrySampleModel).where(TelemetrySampleModel.id.in_(latest_ids))).all()
+                    }
             rows = []
             for session in sessions:
-                sample_count = db.scalar(select(func.count()).where(TelemetrySampleModel.session_id == session.id)) or 0
-                latest_sample = db.scalar(
-                    select(TelemetrySampleModel)
-                    .where(TelemetrySampleModel.session_id == session.id)
-                    .order_by(desc(TelemetrySampleModel.id))
-                    .limit(1)
-                )
+                stats = sample_stats.get(session.id, {})
+                latest_sample = latest_samples.get(stats.get("latest_id"))
                 row = self._row_dict(session)
-                row["sample_count"] = sample_count
+                row["sample_count"] = stats.get("sample_count", 0)
                 row["latest_lap_number"] = latest_sample.lap_number if latest_sample else None
-                row["latest_game_time"] = latest_sample.game_time if latest_sample else None
+                row["latest_game_time"] = latest_sample.game_time if latest_sample else stats.get("latest_game_time")
                 rows.append(row)
             return rows
 
@@ -216,9 +247,36 @@ class Repository:
                 session.classified_status = player.finish_status or session.classified_status or "unknown"
             if state:
                 session.total_cars = state.num_vehicles or session.total_cars
+            samples = db.scalars(
+                select(TelemetrySampleModel)
+                .where(TelemetrySampleModel.session_id == session_id)
+                .order_by(TelemetrySampleModel.id.asc())
+            ).all()
+            self._store_lap_summaries(db, session_id, self._build_laps(samples))
             db.commit()
             db.refresh(session)
             return self._row_dict(session)
+
+    def _store_lap_summaries(self, db, session_id: str, laps: list[dict]) -> None:
+        existing = {
+            lap.lap_number: lap
+            for lap in db.scalars(select(LapSummaryModel).where(LapSummaryModel.session_id == session_id)).all()
+        }
+        for lap in laps:
+            lap_number = int(lap["lap_number"])
+            row = existing.get(lap_number)
+            if row is None:
+                row = LapSummaryModel(session_id=session_id, lap_number=lap_number)
+                db.add(row)
+            row.lap_time = lap.get("lap_time")
+            row.fuel_start = lap.get("fuel_start")
+            row.fuel_end = lap.get("fuel_end")
+            row.fuel_used = lap.get("fuel_used")
+            row.tyre_wear_start = lap.get("tyre_wear_start")
+            row.tyre_wear_end = lap.get("tyre_wear_end")
+            row.valid_lap = lap.get("valid_lap")
+            row.in_pit = lap.get("in_pit")
+            row.under_yellow = lap.get("under_yellow")
 
     def _average_wear(self, sample: TelemetrySampleModel) -> float | None:
         values = [sample.tyre_wear_fl, sample.tyre_wear_fr, sample.tyre_wear_rl, sample.tyre_wear_rr]
@@ -257,6 +315,7 @@ class Repository:
             fuel_end = last.fuel_liters
             fuel_used = fuel_start - fuel_end if fuel_start is not None and fuel_end is not None and fuel_start >= fuel_end else None
             fuel_added = fuel_start - previous_fuel_end if fuel_start is not None and previous_fuel_end is not None and fuel_start > previous_fuel_end else 0
+            in_pit = any(bool(row.in_pits) for row in rows)
             wear_start = self._average_wear(first)
             wear_end = self._average_wear(last)
             laps.append(
@@ -276,7 +335,7 @@ class Repository:
                     "max_rpm": max(rpm_values) if rpm_values else None,
                     "sample_count": len(rows),
                     "valid_lap": True,
-                    "in_pit": bool(fuel_added and fuel_added > 2),
+                    "in_pit": in_pit,
                     "under_yellow": False,
                 }
             )
@@ -284,23 +343,33 @@ class Repository:
                 previous_fuel_end = fuel_end
         return laps
 
-    def _build_pit_events(self, laps: list[dict]) -> list[dict]:
+    def _build_pit_events(self, samples: list[TelemetrySampleModel]) -> list[dict]:
         events = []
-        for lap in laps:
-            if (lap.get("fuel_added") or 0) > 2:
+        previous_in_pits = False
+        pit_entry_time: float | None = None
+        pit_entry_lap: int | None = None
+        for sample in samples:
+            in_pits = bool(sample.in_pits)
+            if in_pits and not previous_in_pits:
+                pit_entry_time = sample.game_time
+                pit_entry_lap = sample.lap_number
+            elif previous_in_pits and not in_pits:
                 events.append(
                     {
                         "vehicle_id": None,
-                        "driver_name": None,
-                        "lap_number": lap.get("lap_number"),
-                        "pit_entry_time": lap.get("start_time"),
-                        "pit_exit_time": lap.get("end_time"),
+                        "driver_name": "Player",
+                        "lap_number": sample.lap_number or pit_entry_lap,
+                        "pit_entry_time": pit_entry_time,
+                        "pit_exit_time": sample.game_time,
                         "stationary_time": None,
-                        "total_pit_loss": None,
-                        "detected_from": "fuel increase",
-                        "message": f"Refuel detected: +{lap.get('fuel_added'):.1f} L",
+                        "total_pit_loss": sample.game_time - pit_entry_time if sample.game_time is not None and pit_entry_time is not None else None,
+                        "detected_from": "telemetry",
+                        "message": "Pit stop detected from telemetry",
                     }
                 )
+                pit_entry_time = None
+                pit_entry_lap = None
+            previous_in_pits = in_pits
         return events
 
     def _latest_sample(self, session_id: str) -> TelemetrySampleModel | None:
@@ -447,6 +516,9 @@ class Repository:
             best_lap_time=sample.best_lap_time,
             last_lap_time=sample.last_lap_time,
             is_player=True,
+            pitstops=sample.pitstops,
+            in_pits=sample.in_pits,
+            pit_state=sample.pit_state,
         )
         timestamp = datetime.fromisoformat(sample.timestamp)
         return TelemetrySnapshot(
@@ -462,7 +534,7 @@ class Repository:
 
     def dashboard_snapshot(self, session_id: str, assumptions: StrategyAssumptions | None = None) -> dict:
         assumptions = assumptions or StrategyAssumptions()
-        review = self.review(session_id, sample_limit=5000)
+        review = self.review(session_id, sample_limit=0)
         latest = self._latest_sample(session_id)
         with SessionLocal() as db:
             session = db.get(SessionModel, session_id)
@@ -473,7 +545,7 @@ class Repository:
         fuel = self._fuel_state_from_laps(latest, laps, assumptions)
         tyres = self._tyre_state_from_samples(latest, laps, assumptions)
         current_lap = latest.lap_number or 0
-        last_pit_lap = max((int(lap["lap_number"]) for lap in laps if lap.get("fuel_added") and float(lap["fuel_added"]) > 2), default=0)
+        last_pit_lap = max((int(lap["lap_number"]) for lap in laps if lap.get("in_pit")), default=0)
         stint = StintState(current_stint_lap=current_lap - last_pit_lap if current_lap else None, last_pit_lap=last_pit_lap)
         strategy = StrategyState(fuel=fuel, tyres=tyres, stint=stint, pit_window=PitWindowState(), assumptions=assumptions)
         latest_rec = (review["recommendations"] or [])[-1] if review["recommendations"] else None
@@ -483,21 +555,35 @@ class Repository:
     def review(self, session_id: str, sample_limit: int = 5000) -> dict:
         with SessionLocal() as db:
             session = db.get(SessionModel, session_id)
+            latest_sample_id = db.scalar(
+                select(func.max(TelemetrySampleModel.id)).where(TelemetrySampleModel.session_id == session_id)
+            )
+            latest_recommendation_id = db.scalar(
+                select(func.max(RecommendationModel.id)).where(RecommendationModel.session_id == session_id)
+            )
+            cache_key = (session_id, sample_limit, latest_sample_id, latest_recommendation_id)
+            cached = self._review_cache.get(cache_key)
+            if cached is not None:
+                return cached
             all_samples = db.scalars(
                 select(TelemetrySampleModel).where(TelemetrySampleModel.session_id == session_id).order_by(TelemetrySampleModel.id.asc())
             ).all()
             recs = db.scalars(select(RecommendationModel).where(RecommendationModel.session_id == session_id).order_by(RecommendationModel.id.asc()).limit(100)).all()
 
-            if sample_limit > 0 and len(all_samples) > sample_limit:
+            if sample_limit <= 0:
+                samples = []
+            elif len(all_samples) > sample_limit:
                 step = math.ceil(len(all_samples) / sample_limit)
                 samples = all_samples[::step]
             else:
                 samples = all_samples
             laps = self._build_laps(all_samples)
-            return {
+            result = {
                 "session": self._row_dict(session) if session else None,
                 "telemetry_samples": [self._row_dict(s) for s in samples],
                 "recommendations": [self._row_dict(r) for r in recs],
                 "laps": laps,
-                "pit_events": self._build_pit_events(laps),
+                "pit_events": self._build_pit_events(all_samples),
             }
+            self._review_cache = {cache_key: result}
+            return result

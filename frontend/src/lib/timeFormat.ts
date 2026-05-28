@@ -5,7 +5,8 @@ export function formatRaceTime(value?: number | null, precision = 3) {
   const minutes = Math.floor(absolute / 60);
   const seconds = absolute - minutes * 60;
   const secondText = seconds.toFixed(precision).padStart(precision + 3, "0");
-  return `${sign}${minutes}:${secondText}`;
+  const minuteText = String(minutes).padStart(2, "0");
+  return `${sign}${minuteText}:${secondText}`;
 }
 
 export function formatRaceGap(value?: number | null) {

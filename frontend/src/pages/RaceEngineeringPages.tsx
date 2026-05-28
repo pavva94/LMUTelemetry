@@ -13,6 +13,7 @@ import {
 } from "recharts";
 import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
+import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceGap, formatRaceTime } from "../lib/timeFormat";
 import type { SessionReview } from "../types/session";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
@@ -125,12 +126,16 @@ const avgField = (rows: Field[], key: string) => {
   const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 };
+const medianField = (rows: Field[], key: string) => {
+  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite).sort((a, b) => a - b);
+  if (!values.length) return null;
+  const middle = Math.floor(values.length / 2);
+  return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+};
 const avgNumbers = (values: Array<number | null | undefined>) => {
   const clean = values.filter((value): value is number => value != null && Number.isFinite(value));
   return clean.length ? clean.reduce((sum, value) => sum + value, 0) / clean.length : null;
 };
-const isRaceTimeField = (key: string) => key.includes("time") || key.includes("gap");
-
 function useSessionReview() {
   const [review, setReview] = useState<SessionReview | null>(null);
   const [error, setError] = useState(false);
@@ -138,7 +143,7 @@ function useSessionReview() {
     let mounted = true;
     const load = () =>
       api
-        .review()
+        .review(900)
         .then((data) => {
           if (mounted) {
             setReview(data);
@@ -147,7 +152,7 @@ function useSessionReview() {
         })
         .catch(() => mounted && setError(true));
     load();
-    const id = window.setInterval(load, 3000);
+    const id = window.setInterval(load, 6000);
     return () => {
       mounted = false;
       window.clearInterval(id);
@@ -241,7 +246,7 @@ function BrakeGrid({ player, dense = false }: { player?: PlayerState; dense?: bo
   );
 }
 
-function CompetitorRows({ competitors, limit = 10, filter = "all" }: { competitors: CompetitorState[]; limit?: number; filter?: string }) {
+function CompetitorRows({ competitors, limit = 10, filter = "all", showGap = true }: { competitors: CompetitorState[]; limit?: number; filter?: string; showGap?: boolean }) {
   const [sortKey, setSortKey] = useState<keyof CompetitorState>("position");
   const [direction, setDirection] = useState<SortDirection>("asc");
   const filtered = competitors.filter((car) => filter === "all" || car.vehicle_class === filter);
@@ -270,7 +275,7 @@ function CompetitorRows({ competitors, limit = 10, filter = "all" }: { competito
             <th>{heading("Lap", "total_laps")}</th>
             <th>{heading("Last", "last_lap_time")}</th>
             <th>{heading("Best", "best_lap_time")}</th>
-            <th>{heading("Gap", "time_behind_next")}</th>
+            {showGap && <th>{heading("Gap", "time_behind_next")}</th>}
             <th>{heading("Pits", "pitstops")}</th>
           </tr>
         </thead>
@@ -284,7 +289,7 @@ function CompetitorRows({ competitors, limit = 10, filter = "all" }: { competito
               <td>{text(car.total_laps ?? car.current_lap)}</td>
               <td>{lapTime(car.last_lap_time)}</td>
               <td>{lapTime(car.best_lap_time)}</td>
-              <td>{seconds(car.time_behind_next ?? car.gap_to_player)}</td>
+              {showGap && <td>{seconds(car.time_behind_next ?? car.gap_to_player)}</td>}
               <td>{car.in_pits ? "Pit" : text(car.pitstops)}</td>
             </tr>
           ))}
@@ -296,14 +301,15 @@ function CompetitorRows({ competitors, limit = 10, filter = "all" }: { competito
 
 function BasicLineChart({ data, lines, xKey = "lap_number", height = 220 }: { data: Field[]; lines: Array<[string, string]>; xKey?: string; height?: number }) {
   const timeAxis = lines.some(([key]) => isRaceTimeField(key));
+  const xTimeAxis = isRaceTimeField(xKey);
   if (!data.length) return <EmptyState />;
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data}>
         <CartesianGrid stroke="#27313a" />
-        <XAxis dataKey={xKey} stroke="#8896a3" />
+        <XAxis dataKey={xKey} stroke="#8896a3" tickFormatter={(value) => xTimeAxis ? chartLabelFormatter(value, xKey) : String(value)} />
         <YAxis stroke="#8896a3" tickFormatter={(value) => timeAxis ? formatRaceTime(Number(value)) : String(value)} />
-        <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} formatter={(value, name) => isRaceTimeField(String(name)) ? formatRaceTime(Number(value)) : value} />
+        <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => xTimeAxis ? chartLabelFormatter(value, xKey) : String(value)} formatter={chartValueFormatter} />
         <Legend />
         {lines.map(([key, color]) => <Line key={key} dataKey={key} stroke={color} dot={false} connectNulls />)}
       </LineChart>
@@ -318,6 +324,27 @@ function lastSamples(review: SessionReview | null, limit = 40) {
 function sampleLapRows(review: SessionReview | null) {
   const laps = review?.laps?.length ? review.laps : [];
   return (laps as Field[]).slice(-12);
+}
+
+function validPaceRows(rows: Field[]) {
+  const candidates = rows.filter((row) => {
+    const lapTime = Number(row.lap_time);
+    return Number.isFinite(lapTime) && lapTime >= 40 && lapTime <= 900 && row.valid_lap !== false && row.in_pit !== true;
+  });
+  const normal = medianField(candidates, "lap_time");
+  if (normal == null) return candidates;
+  return candidates.filter((row) => {
+    const lapTime = Number(row.lap_time);
+    return lapTime >= normal * 0.75 && lapTime <= normal * 1.8;
+  });
+}
+
+function averageLapDelta(rows: Field[], key: string) {
+  if (rows.length < 4) return null;
+  const middle = Math.floor(rows.length / 2);
+  const first = avgField(rows.slice(0, middle), key);
+  const second = avgField(rows.slice(middle), key);
+  return first != null && second != null ? second - first : null;
 }
 
 function numericSampleFields(samples: Field[]) {
@@ -373,7 +400,7 @@ function buildStints(laps: Field[]) {
   const stints: Array<{ number: number; rows: Field[]; summary: Field }> = [];
   let current: Field[] = [];
   laps.forEach((lap) => {
-    if (current.length && Number(lap.fuel_added || 0) > 2) {
+    if (current.length && lap.in_pit === true) {
       stints.push({ number: stints.length + 1, rows: current, summary: {} });
       current = [];
     }
@@ -382,14 +409,15 @@ function buildStints(laps: Field[]) {
   if (current.length) stints.push({ number: stints.length + 1, rows: current, summary: {} });
   return stints.map((stint) => {
     const rows = stint.rows;
+    const paceRows = validPaceRows(rows);
     const fuelUsed = rows.map((row) => Number(row.fuel_used)).filter(Number.isFinite).reduce((sum, value) => sum + value, 0);
     const summary = {
       stint_number: stint.number,
       start_lap: rows[0]?.lap_number,
       end_lap: rows[rows.length - 1]?.lap_number,
       lap_count: rows.length,
-      fastest_lap: minField(rows, "lap_time"),
-      average_lap: avgField(rows, "lap_time"),
+      fastest_lap: minField(paceRows, "lap_time"),
+      average_lap: avgField(paceRows, "lap_time"),
       top_speed: maxField(rows, "top_speed"),
       fuel_used: fuelUsed || null,
       fuel_per_lap: fuelUsed && rows.length ? fuelUsed / rows.length : null,
@@ -621,29 +649,51 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
 
 export function LapCompare({ telemetry }: EngineeringProps) {
   const { review } = useSessionReview();
-  const [lapA, setLapA] = useState("");
-  const [lapB, setLapB] = useState("");
-  const samples: Field[] = sampleWithLive(review, telemetry, 220).map((sample, index) => ({ distance: index, ...sample }));
-  const lapOptions = Array.from(new Set(samples.map((sample) => text(sample.lap_number)).filter((value) => value !== "--")));
-  const selectedSamples = samples.filter((sample) => !lapA || text(sample.lap_number) === lapA || text(sample.lap_number) === lapB);
-  const playerCar = telemetry?.competitors?.find((car) => car.is_player);
+  const laps = validPaceRows((review?.laps || []) as Field[]);
+  const fastestLapTime = minField(laps, "lap_time");
+  const slowestLapTime = maxField(laps, "lap_time");
+  const averageLapTime = avgField(laps, "lap_time");
+  const fastestLap = laps.find((lap) => Number(lap.lap_time) === fastestLapTime);
+  const trend = averageLapDelta(laps, "lap_time");
+  const fuelTrend = averageLapDelta(laps, "fuel_used");
+  const tyreTrend = averageLapDelta(laps, "tyre_wear_delta");
+  const insights = [
+    laps.length < 3
+      ? "Need at least three valid laps before the comparison becomes useful."
+      : trend != null && trend > 0.25
+        ? `Pace is fading by ${formatRaceTime(trend)} between the first and second half of the run. Check tyre temperature, traffic, and fuel-save behavior.`
+        : trend != null && trend < -0.25
+          ? `Pace is improving by ${formatRaceTime(Math.abs(trend))} in the second half. The car or driver rhythm is coming toward the lap.`
+          : "Lap pace is broadly stable across the valid laps.",
+    fastestLap
+      ? `Best valid lap is lap ${text(fastestLap.lap_number)} at ${formatRaceTime(fastestLapTime)}. Use it as the clean reference for the current session.`
+      : "No clean fastest lap is available yet.",
+    fuelTrend != null && Math.abs(fuelTrend) > 0.15
+      ? `Fuel use ${fuelTrend > 0 ? "increases" : "drops"} by ${fmt(Math.abs(fuelTrend), 2, " L/lap")} later in the run.`
+      : "Fuel use is not showing a large half-run shift.",
+    tyreTrend != null && Math.abs(tyreTrend) > 0.005
+      ? `Tyre wear delta ${tyreTrend > 0 ? "rises" : "falls"} later in the run. Compare it against lap-time trend before changing stint length.`
+      : "Tyre wear per lap is not showing a strong trend yet.",
+  ];
   return (
     <div className="page grid">
       <section className="card span-12">
-        <SectionTitle title="Lap Selectors" help="Choose two laps from the recorded live session. Comparing similar fuel and tyre states gives the clearest driving conclusions." />
-        <div className="input-grid">
-          <input value="Current session" readOnly />
-          <input value="Player" readOnly />
-          <select value={lapA} onChange={(event) => setLapA(event.target.value)}><option value="">Lap A: latest</option>{lapOptions.map((lap) => <option key={lap} value={lap}>Lap {lap}</option>)}</select>
-          <select value={lapB} onChange={(event) => setLapB(event.target.value)}><option value="">Lap B: previous</option>{lapOptions.map((lap) => <option key={lap} value={lap}>Lap {lap}</option>)}</select>
-          <input value="Tyre/fuel when available" readOnly />
+        <SectionTitle title="Valid Lap Comparison" help="Compares every valid lap in the current live session. Invalid laps, pit laps, and timing outliers are filtered out before charts and insights are calculated." />
+        <div className="header-grid">
+          <Metric label="Valid laps" value={laps.length || "--"} />
+          <Metric label="Fastest" value={lapTime(fastestLapTime)} sub={fastestLap ? `Lap ${text(fastestLap.lap_number)}` : undefined} />
+          <Metric label="Average" value={lapTime(averageLapTime)} />
+          <Metric label="Spread" value={fastestLapTime != null && slowestLapTime != null ? formatRaceTime(slowestLapTime - fastestLapTime) : "--"} />
+          <Metric label="Avg fuel" value={fmt(avgField(laps, "fuel_used"), 2, " L")} />
+          <Metric label="Top speed" value={fmt(maxField(laps, "top_speed"), 0, " km/h")} />
+          <Metric label="Current lap" value={text(telemetry?.player?.lap_number)} />
         </div>
       </section>
-      <section className="card span-4"><SectionTitle title="Comparison Summary" help="Summarizes the selected laps. Look for speed, fuel, and timing differences before judging driving changes." /><Metric label="Lap A" value={lapA || text(playerCar?.total_laps)} /><Metric label="Lap B" value={lapB || "previous"} /><Metric label="Difference" value="Sector data pending" /><Metric label="Top speed" value={fmt(maxField(selectedSamples, "speed_kph"), 0, " km/h")} /><Metric label="Fuel delta" value="Needs complete lap samples" /></section>
-      <section className="card span-8"><SectionTitle title="Speed vs Lap Distance" help="Compares speed, throttle, and brake across the lap. Time is often gained by braking cleanly, carrying minimum speed, and applying throttle earlier." /><BasicLineChart data={selectedSamples} xKey="distance" lines={[["speed_kph", "#e6b450"], ["throttle", "#69d28f"], ["brake", "#ff6961"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Telemetry Comparison" help="Compares RPM, steering, and gear choice. Extra steering or wrong gear selection can cost exit speed and increase tyre stress." /><BasicLineChart data={selectedSamples} xKey="distance" lines={[["rpm", "#6dd6ff"], ["steering", "#ff8c69"], ["gear", "#c7a8ff"]]} /></section>
-      <section className="card span-3"><SectionTitle title="Sector Breakdown" help="Breaks time loss into track sections. Focus first on the largest loss area rather than chasing every corner." /><Metric label="Sector 1 delta" value="--" /><Metric label="Sector 2 delta" value="--" /><Metric label="Sector 3 delta" value="--" /><Metric label="Largest loss" value="Not enough lap data" /></section>
-      <section className="card span-3"><SectionTitle title="Coaching Insight" help="Uses simple driving rules to point at likely improvements. Treat it as a starting hypothesis to confirm in the charts." /><p className="muted">Collect complete lap samples to compare braking, minimum speed, throttle pickup, exits, and steering consistency.</p></section>
+      <section className="card span-8"><SectionTitle title="Lap Time Trend" help="Shows valid lap pace over the session. Use the shape to separate warm-up, consistency, traffic, and degradation." /><BasicLineChart data={laps} lines={[["lap_time", "#e6b450"]]} /></section>
+      <section className="card span-4"><SectionTitle title="Insights" help="Summarizes the session-wide comparison. These notes use filtered valid laps, so bad timing samples do not dominate the story." /><div className="insight-list">{insights.map((item) => <p key={item}>{item}</p>)}</div></section>
+      <section className="card span-6"><SectionTitle title="Fuel And Tyre Trend" help="Compares consumption and tyre wear across valid laps. Rising wear with slower laps points toward degradation; stable wear with slower laps often points to traffic or mistakes." /><BasicLineChart data={laps} lines={[["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Pace And Speed" help="Compares lap time against top speed. If top speed is stable while lap time grows, losses are likely in corners, traffic, or traction rather than straight-line pace." /><BasicLineChart data={laps} lines={[["lap_time", "#e6b450"], ["top_speed", "#69d28f"]]} /></section>
+      <section className="card span-12"><SectionTitle title="Valid Lap Table" help="Lists the laps included in this comparison after invalid, pit, and outlier filtering." /><LapTable rows={laps} /></section>
     </div>
   );
 }
@@ -679,7 +729,7 @@ export function OneLapTiming({ competitors }: EngineeringProps) {
       </section>
       <section className="card span-12">
         <SectionTitle title="Timing Table" help="Shows current pace and position for visible cars. Look for pit state, invalid laps, and sector loss to understand who is genuinely fast." />
-        <CompetitorRows competitors={rows} limit={60} />
+        <CompetitorRows competitors={rows} limit={60} showGap={false} />
       </section>
     </div>
   );
@@ -728,12 +778,16 @@ export function FieldSpread({ telemetry, competitors }: EngineeringProps) {
 
 export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
   const { review, error } = useSessionReview();
+  const [selectedStint, setSelectedStint] = useState(1);
   const laps = (review?.laps || []) as Field[];
   const stints = buildStints(laps);
   if (error && !stints.length) return <div className="page"><section className="card"><EmptyState title="No stint history" detail="Stint summaries will appear after recording completed laps." /></section></div>;
   const sessionFuel = stints.reduce((sum, stint) => sum + (Number(stint.summary.fuel_used) || 0), 0);
   const fastest = minField(stints.map((stint) => stint.summary), "fastest_lap");
   const average = avgField(stints.map((stint) => stint.summary), "average_lap");
+  const selected = stints.find((stint) => stint.number === selectedStint) || stints[0];
+  const rows = selected?.rows || sampleLapRows(review);
+  const summary = selected?.summary || {};
   return (
     <div className="page grid">
       <section className="card span-12">
@@ -748,9 +802,14 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
         </div>
       </section>
       <section className="card span-12">
-        <SectionTitle title="Stint Summary" help="Lists all detected stints. Fuel additions above 2 L start a new stint, so pit cycles are visible at a glance." />
+        <SectionTitle title="Stint Summary" help="Lists all detected stints. Telemetry pit entries start a new stint, and returning to the main menu starts a new session." />
         {stints.length ? <StintSummaryTable stints={stints} /> : <EmptyState detail="Complete laps and pit cycles will populate the stint history." />}
       </section>
+      <section className="card span-12"><SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits come from telemetry pit entries, and returning to the main menu starts a new session." /><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<span className="muted">Stints split only on pit entry or a new session.</span></div></section>
+      <section className="card span-3"><SectionTitle title="Summary" help="Condenses stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Stint length" value={text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Fuel used" value={`${fmt(summary.fuel_used as number ?? telemetry?.player?.fuel_liters)} L`} /></section>
+      <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Wear delta" value={pct(strategy?.tyres?.average_wear)} /><Metric label="Deg per lap" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
+      <section className="card span-6"><SectionTitle title="Stint Comparison" help="Compares lap time, fuel use, and tyre change across the stint. Look for degradation trends after fuel load falls." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
+      <section className="card span-12"><SectionTitle title="Stint Lap Table" help="Shows every lap in the selected stint. Sort the story by lap time, fuel used, and events before changing setup assumptions." /><LapTable rows={rows} /></section>
     </div>
   );
 }
@@ -784,28 +843,9 @@ function EventList({ review }: { review: SessionReview | null }) {
   return <div className="table-wrap"><table><tbody>{events.slice(-20).map((event, index) => <tr key={index}><td>{text(event.timestamp ?? event.lap_number)}</td><td>{text(event.recommendation_type ?? event.type ?? "Event")}</td><td>{text(event.message ?? event.priority ?? "")}</td></tr>)}</tbody></table></div>;
 }
 
-export function StintData({ telemetry, strategy }: EngineeringProps) {
-  const { review } = useSessionReview();
-  const [selectedStint, setSelectedStint] = useState(1);
-  const laps = sampleLapRows(review);
-  const stints = buildStints((review?.laps || []) as Field[]);
-  const selected = stints.find((stint) => stint.number === selectedStint) || stints[0];
-  const rows = selected?.rows || laps;
-  const summary = selected?.summary || {};
-  return (
-    <div className="page grid">
-      <section className="card span-12"><SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits are inferred from pit stops or fuel increases, so check unusual short stints manually." /><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<span className="muted">Splits are inferred from fuel increases greater than 2 L.</span></div></section>
-      <section className="card span-3"><SectionTitle title="Summary" help="Condenses stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Stint length" value={text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Fuel used" value={`${fmt(summary.fuel_used as number ?? telemetry?.player?.fuel_liters)} L`} /></section>
-      <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Wear delta" value={pct(strategy?.tyres?.average_wear)} /><Metric label="Deg per lap" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
-      <section className="card span-6"><SectionTitle title="Stint Comparison" help="Compares lap time, fuel use, and tyre change across the stint. Look for degradation trends after fuel load falls." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
-      <section className="card span-12"><SectionTitle title="Stint Lap Table" help="Shows every lap in the selected stint. Sort the story by lap time, fuel used, and events before changing setup assumptions." /><LapTable rows={rows} /></section>
-    </div>
-  );
-}
-
 function LapTable({ rows }: { rows: Field[] }) {
   if (!rows.length) return <EmptyState />;
-  return <div className="table-wrap"><table><thead><tr><th>Lap</th><th>Lap time</th><th>Start</th><th>End</th><th>Fuel used</th><th>Tyre wear delta</th><th>Top speed</th><th>Samples</th><th>Valid</th><th>Notes</th></tr></thead><tbody>{rows.map((row, index) => <tr key={index}><td>{text(row.lap_number)}</td><td>{lapTime(row.lap_time as number)}</td><td>{formatRaceTime(row.start_time as number)}</td><td>{formatRaceTime(row.end_time as number)}</td><td>{fmt(row.fuel_used as number, 2, " L")}</td><td>{pct(row.tyre_wear_delta as number)}</td><td>{fmt((row.top_speed ?? row.speed_kph) as number, 0, " km/h")}</td><td>{text(row.sample_count)}</td><td>{row.valid_lap === false ? "Invalid" : "Valid/unknown"}</td><td>{Number(row.fuel_added || 0) > 2 ? `Refuel +${fmt(row.fuel_added as number, 1, " L")}` : text(row.event)}</td></tr>)}</tbody></table></div>;
+  return <div className="table-wrap"><table><thead><tr><th>Lap</th><th>Lap time</th><th>Start</th><th>End</th><th>Fuel used</th><th>Tyre wear delta</th><th>Top speed</th><th>Samples</th><th>Valid</th><th>Notes</th></tr></thead><tbody>{rows.map((row, index) => <tr key={index}><td>{text(row.lap_number)}</td><td>{lapTime(row.lap_time as number)}</td><td>{formatRaceTime(row.start_time as number)}</td><td>{formatRaceTime(row.end_time as number)}</td><td>{fmt(row.fuel_used as number, 2, " L")}</td><td>{pct(row.tyre_wear_delta as number)}</td><td>{fmt((row.top_speed ?? row.speed_kph) as number, 0, " km/h")}</td><td>{text(row.sample_count)}</td><td>{row.valid_lap === false ? "Invalid" : "Valid/unknown"}</td><td>{row.in_pit === true ? "Pit entry" : text(row.event)}</td></tr>)}</tbody></table></div>;
 }
 
 export function OpponentStats({ competitors }: EngineeringProps) {
@@ -862,7 +902,7 @@ export function XYPlotter({ telemetry }: EngineeringProps) {
   return (
     <div className="page grid">
       <section className="card span-12"><SectionTitle title="Data Selectors" help="Chooses numeric channels for custom plots. Put cause on X and response on Y to test setup or driving relationships." /><div className="input-grid"><select value={xKey} onChange={(e) => setXKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><select value={yKey} onChange={(e) => setYKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><input value={`${options.length} numeric fields available`} readOnly /><input value="Compare lap off" readOnly /></div></section>
-      <section className="card span-8"><SectionTitle title="Plot Area" help="Shows the selected relationship. Tight patterns indicate consistent behavior; wide scatter often points to traffic, mistakes, or changing conditions." />{samples.length ? <ResponsiveContainer width="100%" height={320}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey={xKey} name={xKey} stroke="#8896a3" /><YAxis dataKey={yKey} name={yKey} stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Scatter data={samples} fill="#e6b450" line /></ScatterChart></ResponsiveContainer> : <EmptyState detail="Choose fields after recorded samples are available." />}</section>
+      <section className="card span-8"><SectionTitle title="Plot Area" help="Shows the selected relationship. Tight patterns indicate consistent behavior; wide scatter often points to traffic, mistakes, or changing conditions." />{samples.length ? <ResponsiveContainer width="100%" height={320}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey={xKey} name={xKey} stroke="#8896a3" tickFormatter={(value) => formatTelemetryValue(value, xKey)} /><YAxis dataKey={yKey} name={yKey} stroke="#8896a3" tickFormatter={(value) => formatTelemetryValue(value, yKey)} /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} formatter={chartValueFormatter} labelFormatter={(value) => formatTelemetryValue(value, xKey)} /><Scatter data={samples} fill="#e6b450" line /></ScatterChart></ResponsiveContainer> : <EmptyState detail="Choose fields after recorded samples are available." />}</section>
       <section className="card span-4"><SectionTitle title="Stats" help="Summarizes the selected Y channel. Use spread and sample count to judge whether the plot is meaningful." /><Metric label="Min" value={Number.isFinite(stats.min) ? fmt(stats.min) : "--"} /><Metric label="Max" value={Number.isFinite(stats.max) ? fmt(stats.max) : "--"} /><Metric label="Average" value={fmt(stats.avg)} /><Metric label="Std dev" value={fmt(stats.sd)} /><Metric label="Samples" value={stats.count} /></section>
       <section className="card span-12"><SectionTitle title="Preset Plots" help="Quickly loads common engineering relationships. Presets help validate braking, throttle, steering, fuel, and speed behavior." /><div className="control-row">{presets.filter(([, x, y]) => options.includes(x) && options.includes(y)).map(([label, x, y]) => <button key={label} onClick={() => { setXKey(x); setYKey(y); }}>{label}</button>)}</div></section>
     </div>

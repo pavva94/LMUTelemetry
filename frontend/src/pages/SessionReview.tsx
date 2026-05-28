@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
+import { chartLabelFormatter, chartValueFormatter, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceTime } from "../lib/timeFormat";
-import { LiveDashboard } from "./LiveDashboard";
-import type { SavedSession, SessionDashboard, SessionReview as Review } from "../types/session";
+import type { SavedSession, SessionReview as Review } from "../types/session";
 
 type Row = Record<string, number | string | boolean | null | undefined>;
 
@@ -30,13 +30,15 @@ function Metric({ label, value, sub }: { label: string; value: string | number; 
 
 function Chart({ data, xKey = "game_time", lines, height = 240 }: { data: Row[]; xKey?: string; lines: Array<[string, string]>; height?: number }) {
   if (!data.length) return <EmptyState detail="The selected session has no samples for this chart." />;
+  const yTimeAxis = lines.some(([key]) => isRaceTimeField(key));
+  const xTimeAxis = isRaceTimeField(xKey);
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data}>
         <CartesianGrid stroke="#27313a" />
-        <XAxis dataKey={xKey} stroke="#8896a3" />
-        <YAxis stroke="#8896a3" />
-        <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} />
+        <XAxis dataKey={xKey} stroke="#8896a3" tickFormatter={(value) => xTimeAxis ? chartLabelFormatter(value, xKey) : String(value)} />
+        <YAxis stroke="#8896a3" tickFormatter={(value) => yTimeAxis ? chartLabelFormatter(value, lines[0]?.[0] || "") : String(value)} />
+        <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => xTimeAxis ? chartLabelFormatter(value, xKey) : String(value)} formatter={chartValueFormatter} />
         <Legend />
         {lines.map(([key, color]) => <Line key={key} dataKey={key} stroke={color} dot={false} connectNulls />)}
       </LineChart>
@@ -49,7 +51,6 @@ export function SessionReview() {
   const [selectedId, setSelectedId] = useState("");
   const [sessionTypeFilter, setSessionTypeFilter] = useState("all");
   const [review, setReview] = useState<Review | null>(null);
-  const [dashboard, setDashboard] = useState<SessionDashboard | null>(null);
   const [status, setStatus] = useState("Loading saved sessions");
 
   const loadSessions = () =>
@@ -70,21 +71,17 @@ export function SessionReview() {
   useEffect(() => {
     if (!selectedId) return;
     let mounted = true;
-    const load = () =>
-      Promise.all([api.reviewSession(selectedId), api.sessionDashboard(selectedId)])
-        .then(([data, dashboardData]) => {
-          if (mounted) {
-            setReview(data);
-            setDashboard(dashboardData);
-            setStatus("Session loaded");
-          }
-        })
-        .catch(() => mounted && setStatus("Could not load selected session"));
-    load();
-    const id = window.setInterval(load, 5000);
+    setStatus("Loading selected session");
+    api.reviewSession(selectedId)
+      .then((data) => {
+        if (mounted) {
+          setReview(data);
+          setStatus("Session loaded");
+        }
+      })
+      .catch(() => mounted && setStatus("Could not load selected session"));
     return () => {
       mounted = false;
-      window.clearInterval(id);
     };
   }, [selectedId]);
 
@@ -145,12 +142,6 @@ export function SessionReview() {
           <input value={status} readOnly />
         </div>
       </section>
-
-      {dashboard?.telemetry && (
-        <section className="span-12">
-          <LiveDashboard telemetry={dashboard.telemetry} strategy={dashboard.strategy} recommendation={dashboard.recommendation} connected readOnlyLabel="Saved Session Snapshot" />
-        </section>
-      )}
 
       <section className="card span-12">
         <SectionTitle title="Detected Sessions" help="Lists recorded practice, qualifying, and race segments. Session boundaries help compare the right laps under the right conditions." />

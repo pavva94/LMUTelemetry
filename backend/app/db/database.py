@@ -102,8 +102,14 @@ def _ensure_sqlite_columns() -> None:
         "tyre_pressure_fr": "FLOAT",
         "tyre_pressure_rl": "FLOAT",
         "tyre_pressure_rr": "FLOAT",
+        "pitstops": "INTEGER",
+        "in_pits": "BOOLEAN",
+        "pit_state": "VARCHAR",
     }
     with engine.begin() as connection:
         for name, column_type in columns.items():
             if name not in existing:
                 connection.execute(text(f"ALTER TABLE telemetry_samples ADD COLUMN {name} {column_type}"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_telemetry_samples_session_id_id ON telemetry_samples (session_id, id)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_telemetry_samples_session_id_lap ON telemetry_samples (session_id, lap_number)"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_recommendations_session_id_id ON recommendations (session_id, id)"))
