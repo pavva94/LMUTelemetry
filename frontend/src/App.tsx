@@ -16,6 +16,7 @@ import {
   XYPlotter,
 } from "./pages/RaceEngineeringPages";
 import { SessionReview } from "./pages/SessionReview";
+import { RacePrepReport } from "./pages/RacePrepReport";
 import { StrategyPlanner } from "./pages/StrategyPlanner";
 import { UserProfile } from "./pages/UserProfile";
 import { useStrategySocket } from "./hooks/useStrategySocket";
@@ -47,6 +48,7 @@ export default function App() {
         {page === "stint-data" && <StintData telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "settings" && <SettingsPage telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "planner" && <StrategyPlanner strategy={strategy} telemetry={telemetry} />}
+        {page === "race-prep" && <RacePrepReport strategy={strategy} />}
         {page === "pit" && <PitWindow strategy={strategy} />}
         {page === "review" && <SessionReview />}
       </ErrorBoundary>

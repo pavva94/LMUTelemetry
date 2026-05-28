@@ -4,6 +4,7 @@ import {
   CircleDot,
   ClipboardList,
   Flag,
+  FileText,
   Gauge,
   GitCompare,
   History,
@@ -25,6 +26,7 @@ const liveItems = [
   ["xy-plotter", "X-Y Plotter", LineChart],
   ["stint-data", "Stint Data", ClipboardList],
   ["planner", "Strategy Planner", Activity],
+  ["race-prep", "Race Prep Report", FileText],
   ["pit", "Pit Window", Flag],
   ["settings", "Settings", Settings],
 ] as const;
