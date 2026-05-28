@@ -405,6 +405,7 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
   const fuel = strategy?.fuel;
   const tyres = telemetry?.player?.tyre_state;
   const tyreModel = strategy?.tyres;
+  const fuelLapsNeeded = Math.max(0, (fuel?.valid_laps_required ?? 3) - (fuel?.valid_laps_observed ?? 0));
   const rows = sampleWithLive(review, telemetry, 80);
   const lapRows = sampleLapRows(review);
   const playerCar = (telemetry?.competitors || []).find((c) => c.is_player);
@@ -422,7 +423,7 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
         <Metric label="Current fuel" value={`${fmt(player?.fuel_liters)} L`} />
         <Metric label="Fuel capacity" value={`${fmt(player?.fuel_capacity_liters)} L`} />
         <Metric label="Last lap used" value={`${fmt(fuel?.last_lap_fuel_used_liters, 2)} L`} />
-        <Metric label="Stint average" value={`${fmt(fuel?.fuel_per_lap_liters, 2)} L`} sub={`${fuel?.stint_laps_observed ?? 0} laps, ${fuel?.confidence || "low"} confidence`} />
+        <Metric label="Session average" value={`${fmt(fuel?.fuel_per_lap_liters, 2)} L`} sub={fuelLapsNeeded > 0 ? `Need ${fuelLapsNeeded} more valid lap${fuelLapsNeeded === 1 ? "" : "s"}` : `${fuel?.valid_laps_observed ?? 0} valid laps, ${fuel?.confidence || "low"} confidence`} />
         <Metric label="Laps remaining" value={fmt(fuel?.fuel_laps_remaining)} />
         <Metric label="Needed to finish" value={`${fmt(fuel?.required_fuel_to_finish)} L`} />
         <Metric label="Fuel margin" value={`${fmt(fuel?.fuel_delta_to_finish)} L`} />
@@ -725,20 +726,54 @@ export function FieldSpread({ telemetry, competitors }: EngineeringProps) {
   );
 }
 
-export function RaceHistory({ telemetry }: EngineeringProps) {
+export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
   const { review, error } = useSessionReview();
-  const samples = sampleWithLive(review, telemetry, 300);
-  const laps = sampleLapRows(review);
-  if (error && !samples.length) return <div className="page"><section className="card"><EmptyState title="No saved sessions" detail="Session history will appear after recording telemetry samples." /></section></div>;
+  const laps = (review?.laps || []) as Field[];
+  const stints = buildStints(laps);
+  if (error && !stints.length) return <div className="page"><section className="card"><EmptyState title="No stint history" detail="Stint summaries will appear after recording completed laps." /></section></div>;
+  const sessionFuel = stints.reduce((sum, stint) => sum + (Number(stint.summary.fuel_used) || 0), 0);
+  const fastest = minField(stints.map((stint) => stint.summary), "fastest_lap");
+  const average = avgField(stints.map((stint) => stint.summary), "average_lap");
   return (
     <div className="page grid">
-      <section className="card span-6"><SectionTitle title="Lap Time History" help="Shows pace evolution over the session. Rising lap times can indicate tyre degradation, fuel saving, traffic, or inconsistency." /><BasicLineChart data={laps} lines={[["lap_time", "#6dd6ff"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Lap Fuel Usage" help="Shows fuel burned per completed lap. Stable values improve strategy confidence; spikes often mean traffic, draft, or driving style changes." /><BasicLineChart data={laps} lines={[["fuel_used", "#e6b450"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Fuel Over Session" help="Tracks remaining fuel through time. A linear slope makes finish estimates reliable; jumps usually mark refuelling or session changes." /><BasicLineChart data={samples} xKey="game_time" lines={[["fuel_liters", "#e6b450"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Tyre Wear History" help="Tracks tyre condition by corner. Uneven wear points to balance, setup, or driving load concentrated on one axle or side." /><BasicLineChart data={samples} xKey="game_time" lines={[["tyre_wear_fl", "#6dd6ff"], ["tyre_wear_fr", "#ff8c69"], ["tyre_wear_rl", "#91e48f"], ["tyre_wear_rr", "#c7a8ff"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Speed Trace" help="Shows speed and RPM over the session. Compare peaks and drops to spot traffic, mistakes, gearing limits, or changing conditions." /><BasicLineChart data={samples} xKey="game_time" lines={[["speed_kph", "#e6b450"], ["rpm", "#6dd6ff"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Driver Inputs" help="Shows throttle, brake, and steering history. Smooth, separated inputs usually help tyre life and repeatable lap times." /><BasicLineChart data={samples} xKey="game_time" lines={[["throttle", "#69d28f"], ["brake", "#ff6961"], ["steering", "#c7a8ff"]]} /></section>
-      <section className="card span-12"><SectionTitle title="Event Timeline" help="Lists recorded session events and recommendations. Use it to connect pace changes with pits, warnings, or notable moments." /><EventList review={review} /></section>
+      <section className="card span-12">
+        <SectionTitle title="Stint History" help="Summarizes each run between pit stops. Compare stint length, pace, fuel use, tyre change, and top speed to understand the session." />
+        <div className="header-grid">
+          <Metric label="Stints" value={stints.length || "--"} />
+          <Metric label="Completed laps" value={laps.length || text(strategy?.stint?.current_stint_lap)} />
+          <Metric label="Fastest lap" value={lapTime(fastest)} />
+          <Metric label="Average lap" value={lapTime(average)} />
+          <Metric label="Fuel used" value={fmt(sessionFuel || null, 2, " L")} />
+          <Metric label="Current lap" value={text(telemetry?.player?.lap_number)} />
+        </div>
+      </section>
+      <section className="card span-12">
+        <SectionTitle title="Stint Summary" help="Lists all detected stints. Fuel additions above 2 L start a new stint, so pit cycles are visible at a glance." />
+        {stints.length ? <StintSummaryTable stints={stints} /> : <EmptyState detail="Complete laps and pit cycles will populate the stint history." />}
+      </section>
+    </div>
+  );
+}
+
+function StintSummaryTable({ stints }: { stints: Array<{ number: number; rows: Field[]; summary: Field }> }) {
+  return (
+    <div className="table-wrap">
+      <table>
+        <thead><tr><th>Stint</th><th>Laps</th><th>Lap range</th><th>Fastest</th><th>Average</th><th>Fuel used</th><th>Fuel/lap</th><th>Tyre delta</th><th>Top speed</th></tr></thead>
+        <tbody>{stints.map((stint) => (
+          <tr key={stint.number}>
+            <td>{stint.number}</td>
+            <td>{text(stint.summary.lap_count)}</td>
+            <td>{text(stint.summary.start_lap)}-{text(stint.summary.end_lap)}</td>
+            <td>{lapTime(stint.summary.fastest_lap as number)}</td>
+            <td>{lapTime(stint.summary.average_lap as number)}</td>
+            <td>{fmt(stint.summary.fuel_used as number, 2, " L")}</td>
+            <td>{fmt(stint.summary.fuel_per_lap as number, 3, " L")}</td>
+            <td>{pct(stint.summary.tyre_wear_delta as number)}</td>
+            <td>{fmt(stint.summary.top_speed as number, 0, " km/h")}</td>
+          </tr>
+        ))}</tbody>
+      </table>
     </div>
   );
 }
@@ -759,7 +794,7 @@ export function StintData({ telemetry, strategy }: EngineeringProps) {
   const summary = selected?.summary || {};
   return (
     <div className="page grid">
-      <section className="card span-12"><SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits are inferred from pit stops or fuel increases, so check unusual short stints manually." /><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<button>Compare stints</button><span className="muted">Splits are inferred from fuel increases greater than 2 L.</span></div></section>
+      <section className="card span-12"><SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits are inferred from pit stops or fuel increases, so check unusual short stints manually." /><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<span className="muted">Splits are inferred from fuel increases greater than 2 L.</span></div></section>
       <section className="card span-3"><SectionTitle title="Summary" help="Condenses stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Stint length" value={text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Fuel used" value={`${fmt(summary.fuel_used as number ?? telemetry?.player?.fuel_liters)} L`} /></section>
       <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Wear delta" value={pct(strategy?.tyres?.average_wear)} /><Metric label="Deg per lap" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
       <section className="card span-6"><SectionTitle title="Stint Comparison" help="Compares lap time, fuel use, and tyre change across the stint. Look for degradation trends after fuel load falls." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>

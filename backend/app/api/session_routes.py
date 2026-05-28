@@ -29,6 +29,12 @@ def saved_session_review(session_id: str, request: Request, limit: int = 5000):
     return service.repository.review(session_id, sample_limit=limit)
 
 
+@router.get("/session/review/{session_id}/dashboard")
+def saved_session_dashboard(session_id: str, request: Request):
+    service = request.app.state.telemetry_service
+    return service.repository.dashboard_snapshot(session_id, service.assumptions)
+
+
 @router.get("/sessions")
 def sessions(request: Request):
     service = request.app.state.telemetry_service

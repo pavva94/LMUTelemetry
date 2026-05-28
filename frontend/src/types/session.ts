@@ -1,3 +1,6 @@
+import type { RecommendationPayload, StrategyState } from "./strategy";
+import type { TelemetrySnapshot } from "./telemetry";
+
 export type SavedSession = {
   id: string;
   created_at?: string;
@@ -17,4 +20,12 @@ export type SessionReview = {
   recommendations: Array<Record<string, number | string | null>>;
   laps: Array<Record<string, number | string | boolean | null>>;
   pit_events: Array<Record<string, number | string | boolean | null>>;
+};
+
+export type SessionDashboard = {
+  session?: SavedSession | null;
+  telemetry?: TelemetrySnapshot | null;
+  strategy: StrategyState;
+  recommendation: RecommendationPayload;
+  review: SessionReview;
 };

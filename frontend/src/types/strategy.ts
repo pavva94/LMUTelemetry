@@ -1,12 +1,14 @@
 export type FuelState = {
   last_lap_fuel_used_liters?: number;
+  fuel_capacity_liters?: number;
   fuel_per_lap_liters?: number;
   fuel_laps_remaining?: number;
   estimated_laps_remaining?: number;
   required_fuel_to_finish?: number;
   fuel_delta_to_finish?: number;
   recommended_fuel_save_per_lap?: number;
-  stint_laps_observed?: number;
+  valid_laps_observed?: number;
+  valid_laps_required?: number;
   confidence: string;
 };
 

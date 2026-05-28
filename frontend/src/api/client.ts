@@ -1,6 +1,6 @@
 import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
-import type { SavedSession, SessionReview } from "../types/session";
+import type { SavedSession, SessionDashboard, SessionReview } from "../types/session";
 import type { MotecSession, MotecSample } from "../types/motec";
 import type { ProfileLap, ProfileLapResponse, ProfileSummary } from "../types/profile";
 
@@ -22,6 +22,7 @@ export const api = {
   sessions: () => getJson<SavedSession[]>("/api/sessions"),
   review: (limit = 5000) => getJson<SessionReview>(`/api/session/review?limit=${limit}`),
   reviewSession: (id: string, limit = 5000) => getJson<SessionReview>(`/api/session/review/${encodeURIComponent(id)}?limit=${limit}`),
+  sessionDashboard: (id: string) => getJson<SessionDashboard>(`/api/session/review/${encodeURIComponent(id)}/dashboard`),
   finalizeCurrentSession: async () => {
     const response = await fetch(`${API_BASE}/api/session/current/finalize`, { method: "POST" });
     if (!response.ok) throw new Error("session finalize failed");

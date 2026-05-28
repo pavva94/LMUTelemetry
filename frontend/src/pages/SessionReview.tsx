@@ -3,7 +3,8 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
 import { formatRaceTime } from "../lib/timeFormat";
-import type { SavedSession, SessionReview as Review } from "../types/session";
+import { LiveDashboard } from "./LiveDashboard";
+import type { SavedSession, SessionDashboard, SessionReview as Review } from "../types/session";
 
 type Row = Record<string, number | string | boolean | null | undefined>;
 
@@ -48,6 +49,7 @@ export function SessionReview() {
   const [selectedId, setSelectedId] = useState("");
   const [sessionTypeFilter, setSessionTypeFilter] = useState("all");
   const [review, setReview] = useState<Review | null>(null);
+  const [dashboard, setDashboard] = useState<SessionDashboard | null>(null);
   const [status, setStatus] = useState("Loading saved sessions");
 
   const loadSessions = () =>
@@ -69,11 +71,11 @@ export function SessionReview() {
     if (!selectedId) return;
     let mounted = true;
     const load = () =>
-      api
-        .reviewSession(selectedId)
-        .then((data) => {
+      Promise.all([api.reviewSession(selectedId), api.sessionDashboard(selectedId)])
+        .then(([data, dashboardData]) => {
           if (mounted) {
             setReview(data);
+            setDashboard(dashboardData);
             setStatus("Session loaded");
           }
         })
@@ -143,6 +145,12 @@ export function SessionReview() {
           <input value={status} readOnly />
         </div>
       </section>
+
+      {dashboard?.telemetry && (
+        <section className="span-12">
+          <LiveDashboard telemetry={dashboard.telemetry} strategy={dashboard.strategy} recommendation={dashboard.recommendation} connected readOnlyLabel="Saved Session Snapshot" />
+        </section>
+      )}
 
       <section className="card span-12">
         <SectionTitle title="Detected Sessions" help="Lists recorded practice, qualifying, and race segments. Session boundaries help compare the right laps under the right conditions." />

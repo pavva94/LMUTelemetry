@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from app.db.database import SessionLocal
 from app.db.models import SessionModel, TelemetrySampleModel
+from app.db.repository import Repository
 from app.services.motec_repository import DB_PATH as MOTEC_DB_PATH, init_motec_db
 
 
@@ -103,6 +104,7 @@ class ProfileRepository:
     min_distance_ratio = 0.75
 
     def _live_laps(self) -> list[dict]:
+        repository = Repository()
         with SessionLocal() as db:
             sessions = db.scalars(select(SessionModel).order_by(SessionModel.created_at.asc())).all()
             rows: list[dict] = []
@@ -116,16 +118,17 @@ class ProfileRepository:
                 for sample in samples:
                     if sample.lap_number is not None:
                         grouped[int(sample.lap_number)].append(sample)
-                for lap_number, lap_samples in sorted(grouped.items()):
+                built_laps = repository._build_laps(samples)
+                for lap in built_laps:
+                    lap_number = int(lap["lap_number"])
+                    lap_samples = grouped.get(lap_number, [])
+                    if not lap_samples:
+                        continue
                     dict_samples = [_sample_dict(sample) for sample in lap_samples]
                     first = lap_samples[0]
                     last = lap_samples[-1]
-                    duration = None
-                    if first.game_time is not None and last.game_time is not None and last.game_time >= first.game_time:
-                        duration = last.game_time - first.game_time
                     distance = _integrate_distance(dict_samples, "game_time", "speed_kph")
                     speed_values = [sample.speed_kph for sample in lap_samples if sample.speed_kph is not None]
-                    fuel_used = first.fuel_liters - last.fuel_liters if first.fuel_liters is not None and last.fuel_liters is not None and first.fuel_liters >= last.fuel_liters else None
                     rows.append(
                         {
                             "id": f"live:{session.id}:{lap_number}",
@@ -138,14 +141,16 @@ class ProfileRepository:
                             "layout": session.track_layout or "",
                             "car": session.vehicle_name or "Unknown car",
                             "car_class": session.vehicle_class or "Unknown class",
-                    "session_type": session.session_type,
+                            "session_type": repository._session_type_name(session.session_type),
                             "lap_number": lap_number,
-                            "lap_time": duration,
-                            "valid_lap": None,
+                            "lap_time": lap.get("lap_time"),
+                            "valid_lap": lap.get("valid_lap"),
+                            "in_pit": lap.get("in_pit"),
                             "distance_km": distance,
-                            "fuel_start": first.fuel_liters,
-                            "fuel_end": last.fuel_liters,
-                            "fuel_used": fuel_used,
+                            "fuel_start": lap.get("fuel_start"),
+                            "fuel_end": lap.get("fuel_end"),
+                            "fuel_used": lap.get("fuel_used"),
+                            "fuel_added": lap.get("fuel_added"),
                             "tyre_compound": None,
                             "tyre_wear_fl": last.tyre_wear_fl,
                             "tyre_wear_fr": last.tyre_wear_fr,
@@ -163,10 +168,10 @@ class ProfileRepository:
                             "ambient_temp": _avg([sample.ambient_temp for sample in lap_samples]),
                             "engine_oil_temp": _max([sample.engine_oil_temp for sample in lap_samples]),
                             "engine_water_temp": _max([sample.engine_water_temp for sample in lap_samples]),
-                            "max_speed": max(speed_values) if speed_values else None,
-                            "average_speed": distance / (duration / 3600) if distance is not None and duration and duration > 0 else _avg(speed_values),
+                            "max_speed": lap.get("top_speed") or (max(speed_values) if speed_values else None),
+                            "average_speed": distance / (lap["lap_time"] / 3600) if distance is not None and lap.get("lap_time") and lap["lap_time"] > 0 else _avg(speed_values),
                             "finish_position": session.final_position,
-                    "finish_status": session.classified_status,
+                            "finish_status": session.classified_status,
                         }
                     )
             return rows
@@ -259,7 +264,10 @@ class ProfileRepository:
                 distance_ratio = distance / normal_distance if distance is not None and normal_distance else None
                 valid = True
                 reason = "estimated_full_lap"
-                if lap_time is None or normal_time is None:
+                if lap.get("in_pit"):
+                    valid = False
+                    reason = "pit_lap"
+                elif lap_time is None or normal_time is None:
                     valid = False
                     reason = "insufficient_lap_time"
                 elif time_ratio is not None and time_ratio < self.min_lap_time_ratio:
@@ -356,6 +364,16 @@ class ProfileRepository:
             "distance_by_class": by_class,
             "top_cars": self._top_cars(laps),
             "top_tracks": self._top_tracks(laps),
+            "filter_options": self.filter_options(laps),
+        }
+
+    def filter_options(self, laps: list[dict] | None = None) -> dict:
+        laps = laps if laps is not None else self.all_laps()
+        return {
+            "tracks": sorted({str(lap.get("track")) for lap in laps if lap.get("track")}),
+            "cars": sorted({str(lap.get("car")) for lap in laps if lap.get("car")}),
+            "classes": sorted({str(lap.get("car_class")) for lap in laps if lap.get("car_class")}),
+            "sources": sorted({str(lap.get("source")) for lap in laps if lap.get("source")}),
         }
 
     def _is_race_session(self, session: dict) -> bool:
@@ -431,6 +449,7 @@ class ProfileRepository:
             "page": page,
             "page_size": page_size,
             "laps": filtered[start:start + page_size],
+            "filter_options": self.filter_options(laps),
         }
 
     def _matches(self, lap: dict, filters: ProfileFilters) -> bool:

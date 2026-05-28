@@ -68,13 +68,16 @@ export function UserProfile() {
 
   const totals = summary?.totals || {};
   const filterOptions = useMemo(() => {
+    const options = lapData?.filter_options || summary?.filter_options;
+    if (options) return options;
     const laps = lapData?.laps || [];
     return {
       tracks: Array.from(new Set(laps.map((lap) => lap.track).filter(Boolean))).sort(),
       cars: Array.from(new Set(laps.map((lap) => lap.car).filter(Boolean))).sort(),
       classes: Array.from(new Set(laps.map((lap) => lap.car_class).filter(Boolean))).sort(),
+      sources: Array.from(new Set(laps.map((lap) => lap.source).filter(Boolean))).sort(),
     };
-  }, [lapData]);
+  }, [lapData, summary]);
   const setFilter = (key: keyof typeof filters, value: string | boolean) => {
     setFilters((current) => ({ ...current, [key]: value }));
     setPage(1);

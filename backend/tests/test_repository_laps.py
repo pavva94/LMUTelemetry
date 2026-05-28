@@ -1,0 +1,92 @@
+from __future__ import annotations
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+
+from app.db.database import Base
+from app.db.models import SessionModel, TelemetrySampleModel
+import app.db.repository as repository_module
+import app.services.profile_repository as profile_repository_module
+from app.db.repository import Repository
+from app.schemas.telemetry import PlayerState, SessionState, TelemetrySnapshot
+from app.services.profile_repository import ProfileFilters, ProfileRepository
+from app.core.utils import utc_now
+
+
+def sample(lap: int, game_time: float, last_lap_time: float | None = None) -> TelemetrySampleModel:
+    return TelemetrySampleModel(
+        session_id="test",
+        timestamp="2026-01-01T00:00:00",
+        lap_number=lap,
+        game_time=game_time,
+        last_lap_time=last_lap_time,
+        fuel_liters=100 - game_time,
+        speed_kph=200,
+    )
+
+
+def test_lap_summary_uses_official_last_lap_time_for_completed_lap() -> None:
+    rows = [
+        sample(1, 0.0),
+        sample(1, 1.0),
+        sample(2, 2.0, 91.234),
+        sample(2, 3.0, 91.234),
+    ]
+    laps = Repository()._build_laps(rows)
+    assert laps[0]["lap_time"] == 91.234
+
+
+def temp_session_factory():
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+    Base.metadata.create_all(bind=engine)
+    return sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
+
+def test_find_resume_session_uses_latest_compatible_unfinished_session(monkeypatch) -> None:
+    factory = temp_session_factory()
+    monkeypatch.setattr(repository_module, "SessionLocal", factory)
+    with factory() as db:
+        db.add_all([
+            SessionModel(id="old", created_at="2026-01-01T00:00:00", track_name="Spa", session_type="Race", vehicle_name="Porsche", ended_at_game_time=None),
+            SessionModel(id="done", created_at="2026-01-02T00:00:00", track_name="Spa", session_type="Race", vehicle_name="Porsche", ended_at_game_time=100.0),
+            SessionModel(id="new", created_at="2026-01-03T00:00:00", track_name="Spa", session_type="Race", vehicle_name="Porsche", ended_at_game_time=None),
+        ])
+        db.commit()
+    snapshot = TelemetrySnapshot(timestamp=utc_now(), connected=True, session=SessionState(track_name="Spa", session_type="Race"), player=PlayerState(vehicle_name="Porsche"))
+    assert Repository().find_resume_session(snapshot)["id"] == "new"
+
+
+def test_dashboard_snapshot_reconstructs_latest_telemetry(monkeypatch) -> None:
+    factory = temp_session_factory()
+    monkeypatch.setattr(repository_module, "SessionLocal", factory)
+    with factory() as db:
+        db.add(SessionModel(id="dash", created_at="2026-01-01T00:00:00", track_name="Monza", session_type="Practice", vehicle_name="Ferrari", vehicle_class="Hypercar"))
+        db.add_all([
+            TelemetrySampleModel(session_id="dash", timestamp="2026-01-01T00:00:00", lap_number=1, game_time=0, fuel_liters=100, position=4, speed_kph=200),
+            TelemetrySampleModel(session_id="dash", timestamp="2026-01-01T00:01:31.234000", lap_number=2, game_time=91.234, last_lap_time=91.234, fuel_liters=96, fuel_capacity_liters=100, position=3, abs_active=True, abs_setting=4, tc_active=False, tc_setting=2),
+        ])
+        db.commit()
+    dashboard = Repository().dashboard_snapshot("dash")
+    assert dashboard["telemetry"].player.position == 3
+    assert dashboard["telemetry"].player.abs_active is True
+    assert dashboard["strategy"].fuel.valid_laps_observed >= 0
+
+
+def test_profile_live_laps_use_persisted_official_lap_times(monkeypatch, tmp_path) -> None:
+    factory = temp_session_factory()
+    monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
+    monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
+    monkeypatch.setattr(profile_repository_module, "MOTEC_DB_PATH", tmp_path / "missing.sqlite3")
+    with factory() as db:
+        db.add(SessionModel(id="profile", created_at="2026-01-01T00:00:00", track_name="Spa", session_type="Race", vehicle_name="Porsche", vehicle_class="GTE"))
+        db.add_all([
+            TelemetrySampleModel(session_id="profile", timestamp="2026-01-01T00:00:00", lap_number=1, game_time=0.0, fuel_liters=90, speed_kph=200),
+            TelemetrySampleModel(session_id="profile", timestamp="2026-01-01T00:00:01", lap_number=1, game_time=1.0, fuel_liters=89, speed_kph=210),
+            TelemetrySampleModel(session_id="profile", timestamp="2026-01-01T00:01:31.234000", lap_number=2, game_time=91.234, last_lap_time=91.234, fuel_liters=86, speed_kph=205),
+        ])
+        db.commit()
+
+    laps = ProfileRepository().all_laps()
+    lap_one = next(lap for lap in laps if lap["source"] == "live" and lap["lap_number"] == 1)
+    assert lap_one["lap_time"] == 91.234
+    assert ProfileRepository().filtered_laps(ProfileFilters())["filter_options"]["tracks"] == ["Spa"]

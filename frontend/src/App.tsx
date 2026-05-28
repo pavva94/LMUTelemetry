@@ -7,8 +7,6 @@ import { MotecWorkspace } from "./pages/MotecWorkspace";
 import { PitWindow } from "./pages/PitWindow";
 import {
   CircleMap,
-  Driving,
-  FieldSpread,
   LapCompare,
   OneLapTiming,
   RaceHistory,
@@ -41,11 +39,9 @@ export default function App() {
         {page === "motec" && <MotecWorkspace />}
         {page === "profile" && <UserProfile />}
         {page === "race-info" && <RaceInfo telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
-        {page === "driving" && <Driving telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "circle-map" && <CircleMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "lap-compare" && <LapCompare telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "one-lap" && <OneLapTiming telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
-        {page === "field-spread" && <FieldSpread telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "race-history" && <RaceHistory telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "xy-plotter" && <XYPlotter telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "stint-data" && <StintData telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}

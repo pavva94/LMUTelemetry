@@ -8,8 +8,9 @@ from sqlalchemy import desc, func, select
 
 from app.db.database import SessionLocal
 from app.db.models import RecommendationModel, SessionModel, TelemetrySampleModel
-from app.schemas.recommendations import StrategyRecommendation
-from app.schemas.telemetry import TelemetrySnapshot
+from app.schemas.recommendations import RecommendationPayload, StrategyRecommendation
+from app.schemas.strategy import FuelState, PitWindowState, StrategyAssumptions, StrategyState, StintState, TyreStrategyState
+from app.schemas.telemetry import CompetitorState, EnvironmentState, PlayerState, SessionState, TelemetrySnapshot, TyreState
 
 
 class Repository:
@@ -72,15 +73,29 @@ class Repository:
                     timestamp=snapshot.timestamp.isoformat(),
                     game_time=state.current_time if state else None,
                     lap_number=player.lap_number if player else None,
+                    position=player.position if player else None,
+                    class_position=player.class_position if player else None,
+                    current_lap_time=player.current_lap_time if player else None,
+                    last_lap_time=player.last_lap_time if player else None,
+                    best_lap_time=player.best_lap_time if player else None,
                     speed_kph=player.speed_kph if player else None,
                     gear=player.gear if player else None,
                     rpm=player.rpm if player else None,
                     fuel_liters=player.fuel_liters if player else None,
+                    fuel_capacity_liters=player.fuel_capacity_liters if player else None,
                     engine_oil_temp=player.engine_oil_temp if player else None,
                     engine_water_temp=player.engine_water_temp if player else None,
                     throttle=player.throttle if player else None,
                     brake=player.brake if player else None,
                     steering=player.steering if player else None,
+                    abs_active=player.abs_active if player else None,
+                    tc_active=player.tc_active if player else None,
+                    abs_setting=player.abs_setting if player else None,
+                    abs_max=player.abs_max if player else None,
+                    tc_setting=player.tc_setting if player else None,
+                    tc_max=player.tc_max if player else None,
+                    tc_slip_setting=player.tc_slip_setting if player else None,
+                    tc_cut_setting=player.tc_cut_setting if player else None,
                     brake_temp_fl=player.brake_temp_fl if player else None,
                     brake_temp_fr=player.brake_temp_fr if player else None,
                     brake_temp_rl=player.brake_temp_rl if player else None,
@@ -159,6 +174,27 @@ class Repository:
                 rows.append(row)
             return rows
 
+    def find_resume_session(self, snapshot: TelemetrySnapshot) -> dict | None:
+        session_state = snapshot.session
+        player = snapshot.player
+        if not session_state or not player:
+            return None
+        with SessionLocal() as db:
+            sessions = db.scalars(
+                select(SessionModel)
+                .where(SessionModel.ended_at_game_time.is_(None))
+                .order_by(desc(SessionModel.created_at))
+                .limit(20)
+            ).all()
+            for session in sessions:
+                if (
+                    session.track_name == session_state.track_name
+                    and session.session_type == session_state.session_type
+                    and session.vehicle_name == player.vehicle_name
+                ):
+                    return self._row_dict(session)
+        return None
+
     def finalize_session(self, session_id: str, snapshot: TelemetrySnapshot | None = None) -> dict | None:
         with SessionLocal() as db:
             session = db.get(SessionModel, session_id)
@@ -196,6 +232,15 @@ class Repository:
                 continue
             grouped.setdefault(int(sample.lap_number), []).append(sample)
 
+        official_lap_times: dict[int, float] = {}
+        previous_official_last_lap: float | None = None
+        for lap_number in sorted(grouped):
+            for row in grouped[lap_number]:
+                if row.last_lap_time is not None and row.last_lap_time != previous_official_last_lap:
+                    official_lap_times[lap_number - 1] = row.last_lap_time
+                    previous_official_last_lap = row.last_lap_time
+                    break
+
         laps: list[dict] = []
         previous_fuel_end: float | None = None
         for lap_number in sorted(grouped):
@@ -204,7 +249,8 @@ class Repository:
             last = rows[-1]
             start_time = first.game_time
             end_time = last.game_time
-            duration = end_time - start_time if start_time is not None and end_time is not None and end_time >= start_time else None
+            duration_from_samples = end_time - start_time if start_time is not None and end_time is not None and end_time >= start_time else None
+            duration = official_lap_times.get(lap_number) or duration_from_samples
             speed_values = [row.speed_kph for row in rows if row.speed_kph is not None]
             rpm_values = [row.rpm for row in rows if row.rpm is not None]
             fuel_start = first.fuel_liters
@@ -256,6 +302,183 @@ class Repository:
                     }
                 )
         return events
+
+    def _latest_sample(self, session_id: str) -> TelemetrySampleModel | None:
+        with SessionLocal() as db:
+            return db.scalar(
+                select(TelemetrySampleModel)
+                .where(TelemetrySampleModel.session_id == session_id)
+                .order_by(desc(TelemetrySampleModel.id))
+                .limit(1)
+            )
+
+    def _valid_laps(self, laps: list[dict]) -> list[dict]:
+        return [
+            lap for lap in laps
+            if lap.get("valid_lap") is not False
+            and not lap.get("in_pit")
+            and not lap.get("under_yellow")
+            and lap.get("lap_time") is not None
+        ]
+
+    def _fuel_state_from_laps(self, latest: TelemetrySampleModel, laps: list[dict], assumptions: StrategyAssumptions) -> FuelState:
+        fuel_values = [
+            float(lap["fuel_used"]) for lap in self._valid_laps(laps)
+            if lap.get("fuel_used") is not None and float(lap["fuel_used"]) > 0
+        ]
+        if len(fuel_values) < 3:
+            return FuelState(
+                last_lap_fuel_used_liters=fuel_values[-1] if fuel_values else None,
+                fuel_capacity_liters=round(latest.fuel_capacity_liters, 3) if latest.fuel_capacity_liters is not None else None,
+                valid_laps_observed=len(fuel_values),
+                valid_laps_required=3,
+                confidence="low",
+            )
+        fuel_per_lap = sum(fuel_values[-5:]) / len(fuel_values[-5:])
+        fuel_laps = latest.fuel_liters / fuel_per_lap if latest.fuel_liters is not None and fuel_per_lap else None
+        return FuelState(
+            last_lap_fuel_used_liters=round(fuel_values[-1], 3),
+            fuel_capacity_liters=round(latest.fuel_capacity_liters, 3) if latest.fuel_capacity_liters is not None else None,
+            fuel_per_lap_liters=round(fuel_per_lap, 3),
+            fuel_laps_remaining=round(fuel_laps, 2) if fuel_laps is not None else None,
+            valid_laps_observed=len(fuel_values),
+            valid_laps_required=3,
+            confidence="high" if len(fuel_values) >= 5 else "medium",
+        )
+
+    def _tyre_state_from_samples(self, latest: TelemetrySampleModel, laps: list[dict], assumptions: StrategyAssumptions) -> TyreStrategyState:
+        average_wear = self._average_wear(latest)
+        valid = self._valid_laps(laps)
+        deltas = [
+            abs(float(lap["tyre_wear_delta"])) for lap in valid
+            if lap.get("tyre_wear_delta") is not None and abs(float(lap["tyre_wear_delta"])) > 0
+        ]
+        wear_rate = sum(deltas[-5:]) / len(deltas[-5:]) if deltas else None
+        remaining = (assumptions.max_tyre_wear - average_wear) / wear_rate if average_wear is not None and wear_rate else None
+        return TyreStrategyState(
+            average_wear=round(average_wear, 3) if average_wear is not None else None,
+            wear_rate_per_lap=round(wear_rate, 4) if wear_rate else None,
+            estimated_remaining_tyre_life_laps=round(remaining, 1) if remaining is not None else None,
+            tyre_risk_level="high" if average_wear is not None and average_wear >= assumptions.max_tyre_wear else "low" if wear_rate else "unknown",
+            confidence="high" if len(deltas) >= 3 else "medium" if len(deltas) >= 2 else "low",
+            observed_laps=len(deltas),
+            laps_required=3,
+            reason_codes=["historical_session_summary"],
+        )
+
+    def _snapshot_from_sample(self, session: SessionModel | None, sample: TelemetrySampleModel) -> TelemetrySnapshot:
+        tyres = TyreState(
+            wear_fl=sample.tyre_wear_fl,
+            wear_fr=sample.tyre_wear_fr,
+            wear_rl=sample.tyre_wear_rl,
+            wear_rr=sample.tyre_wear_rr,
+            pressure_fl=sample.tyre_pressure_fl,
+            pressure_fr=sample.tyre_pressure_fr,
+            pressure_rl=sample.tyre_pressure_rl,
+            pressure_rr=sample.tyre_pressure_rr,
+            load_fl=sample.tyre_load_fl,
+            load_fr=sample.tyre_load_fr,
+            load_rl=sample.tyre_load_rl,
+            load_rr=sample.tyre_load_rr,
+            average_wear=self._average_wear(sample),
+        )
+        player = PlayerState(
+            vehicle_name=session.vehicle_name if session else None,
+            vehicle_class=session.vehicle_class if session else None,
+            position=sample.position,
+            class_position=sample.class_position,
+            lap_number=sample.lap_number,
+            current_lap_time=sample.current_lap_time,
+            last_lap_time=sample.last_lap_time,
+            best_lap_time=sample.best_lap_time,
+            speed_kph=sample.speed_kph,
+            gear=sample.gear,
+            rpm=sample.rpm,
+            fuel_liters=sample.fuel_liters,
+            fuel_capacity_liters=sample.fuel_capacity_liters,
+            engine_oil_temp=sample.engine_oil_temp,
+            engine_water_temp=sample.engine_water_temp,
+            throttle=sample.throttle,
+            brake=sample.brake,
+            steering=sample.steering,
+            abs_active=sample.abs_active,
+            tc_active=sample.tc_active,
+            abs_setting=sample.abs_setting,
+            abs_max=sample.abs_max,
+            tc_setting=sample.tc_setting,
+            tc_max=sample.tc_max,
+            tc_slip_setting=sample.tc_slip_setting,
+            tc_cut_setting=sample.tc_cut_setting,
+            brake_temp_fl=sample.brake_temp_fl,
+            brake_temp_fr=sample.brake_temp_fr,
+            brake_temp_rl=sample.brake_temp_rl,
+            brake_temp_rr=sample.brake_temp_rr,
+            brake_pressure_fl=sample.brake_pressure_fl,
+            brake_pressure_fr=sample.brake_pressure_fr,
+            brake_pressure_rl=sample.brake_pressure_rl,
+            brake_pressure_rr=sample.brake_pressure_rr,
+            ride_height_fl=sample.ride_height_fl,
+            ride_height_fr=sample.ride_height_fr,
+            ride_height_rl=sample.ride_height_rl,
+            ride_height_rr=sample.ride_height_rr,
+            front_ride_height=sample.front_ride_height,
+            rear_ride_height=sample.rear_ride_height,
+            suspension_deflection_fl=sample.suspension_deflection_fl,
+            suspension_deflection_fr=sample.suspension_deflection_fr,
+            suspension_deflection_rl=sample.suspension_deflection_rl,
+            suspension_deflection_rr=sample.suspension_deflection_rr,
+            tyre_state=tyres,
+        )
+        session_state = SessionState(
+            track_name=session.track_name if session else None,
+            session_type=session.session_type if session else None,
+            current_time=sample.game_time,
+            current_lap=sample.lap_number,
+            num_vehicles=session.total_cars if session else None,
+        )
+        competitor = CompetitorState(
+            vehicle_id=0,
+            driver_name="Player",
+            vehicle_name=session.vehicle_name if session else None,
+            vehicle_class=session.vehicle_class if session else None,
+            position=sample.position,
+            class_position=sample.class_position,
+            total_laps=sample.lap_number,
+            best_lap_time=sample.best_lap_time,
+            last_lap_time=sample.last_lap_time,
+            is_player=True,
+        )
+        timestamp = datetime.fromisoformat(sample.timestamp)
+        return TelemetrySnapshot(
+            timestamp=timestamp,
+            connected=True,
+            feed_paused=True,
+            pause_reason="saved session snapshot",
+            session=session_state,
+            player=player,
+            competitors=[competitor],
+            environment=EnvironmentState(track_temp_c=sample.track_temp, ambient_temp_c=sample.ambient_temp, raining=sample.rain, avg_wetness=sample.wetness),
+        )
+
+    def dashboard_snapshot(self, session_id: str, assumptions: StrategyAssumptions | None = None) -> dict:
+        assumptions = assumptions or StrategyAssumptions()
+        review = self.review(session_id, sample_limit=5000)
+        latest = self._latest_sample(session_id)
+        with SessionLocal() as db:
+            session = db.get(SessionModel, session_id)
+        if latest is None:
+            return {"session": review["session"], "telemetry": None, "strategy": StrategyState(assumptions=assumptions), "recommendation": RecommendationPayload(current=StrategyRecommendation()), "review": review}
+        snapshot = self._snapshot_from_sample(session, latest)
+        laps = review["laps"]
+        fuel = self._fuel_state_from_laps(latest, laps, assumptions)
+        tyres = self._tyre_state_from_samples(latest, laps, assumptions)
+        current_lap = latest.lap_number or 0
+        last_pit_lap = max((int(lap["lap_number"]) for lap in laps if lap.get("fuel_added") and float(lap["fuel_added"]) > 2), default=0)
+        stint = StintState(current_stint_lap=current_lap - last_pit_lap if current_lap else None, last_pit_lap=last_pit_lap)
+        strategy = StrategyState(fuel=fuel, tyres=tyres, stint=stint, pit_window=PitWindowState(), assumptions=assumptions)
+        latest_rec = (review["recommendations"] or [])[-1] if review["recommendations"] else None
+        recommendation = RecommendationPayload(current=StrategyRecommendation(message=str(latest_rec.get("message") if latest_rec else "Saved session snapshot")))
+        return {"session": review["session"], "telemetry": snapshot, "strategy": strategy, "recommendation": recommendation, "review": review}
 
     def review(self, session_id: str, sample_limit: int = 5000) -> dict:
         with SessionLocal() as db:

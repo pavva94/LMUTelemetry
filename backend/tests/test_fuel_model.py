@@ -27,6 +27,7 @@ def test_fuel_model_learns_consumption() -> None:
         state = model.update(snapshot)
     assert state is not None
     assert state.confidence in {"low", "medium", "high"}
+    assert state.fuel_capacity_liters == 90
 
 
 def test_fuel_too_low_delta() -> None:
@@ -57,7 +58,7 @@ def test_fuel_model_resets_usage_on_pit_stint_boundary() -> None:
     second.player.fuel_liters = 97
     _set_player_in_pits(second, False)
     _make_green(second)
-    assert model.update(second).fuel_per_lap_liters == 3
+    model.update(second)
 
     pit_entry = collector.poll_once()
     pit_entry.player.lap_number = 2
@@ -78,4 +79,33 @@ def test_fuel_model_resets_usage_on_pit_stint_boundary() -> None:
     next_lap.player.fuel_liters = 106
     _set_player_in_pits(next_lap, False)
     _make_green(next_lap)
-    assert model.update(next_lap).fuel_per_lap_liters == 4
+    after_pit_lap_1 = model.update(next_lap)
+    assert after_pit_lap_1.last_lap_fuel_used_liters == 4
+    assert after_pit_lap_1.fuel_per_lap_liters is None
+    assert after_pit_lap_1.valid_laps_observed == 2
+
+    later_lap = collector.poll_once()
+    later_lap.player.lap_number = 4
+    later_lap.player.fuel_liters = 102
+    _set_player_in_pits(later_lap, False)
+    _make_green(later_lap)
+    session_estimate = model.update(later_lap)
+    assert session_estimate.valid_laps_observed == 3
+    assert session_estimate.fuel_per_lap_liters is not None
+
+
+def test_fuel_model_requires_enough_valid_session_laps_for_estimates() -> None:
+    collector = MockTelemetryCollector()
+    model = FuelModel(StrategyAssumptions(normal_lap_time=100))
+    state = None
+    for lap, fuel in [(1, 100), (2, 97), (3, 94), (4, 91)]:
+        snapshot = collector.poll_once()
+        snapshot.player.lap_number = lap
+        snapshot.player.fuel_liters = fuel
+        _set_player_in_pits(snapshot, False)
+        _make_green(snapshot)
+        state = model.update(snapshot)
+    assert state is not None
+    assert state.valid_laps_observed == 3
+    assert state.fuel_per_lap_liters == 3
+    assert state.fuel_laps_remaining is not None

@@ -180,11 +180,10 @@ class TelemetryService:
     def _pause_live_feed(self, snapshot: TelemetrySnapshot, reason: str) -> None:
         self.feed_paused = True
         self.pause_reason = reason
-        frozen = self.latest_snapshot or snapshot
-        frozen.session = snapshot.session
-        frozen.feed_paused = True
-        frozen.pause_reason = reason
-        self.latest_snapshot = frozen
+        snapshot.feed_paused = True
+        snapshot.pause_reason = reason
+        snapshot.strategy = self.strategy_state
+        self.latest_snapshot = snapshot
 
     def _resume_live_feed(self) -> None:
         self.feed_paused = False
@@ -200,6 +199,10 @@ class TelemetryService:
 
         if self._session_signature is None:
             self._session_signature = signature
+            resumable = self.repository.find_resume_session(snapshot)
+            if resumable:
+                self.session_id = str(resumable["id"])
+                logger.info("Resuming unfinished telemetry session %s", self.session_id)
         elif signature != self._session_signature:
             reason = "session identity changed"
         elif (

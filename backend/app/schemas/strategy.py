@@ -16,13 +16,15 @@ class StrategyAssumptions(BaseModel):
 
 class FuelState(BaseModel):
     last_lap_fuel_used_liters: float | None = None
+    fuel_capacity_liters: float | None = None
     fuel_per_lap_liters: float | None = None
     fuel_laps_remaining: float | None = None
     estimated_laps_remaining: float | None = None
     required_fuel_to_finish: float | None = None
     fuel_delta_to_finish: float | None = None
     recommended_fuel_save_per_lap: float | None = None
-    stint_laps_observed: int = 0
+    valid_laps_observed: int = 0
+    valid_laps_required: int = 3
     confidence: str = "low"
 
 

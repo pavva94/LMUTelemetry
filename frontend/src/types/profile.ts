@@ -50,6 +50,14 @@ export type ProfileSummary = {
   distance_by_class: Array<{ car_class: string; distance_km: number; sessions: number; laps: number; distance_percent: number }>;
   top_cars: Array<{ car: string; car_class: string; distance_km: number; sessions: number; laps: number; tracks: number }>;
   top_tracks: Array<{ track: string; layout?: string; distance_km: number; sessions: number; laps: number; best_lap?: number | null; most_used_car: string }>;
+  filter_options?: ProfileFilterOptions;
+};
+
+export type ProfileFilterOptions = {
+  tracks: string[];
+  cars: string[];
+  classes: string[];
+  sources: string[];
 };
 
 export type ProfileLapResponse = {
@@ -57,4 +65,5 @@ export type ProfileLapResponse = {
   page: number;
   page_size: number;
   laps: ProfileLap[];
+  filter_options?: ProfileFilterOptions;
 };

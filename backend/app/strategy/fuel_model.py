@@ -12,6 +12,8 @@ def _valid_lap_time(value: float | None) -> float | None:
 
 
 class FuelModel:
+    VALID_LAPS_REQUIRED = 3
+
     def __init__(self, assumptions: StrategyAssumptions):
         self.assumptions = assumptions
         self._lap_start_fuel: float | None = None
@@ -20,23 +22,17 @@ class FuelModel:
         self._last_lap_usage: float | None = None
         self._was_in_pits = False
 
-    def _clear_stint_usage(self) -> None:
-        self._valid_usage.clear()
-        self._last_lap_usage = None
-
     def _reset_stint(self, lap: int, fuel_liters: float) -> None:
         self._last_lap = lap
         self._lap_start_fuel = fuel_liters
-        self._clear_stint_usage()
 
     def update(self, snapshot: TelemetrySnapshot) -> FuelState:
         player = snapshot.player
         if not player or player.fuel_liters is None:
-            return FuelState(confidence="low")
+            return FuelState(valid_laps_required=self.VALID_LAPS_REQUIRED, confidence="low")
+        fuel_capacity = player.fuel_capacity_liters if player.fuel_capacity_liters and player.fuel_capacity_liters > 0 else None
         lap = player.lap_number or 0
         in_pits = _player_in_pits(snapshot)
-        if in_pits and not self._was_in_pits:
-            self._clear_stint_usage()
         if self._was_in_pits and not in_pits:
             self._reset_stint(lap, player.fuel_liters)
         self._was_in_pits = in_pits
@@ -53,14 +49,18 @@ class FuelModel:
             self._lap_start_fuel = player.fuel_liters
 
         fuel_per_lap = (sum(self._valid_usage) / len(self._valid_usage)) if self._valid_usage else None
+        observed_laps = len(self._valid_usage)
         estimated_laps = None
         normal_lap_time = self._normal_lap_time(snapshot)
         if snapshot.session and snapshot.session.time_remaining and normal_lap_time:
             estimated_laps = snapshot.session.time_remaining / normal_lap_time
-        if not fuel_per_lap:
+        if not fuel_per_lap or observed_laps < self.VALID_LAPS_REQUIRED:
             return FuelState(
+                last_lap_fuel_used_liters=round(self._last_lap_usage, 3) if self._last_lap_usage is not None else None,
+                fuel_capacity_liters=round(fuel_capacity, 3) if fuel_capacity is not None else None,
                 estimated_laps_remaining=estimated_laps,
-                stint_laps_observed=len(self._valid_usage),
+                valid_laps_observed=observed_laps,
+                valid_laps_required=self.VALID_LAPS_REQUIRED,
                 confidence="low",
             )
         fuel_laps = player.fuel_liters / fuel_per_lap
@@ -70,13 +70,15 @@ class FuelModel:
         confidence = "high" if len(self._valid_usage) >= 3 else "medium" if len(self._valid_usage) >= 2 else "low"
         return FuelState(
             last_lap_fuel_used_liters=round(self._last_lap_usage, 3) if self._last_lap_usage is not None else None,
+            fuel_capacity_liters=round(fuel_capacity, 3) if fuel_capacity is not None else None,
             fuel_per_lap_liters=round(fuel_per_lap, 3),
             fuel_laps_remaining=round(fuel_laps, 2),
             estimated_laps_remaining=round(estimated_laps, 2) if estimated_laps is not None else None,
             required_fuel_to_finish=round(required, 2),
             fuel_delta_to_finish=round(delta, 2),
             recommended_fuel_save_per_lap=round(save, 3) if save else None,
-            stint_laps_observed=len(self._valid_usage),
+            valid_laps_observed=observed_laps,
+            valid_laps_required=self.VALID_LAPS_REQUIRED,
             confidence=confidence,
         )
 

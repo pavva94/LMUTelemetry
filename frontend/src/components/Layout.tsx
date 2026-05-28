@@ -9,7 +9,6 @@ import {
   History,
   LineChart,
   FileSpreadsheet,
-  Radio,
   Settings,
   Timer,
   UserRound,
@@ -19,17 +18,14 @@ import {
 const liveItems = [
   ["live", "Live Dashboard", Gauge],
   ["race-info", "Race Info", Activity],
-  ["driving", "Driving", Wrench],
   ["circle-map", "Circle Map", CircleDot],
   ["lap-compare", "Lap Compare", GitCompare],
   ["one-lap", "Standings", Timer],
-  ["field-spread", "Field Spread", Radio],
   ["race-history", "Race History", History],
   ["xy-plotter", "X-Y Plotter", LineChart],
   ["stint-data", "Stint Data", ClipboardList],
   ["planner", "Strategy Planner", Activity],
   ["pit", "Pit Window", Flag],
-  ["review", "Session Review", BarChart3],
   ["settings", "Settings", Settings],
 ] as const;
 
@@ -39,6 +35,7 @@ const csvItems = [
 
 const profileItems = [
   ["profile", "User Profile", UserRound],
+  ["review", "Session Review", BarChart3],
 ] as const;
 
 const modes = [
