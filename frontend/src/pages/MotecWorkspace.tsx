@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api/client";
+import { SectionTitle } from "../components/SectionTitle";
 import { channelByName, numeric } from "../lib/motecCsv";
 import { formatRaceTime } from "../lib/timeFormat";
 import type { ChannelDefinition, MotecSample, MotecSession } from "../types/motec";
@@ -44,8 +45,75 @@ const worksheets: Array<[WorksheetKey, string]> = [
 ];
 
 const colors = ["#e6b450", "#6dd6ff", "#ff6961", "#91e48f", "#c7a8ff", "#ff8c69", "#ff7da7"];
+const lmuCars = [
+  ["Alpine A424", "Hypercar (LMDh)"],
+  ["Aston Martin Valkyrie AMR-LMH", "Hypercar (LMH)"],
+  ["Aston Martin Vantage AMR", "GTE"],
+  ["Aston Martin Vantage AMR LMGT3 Evo", "LMGT3"],
+  ["BMW M Hybrid V8", "Hypercar (LMDh)"],
+  ["BMW M4 LMGT3 Evo", "LMGT3"],
+  ["Cadillac V-Series.R", "Hypercar (LMDh)"],
+  ["Chevrolet Corvette C8.R", "GTE"],
+  ["Chevrolet Corvette Z06 LMGT3.R", "LMGT3"],
+  ["Duqueine D09", "LMP3"],
+  ["Ferrari 296 LMGT3", "LMGT3"],
+  ["Ferrari 488 GTE Evo", "GTE"],
+  ["Ferrari 499P", "Hypercar (LMH)"],
+  ["Ford Mustang LMGT3", "LMGT3"],
+  ["Ginetta G61-LT-P325 Evo", "LMP3"],
+  ["Glickenhaus SCG 007", "Hypercar (LMH)"],
+  ["Isotta Fraschini Tipo 6", "Hypercar (LMH)"],
+  ["Lamborghini Huracan LMGT3 Evo II", "LMGT3"],
+  ["Lamborghini SC63", "Hypercar (LMDh)"],
+  ["Lexus RC F LMGT3", "LMGT3"],
+  ["Ligier JS P325", "LMP3"],
+  ["McLaren 720S LMGT3 Evo", "LMGT3"],
+  ["Mercedes-AMG LMGT3 Evo", "LMGT3"],
+  ["Oreca 07", "LMP2"],
+  ["Oreca 07 (derestricted)", "LMP2"],
+  ["Peugeot 9X8", "Hypercar (LMH)"],
+  ["Peugeot 9X8 2024", "Hypercar (LMH)"],
+  ["Porsche 911 LMGT3 R (992)", "LMGT3"],
+  ["Porsche 911 RSR-19", "GTE"],
+  ["Porsche 963", "Hypercar (LMDh)"],
+  ["Toyota GR010 Hybrid", "Hypercar (LMH)"],
+  ["Vanwall-Vandervell 680", "Hypercar (LMH)"],
+] as const;
+const lmuCarClasses = Array.from(new Set(lmuCars.map(([, carClass]) => carClass))).sort();
+const lmuTracks = [
+  ["Bahrain", ["Default", "Endurance", "Outer", "Paddock"]],
+  ["Circuit de Barcelona-Catalunya", ["TBD"]],
+  ["Circuit de La Sarthe - Le Mans", ["Le Mans 24h", "Mulsanne Circuit (no chicanes)"]],
+  ["Circuit Paul Ricard", ["Default"]],
+  ["COTA", ["Default", "National Circuit"]],
+  ["Fuji", ["Default", "Classic Circuit"]],
+  ["Imola", ["Default"]],
+  ["Interlagos", ["Default"]],
+  ["Lusail (Qatar)", ["Default", "Short Circuit"]],
+  ["Monza", ["Default", "Curva Grande Circuit"]],
+  ["Portimao", ["Default"]],
+  ["Sebring", ["Default", "School Circuit"]],
+  ["Silverstone", ["Default"]],
+  ["Spa-Francorchamps", ["Default", "Endurance pitlane"]],
+] as const;
+const lmuTrackLayouts = Array.from(new Set(lmuTracks.flatMap(([, layouts]) => layouts))).sort();
 const fmt = (value: number | null | undefined, digits = 1) => value == null || Number.isNaN(value) ? "--" : value.toFixed(digits);
 const timeValue = (value: number | null | undefined) => formatRaceTime(value);
+const worksheetHelp = (title: string) => {
+  const key = title.toLowerCase();
+  if (key.includes("speed") || key.includes("delta")) return "Shows pace and time gain/loss over the lap. Compare braking, minimum speed, and exits where the delta worsens.";
+  if (key.includes("throttle") || key.includes("brake") || key.includes("input")) return "Shows driver input behavior. Smooth, decisive inputs usually improve tyre life and repeatable lap time.";
+  if (key.includes("tyre") || key.includes("tire")) return "Shows tyre condition and balance. Persistent corner or axle differences point to setup, pressure, camber, or driving load.";
+  if (key.includes("ride") || key.includes("platform")) return "Shows platform movement and ride height. Low values at speed or braking can indicate bottoming or aero instability.";
+  if (key.includes("fuel") || key.includes("pit")) return "Shows consumption and pit strategy. Stable fuel per lap makes stint and finish estimates more trustworthy.";
+  if (key.includes("g-force") || key.includes("g-g")) return "Shows vehicle acceleration usage. Strong, smooth combined G usually means the tyre is being used efficiently.";
+  if (key.includes("gps") || key.includes("map")) return "Shows where telemetry happens on track. Use colored traces to connect driving inputs with specific corners.";
+  if (key.includes("histogram")) return "Shows how often a channel sits in each range. Peaks reveal dominant operating windows and outliers reveal risk.";
+  if (key.includes("x-y") || key.includes("plot")) return "Compares two channels directly. Tight patterns suggest a real relationship; scatter suggests mixed conditions or inconsistent driving.";
+  if (key.includes("powertrain") || key.includes("rpm") || key.includes("gear")) return "Shows engine, gear, and energy behavior. Use it to spot limiter use, poor gear choice, or thermal drift.";
+  if (key.includes("engineer")) return "Summarizes rule-based findings from the data. Treat each hint as a hypothesis supported by the listed evidence.";
+  return "Shows this worksheet's telemetry context. Look for trends, outliers, and repeatable changes before making setup decisions.";
+};
 const isTimeChannel = (name: string) => ["Time", "Session Elapsed Time", "Lap-relative time", "Delta Best", "Realtime Loss"].includes(name) || name.toLowerCase().includes("time");
 const displayChannelValue = (sample: MotecSample, channel: string, session: MotecSession | null) => {
   const value = numeric(sample, channel);
@@ -122,7 +190,7 @@ function ChartBlock({ session, title, channels, lapA, lapB, xKey = "Lap-relative
   setCursor: (value: number) => void;
   height?: number;
 }) {
-  if (!session) return <section className="card span-12"><h2>{title}</h2><Empty /></section>;
+  if (!session) return <section className="card span-12"><SectionTitle title={title} help={worksheetHelp(title)} /><Empty /></section>;
   const dataA = useMotecSamples(session, lapA, channels);
   const dataB = useMotecSamples(session, lapB || "", channels);
   const unit = channelByName(session, channels[0])?.unit || "";
@@ -134,7 +202,7 @@ function ChartBlock({ session, title, channels, lapA, lapB, xKey = "Lap-relative
   });
   return (
     <section className="card span-12 motec-chart">
-      <div className="row"><h2>{title} {unit && <span className="muted">({unit})</span>}</h2><span className="muted">Cursor {cursor.toFixed(0)}%</span></div>
+      <div className="row"><SectionTitle title={<>{title} {unit && <span className="muted">({unit})</span>}</>} help={worksheetHelp(title)} /><span className="muted">Cursor {cursor.toFixed(0)}%</span></div>
       <Missing channels={channels} session={session} />
       <ResponsiveContainer width="100%" height={height}>
         <LineChart data={chartData} onMouseMove={(state) => state && typeof state.activeTooltipIndex === "number" && setCursor((state.activeTooltipIndex / Math.max(chartData.length - 1, 1)) * 100)}>
@@ -158,7 +226,7 @@ function CursorValues({ session, lapA, channels, cursor }: { session: MotecSessi
   const samples = useMotecSamples(session, lapA, channels);
   return (
     <section className="card span-12">
-      <h2>Cursor Values</h2>
+      <SectionTitle title="Cursor Values" help="Shows channel values at the shared cursor. Use it to compare exactly what the car and driver were doing at one point in the lap." />
       <div className="motec-value-grid">
         {channels.map((channel) => <div key={channel}><span className="label">{channel}</span><strong>{displayChannelValue({ [channel]: valueAt(samples, channel, cursor) }, channel, session)}</strong></div>)}
       </div>
@@ -169,7 +237,7 @@ function CursorValues({ session, lapA, channels, cursor }: { session: MotecSessi
 function AnalysisCards({ samples, channels }: { samples: MotecSample[]; channels: string[] }) {
   return (
     <section className="card span-12">
-      <h2>Key Values</h2>
+      <SectionTitle title="Key Values" help="Summarizes min, max, average, and sample count. Use it to spot outliers before diving into full traces." />
       <div className="motec-value-grid">
         {channels.map((channel) => {
           const stats = metric(samples, channel);
@@ -206,6 +274,23 @@ function ImportPage({ onImported }: { onImported: (session: MotecSession, openAn
     setProgress(`${file.name} selected (${Math.round(file.size / 1024 / 1024)} MB). Click Import Session to stream it to the backend.`);
     setMetadata((current) => ({ ...current, session_name: current.session_name || file.name.replace(/\.[^.]+$/, "") }));
   };
+  const updateCar = (carName: string) => {
+    const matched = lmuCars.find(([name]) => name === carName);
+    setMetadata((current) => ({
+      ...current,
+      car_name: carName,
+      car_class: matched?.[1] || current.car_class,
+    }));
+  };
+  const updateTrack = (trackName: string) => {
+    const matched = lmuTracks.find(([name]) => name === trackName);
+    setMetadata((current) => ({
+      ...current,
+      track_name: trackName,
+      track_layout: matched && !matched[1].some((layout) => layout === current.track_layout) ? matched[1][0] : current.track_layout,
+    }));
+  };
+  const layoutOptions = lmuTracks.find(([name]) => name === metadata.track_name)?.[1] || lmuTrackLayouts;
   const requiredReady = Boolean(metadata.session_name.trim() && metadata.track_name.trim() && metadata.car_name.trim() && metadata.car_class.trim() && metadata.session_type.trim());
   const importPreview = async () => {
     if (!file || !requiredReady) return;
@@ -227,13 +312,17 @@ function ImportPage({ onImported }: { onImported: (session: MotecSession, openAn
   return (
     <div className="page grid">
       <section className="card span-4">
-        <h2>CSV Import</h2>
+        <SectionTitle title="CSV Import" help="Imports a two-header telemetry CSV as an analysis session. Add track and car metadata so laps are useful in history and comparisons." />
         <input type="file" accept=".csv,text/csv" disabled={busy} onChange={(event) => void handleFile(event.target.files?.[0] || null)} />
         <label>Session name<input value={metadata.session_name} onChange={(event) => setMetadata((current) => ({ ...current, session_name: event.target.value }))} /></label>
-        <label>Track<input value={metadata.track_name} onChange={(event) => setMetadata((current) => ({ ...current, track_name: event.target.value }))} /></label>
-        <label>Layout<input value={metadata.track_layout} onChange={(event) => setMetadata((current) => ({ ...current, track_layout: event.target.value }))} placeholder="Optional" /></label>
-        <label>Car<input value={metadata.car_name} onChange={(event) => setMetadata((current) => ({ ...current, car_name: event.target.value }))} /></label>
-        <label>Class<input value={metadata.car_class} onChange={(event) => setMetadata((current) => ({ ...current, car_class: event.target.value }))} placeholder="GT3, LMP2, Hypercar..." /></label>
+        <label>Track<input list="lmu-track-options" value={metadata.track_name} onChange={(event) => updateTrack(event.target.value)} placeholder="Search LMU track" /></label>
+        <datalist id="lmu-track-options">{lmuTracks.map(([name]) => <option key={name} value={name} />)}</datalist>
+        <label>Layout<input list="lmu-layout-options" value={metadata.track_layout} onChange={(event) => setMetadata((current) => ({ ...current, track_layout: event.target.value }))} placeholder="Optional" /></label>
+        <datalist id="lmu-layout-options">{layoutOptions.map((layout) => <option key={layout} value={layout} />)}</datalist>
+        <label>Car<input list="lmu-car-options" value={metadata.car_name} onChange={(event) => updateCar(event.target.value)} placeholder="Search LMU car" /></label>
+        <datalist id="lmu-car-options">{lmuCars.map(([name, carClass]) => <option key={name} value={name} label={carClass} />)}</datalist>
+        <label>Class<input list="lmu-class-options" value={metadata.car_class} onChange={(event) => setMetadata((current) => ({ ...current, car_class: event.target.value }))} placeholder="Search or auto-filled from car" /></label>
+        <datalist id="lmu-class-options">{lmuCarClasses.map((carClass) => <option key={carClass} value={carClass} />)}</datalist>
         <label>Session type<select value={metadata.session_type} onChange={(event) => setMetadata((current) => ({ ...current, session_type: event.target.value }))}><option value="Practice">Practice</option><option value="Qualifying">Qualifying</option><option value="Race">Race</option><option value="Test Day">Test Day</option></select></label>
         <label>Finish position<input type="number" min="1" value={metadata.finish_position} onChange={(event) => setMetadata((current) => ({ ...current, finish_position: event.target.value }))} placeholder="Optional" /></label>
         <label>Finish status<select value={metadata.finish_status} onChange={(event) => setMetadata((current) => ({ ...current, finish_status: event.target.value }))}><option value="">Unknown</option><option value="finished">Finished</option><option value="dnf">DNF</option><option value="dns">DNS</option><option value="dq">DQ</option></select></label>
@@ -244,7 +333,7 @@ function ImportPage({ onImported }: { onImported: (session: MotecSession, openAn
         {preview && imported && <button onClick={() => onImported(preview, true)}>Open Analysis</button>}
       </section>
       <section className="card span-8">
-        <h2>Detected Session</h2>
+        <SectionTitle title="Detected Session" help="Confirms samples, laps, and time range after import. Check these numbers before trusting any worksheet analysis." />
         {preview ? (
           <div className="motec-value-grid">
             <div><span className="label">Channels</span><strong>{preview.channels.length}</strong></div>
@@ -260,7 +349,7 @@ function ImportPage({ onImported }: { onImported: (session: MotecSession, openAn
         {preview?.warnings.map((warning) => <p className="motec-warning" key={warning}>{warning}</p>)}
       </section>
       <section className="card span-12">
-        <h2>Channel Registry</h2>
+        <SectionTitle title="Channel Registry" help="Lists detected channels and units. Categories and types decide how channels appear in worksheets and plots." />
         {preview ? <ChannelRegistry channels={preview.channels} /> : <Empty message="Detected channels and units will appear here before import." />}
       </section>
     </div>
@@ -282,8 +371,8 @@ function LapBrowser({ session, setLapA, setLapB }: { session: MotecSession | nul
   if (!session) return <div className="page"><section className="card"><Empty /></section></div>;
   return (
     <div className="page grid">
-      <section className="card span-12"><h2>Lap Browser</h2><div className="table-wrap"><table><thead><tr><th>Lap</th><th>Start</th><th>End</th><th>Duration</th><th>Max Speed</th><th>Min Corner</th><th>Max RPM</th><th>Fuel Start</th><th>Fuel End</th><th>Select</th></tr></thead><tbody>{session.laps.map((lap) => <tr key={lap.lapNumber}><td>{lap.lapNumber}</td><td>{timeValue(lap.startTime)}</td><td>{timeValue(lap.endTime)}</td><td>{timeValue(lap.duration)}</td><td>{fmt(lap.maxSpeed)}</td><td>{fmt(lap.minCornerSpeed)}</td><td>{fmt(lap.maxRpm, 0)}</td><td>{fmt(lap.fuelStart)}</td><td>{fmt(lap.fuelEnd)}</td><td><button onClick={() => setLapA(lap.lapNumber)}>Primary</button><button onClick={() => setLapB(lap.lapNumber)}>Compare</button></td></tr>)}</tbody></table></div></section>
-      <section className="card span-12"><h2>Registry</h2><ChannelRegistry channels={session.channels} /></section>
+      <section className="card span-12"><SectionTitle title="Lap Browser" help="Lists laps detected from the CSV. Select a clean primary lap and a representative comparison lap before using the worksheets." /><div className="table-wrap"><table><thead><tr><th>Lap</th><th>Start</th><th>End</th><th>Duration</th><th>Max Speed</th><th>Min Corner</th><th>Max RPM</th><th>Fuel Start</th><th>Fuel End</th><th>Select</th></tr></thead><tbody>{session.laps.map((lap) => <tr key={lap.lapNumber}><td>{lap.lapNumber}</td><td>{timeValue(lap.startTime)}</td><td>{timeValue(lap.endTime)}</td><td>{timeValue(lap.duration)}</td><td>{fmt(lap.maxSpeed)}</td><td>{fmt(lap.minCornerSpeed)}</td><td>{fmt(lap.maxRpm, 0)}</td><td>{fmt(lap.fuelStart)}</td><td>{fmt(lap.fuelEnd)}</td><td><button onClick={() => setLapA(lap.lapNumber)}>Primary</button><button onClick={() => setLapB(lap.lapNumber)}>Compare</button></td></tr>)}</tbody></table></div></section>
+      <section className="card span-12"><SectionTitle title="Registry" help="Shows the channels available for analysis. Missing or empty channels explain why some worksheets may show limited data." /><ChannelRegistry channels={session.channels} /></section>
     </div>
   );
 }
@@ -615,7 +704,7 @@ function analyzeStints(session: MotecSession, samples: MotecSample[]) {
 function HintSection({ title, hints }: { title: string; hints: EngineerHint[] }) {
   return (
     <section className="card span-12">
-      <h2>{title}</h2>
+      <SectionTitle title={title} help={worksheetHelp(title)} />
       <div className="grid">
         {hints.map((item, index) => (
           <div className="card span-4 compact" key={`${item.title}-${index}`}>
@@ -632,14 +721,14 @@ function HintSection({ title, hints }: { title: string; hints: EngineerHint[] })
 }
 
 function StintSummaryPanel({ summaries }: { summaries: StintSummary[] }) {
-  if (!summaries.length) return <section className="card span-12"><h2>Stint Summary</h2><Empty message="No stint summary can be built from the imported laps." /></section>;
+  if (!summaries.length) return <section className="card span-12"><SectionTitle title="Stint Summary" help="Summarizes each detected fuel stint. Compare pace, fuel use, and degradation before changing strategy assumptions." /><Empty message="No stint summary can be built from the imported laps." /></section>;
   return (
     <section className="card span-12">
-      <h2>Stint Summary</h2>
+      <SectionTitle title="Stint Summary" help="Summarizes each detected fuel stint. Compare pace, fuel use, and degradation before changing strategy assumptions." />
       <div className="grid">
         {summaries.map((summary) => (
           <div className="card span-3 compact" key={summary.stint}>
-            <h2>Stint {summary.stint}</h2>
+            <SectionTitle title={`Stint ${summary.stint}`} help="Shows pace, degradation, and fuel for this stint. Treat very short stints as less reliable for trend conclusions." />
             <div className="metric"><span className="label">Laps</span><span className="value">{summary.startLap}-{summary.endLap}</span><span className="subvalue">{summary.lapCount} laps</span></div>
             <div className="metric"><span className="label">Average / fastest</span><span className="subvalue">{timeValue(summary.averageLap)} / {timeValue(summary.fastestLap)}</span></div>
             <div className="metric"><span className="label">Degradation</span><span className="subvalue">{summary.degradationPerLap != null ? `${formatRaceTime(summary.degradationPerLap)}/lap` : "--"}</span></div>
@@ -675,7 +764,7 @@ function RaceEngineerWorksheet({ session, lapA, lapB, setLapA, setLapB }: { sess
     <div className="page grid">
       <LapSelectors session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />
       <section className="card span-12">
-        <h2>Race Engineer Overview</h2>
+        <SectionTitle title="Race Engineer Overview" help="Combines driving, setup, and strategy hints. Each recommendation is deterministic and backed by computed telemetry evidence." />
         <p className="muted">Rules-first analysis. No LLM is used here: every hint is generated from imported CSV channels and lap metadata.</p>
         <div className="motec-value-grid">
           <div><span className="label">Primary lap</span><strong>{lapA || "--"}</strong></div>
@@ -717,7 +806,7 @@ function FuelStrategyWorksheet({ session, lapA, lapB, setLapA, setLapB }: { sess
     <div className="page grid">
       <LapSelectors session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />
       <section className="card span-12">
-        <h2>Fuel Consumption Summary</h2>
+        <SectionTitle title="Fuel Consumption Summary" help="Summarizes fuel state and consumption. Average fuel per lap is the anchor for stint length and finish estimates." />
         {!channelByName(session, "Fuel Level") && <div className="motec-warning">Missing channel: Fuel Level</div>}
         <div className="motec-value-grid">
           <div><span className="label">Current fuel</span><strong>{fmt(currentFuel, 2)} L</strong></div>
@@ -729,7 +818,7 @@ function FuelStrategyWorksheet({ session, lapA, lapB, setLapA, setLapB }: { sess
         </div>
       </section>
       <section className="card span-8">
-        <h2>Fuel Level Timeline</h2>
+        <SectionTitle title="Fuel Level Timeline" help="Shows fuel level through the session. A steady downward line gives reliable consumption; upward jumps identify refuelling." />
         {fuelTrace.length ? (
           <ResponsiveContainer width="100%" height={320}>
             <LineChart data={fuelTrace}>
@@ -743,7 +832,7 @@ function FuelStrategyWorksheet({ session, lapA, lapB, setLapA, setLapB }: { sess
         ) : <Empty message="Fuel Level samples are needed for the full-session fuel trace." />}
       </section>
       <section className="card span-4">
-        <h2>Pit Stop Strategy</h2>
+        <SectionTitle title="Pit Stop Strategy" help="Lists detected refuel stops. Use fuel added and lap timing to understand stint boundaries and pit-cycle behavior." />
         {pitStops.length ? (
           <div className="table-wrap">
             <table>
@@ -754,7 +843,7 @@ function FuelStrategyWorksheet({ session, lapA, lapB, setLapA, setLapB }: { sess
         ) : <Empty message="No pit stops detected. A stop is inferred when fuel increases by more than 2 L between or within laps." />}
       </section>
       <section className="card span-6">
-        <h2>Fuel Used Per Lap</h2>
+        <SectionTitle title="Fuel Used Per Lap" help="Shows fuel burned on each lap. Consistent bars improve strategy confidence; outliers deserve a traffic or driving-style check." />
         <ResponsiveContainer width="100%" height={300}>
           <BarChart data={chartRows}>
             <CartesianGrid stroke="#27313a" />
@@ -767,7 +856,7 @@ function FuelStrategyWorksheet({ session, lapA, lapB, setLapA, setLapB }: { sess
         </ResponsiveContainer>
       </section>
       <section className="card span-6">
-        <h2>Fuel By Lap</h2>
+        <SectionTitle title="Fuel By Lap" help="Compares fuel at lap start and end. Large increases mark refuelling, while changing slopes show consumption variation." />
         <ResponsiveContainer width="100%" height={300}>
           <LineChart data={chartRows}>
             <CartesianGrid stroke="#27313a" />
@@ -780,7 +869,7 @@ function FuelStrategyWorksheet({ session, lapA, lapB, setLapA, setLapB }: { sess
         </ResponsiveContainer>
       </section>
       <section className="card span-12">
-        <h2>Lap Fuel Table</h2>
+        <SectionTitle title="Lap Fuel Table" help="Provides exact lap fuel numbers. Use it to validate pit detection and calculate race-finish margins." />
         <div className="table-wrap">
           <table>
             <thead><tr><th>Lap</th><th>Stint</th><th>Start Time</th><th>Duration</th><th>Fuel Start</th><th>Fuel End</th><th>Fuel Used</th><th>Pit Stop</th><th>Fuel Added</th></tr></thead>
@@ -806,7 +895,7 @@ function Worksheet({ session, worksheet, lapA, lapB, setLapA, setLapB }: { sessi
       {groups.map(([label, channels]) => <ChartBlock key={label} session={session} title={label} channels={channels} lapA={lapA} lapB={lapB} cursor={cursor} setCursor={setCursor} />)}
       <CursorValues session={session} lapA={lapA} cursor={cursor} channels={groups.flatMap(([, channels]) => channels).slice(0, 12)} />
       {cards.length > 0 && <AnalysisCards samples={samples} channels={cards} />}
-      <section className="card span-12"><h2>{title}</h2><p className="muted">Worksheet uses imported CSV channels only. Missing channels are reported above each graph.</p></section>
+      <section className="card span-12"><SectionTitle title={title} help={worksheetHelp(title)} /><p className="muted">Worksheet uses imported CSV channels only. Missing channels are reported above each graph.</p></section>
     </div>
   );
   if (!session) return <div className="page"><section className="card"><Empty /></section></div>;
@@ -835,7 +924,7 @@ function GForceWorksheet(props: { session: MotecSession; lapA: string; lapB: str
     <div className="page grid">
       <LapSelectors session={props.session} lapA={props.lapA} lapB={props.lapB} setLapA={props.setLapA} setLapB={props.setLapB} />
       {["G Force Lat", "G Force Long", "G Force Vert", "Ground Speed", "Steering", "Brake Pos", "Throttle Pos"].map((channel) => <ChartBlock key={channel} session={props.session} title={channel} channels={[channel]} lapA={props.lapA} lapB={props.lapB} cursor={props.cursor} setCursor={props.setCursor} />)}
-      <section className="card span-6"><h2>G-G Diagram</h2><ResponsiveContainer width="100%" height={360}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey="x" stroke="#8896a3" /><YAxis dataKey="y" stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Scatter fill="#e6b450" data={samples.map((sample) => ({ x: numeric(sample, "G Force Lat"), y: numeric(sample, "G Force Long") }))} /></ScatterChart></ResponsiveContainer></section>
+      <section className="card span-6"><SectionTitle title="G-G Diagram" help={worksheetHelp("G-G Diagram")} /><ResponsiveContainer width="100%" height={360}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey="x" stroke="#8896a3" /><YAxis dataKey="y" stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Scatter fill="#e6b450" data={samples.map((sample) => ({ x: numeric(sample, "G Force Lat"), y: numeric(sample, "G Force Long") }))} /></ScatterChart></ResponsiveContainer></section>
       <AnalysisCards samples={samples} channels={["G Force Lat", "G Force Long", "G Force Vert", "Combined G"]} />
     </div>
   );
@@ -849,8 +938,8 @@ function MapWorksheet({ session, lapA, lapB, setLapA, setLapB, color, setColor }
   return (
     <div className="page grid">
       <LapSelectors session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />
-      <section className="card span-12"><h2>Map Controls</h2><select value={color} onChange={(event) => setColor(event.target.value)}>{["Ground Speed", "Brake Pos", "Throttle Pos", "Delta Best", "Tyre Wear FL", "Brake Temp FL"].map((name) => <option key={name}>{name}</option>)}</select></section>
-      <section className="card span-12"><h2>GPS Trace</h2>{samples.length ? <svg className="motec-map" viewBox="0 0 800 420">{samples.map((sample, index) => { const x = ((numeric(sample, "GPS Longitude")! - minLon) / Math.max(maxLon - minLon, 0.000001)) * 760 + 20; const y = 400 - ((numeric(sample, "GPS Latitude")! - minLat) / Math.max(maxLat - minLat, 0.000001)) * 380; const intensity = Math.min(1, Math.max(0, (numeric(sample, color) ?? 0) / 100)); return <circle key={index} cx={x} cy={y} r="2.5" fill={`rgb(${Math.round(230 * intensity)}, ${180}, ${Math.round(80 + 120 * (1 - intensity))})`} />; })}</svg> : <Empty message="GPS Latitude/GPS Longitude are missing or invalid. Time-based analysis still works." />}</section>
+      <section className="card span-12"><SectionTitle title="Map Controls" help="Chooses the channel used to color the GPS trace. Use speed, brake, or throttle coloring to understand corner behavior." /><select value={color} onChange={(event) => setColor(event.target.value)}>{["Ground Speed", "Brake Pos", "Throttle Pos", "Delta Best", "Tyre Wear FL", "Brake Temp FL"].map((name) => <option key={name}>{name}</option>)}</select></section>
+      <section className="card span-12"><SectionTitle title="GPS Trace" help={worksheetHelp("GPS Trace")} />{samples.length ? <svg className="motec-map" viewBox="0 0 800 420">{samples.map((sample, index) => { const x = ((numeric(sample, "GPS Longitude")! - minLon) / Math.max(maxLon - minLon, 0.000001)) * 760 + 20; const y = 400 - ((numeric(sample, "GPS Latitude")! - minLat) / Math.max(maxLat - minLat, 0.000001)) * 380; const intensity = Math.min(1, Math.max(0, (numeric(sample, color) ?? 0) / 100)); return <circle key={index} cx={x} cy={y} r="2.5" fill={`rgb(${Math.round(230 * intensity)}, ${180}, ${Math.round(80 + 120 * (1 - intensity))})`} />; })}</svg> : <Empty message="GPS Latitude/GPS Longitude are missing or invalid. Time-based analysis still works." />}</section>
     </div>
   );
 }
@@ -864,9 +953,9 @@ function HistogramWorksheet({ session, lapA, lapB, setLapA, setLapB, channel, se
   return (
     <div className="page grid">
       <LapSelectors session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />
-      <section className="card span-12"><h2>Histogram Channel</h2><select value={channel} onChange={(event) => setChannel(event.target.value)}>{numericChannels.map((item) => <option key={item.originalName}>{item.originalName}</option>)}</select></section>
-      <section className="card span-8"><h2>{channel} Histogram</h2><ResponsiveContainer width="100%" height={360}><BarChart data={bins}><CartesianGrid stroke="#27313a" /><XAxis dataKey="bin" stroke="#8896a3" /><YAxis stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Bar dataKey="count" fill="#e6b450" /></BarChart></ResponsiveContainer></section>
-      <section className="card span-4"><h2>Stats</h2><AnalysisCards samples={samples} channels={[channel]} /></section>
+      <section className="card span-12"><SectionTitle title="Histogram Channel" help="Chooses the numeric channel to distribute into bins. Histograms are useful for operating windows, not lap sequencing." /><select value={channel} onChange={(event) => setChannel(event.target.value)}>{numericChannels.map((item) => <option key={item.originalName}>{item.originalName}</option>)}</select></section>
+      <section className="card span-8"><SectionTitle title={`${channel} Histogram`} help={worksheetHelp("Histogram")} /><ResponsiveContainer width="100%" height={360}><BarChart data={bins}><CartesianGrid stroke="#27313a" /><XAxis dataKey="bin" stroke="#8896a3" /><YAxis stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Bar dataKey="count" fill="#e6b450" /></BarChart></ResponsiveContainer></section>
+      <section className="card span-4"><SectionTitle title="Stats" help="Summarizes the selected histogram channel. Use min, max, and average to spot abnormal operating ranges." /><AnalysisCards samples={samples} channels={[channel]} /></section>
     </div>
   );
 }
@@ -877,9 +966,9 @@ function XYWorksheet({ session, lapA, lapB, setLapA, setLapB, x, y, setX, setY, 
   return (
     <div className="page grid">
       <LapSelectors session={session} lapA={lapA} lapB={lapB} setLapA={setLapA} setLapB={setLapB} />
-      <section className="card span-12"><h2>X-Y Controls</h2><div className="input-grid"><select value={x} onChange={(event) => setX(event.target.value)}>{numericChannels.map((item) => <option key={item.originalName}>{item.originalName}</option>)}</select><select value={y} onChange={(event) => setY(event.target.value)}>{numericChannels.map((item) => <option key={item.originalName}>{item.originalName}</option>)}</select></div><div className="control-row">{presets.map(([label, px, py]) => <button key={label} onClick={() => { setX(px); setY(py); }}>{label}</button>)}</div></section>
-      <section className="card span-8"><h2>{y} vs {x}</h2><ResponsiveContainer width="100%" height={380}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey="x" stroke="#8896a3" /><YAxis dataKey="y" stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Scatter fill="#e6b450" data={samples.map((sample) => ({ x: numeric(sample, x), y: numeric(sample, y) }))} /></ScatterChart></ResponsiveContainer></section>
-      <section className="card span-4"><h2>Stats</h2><AnalysisCards samples={samples} channels={[x, y]} /></section>
+      <section className="card span-12"><SectionTitle title="X-Y Controls" help="Chooses channels for relationship plotting. Presets cover common driver, setup, and powertrain questions." /><div className="input-grid"><select value={x} onChange={(event) => setX(event.target.value)}>{numericChannels.map((item) => <option key={item.originalName}>{item.originalName}</option>)}</select><select value={y} onChange={(event) => setY(event.target.value)}>{numericChannels.map((item) => <option key={item.originalName}>{item.originalName}</option>)}</select></div><div className="control-row">{presets.map(([label, px, py]) => <button key={label} onClick={() => { setX(px); setY(py); }}>{label}</button>)}</div></section>
+      <section className="card span-8"><SectionTitle title={`${y} vs ${x}`} help={worksheetHelp("X-Y Plot")} /><ResponsiveContainer width="100%" height={380}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey="x" stroke="#8896a3" /><YAxis dataKey="y" stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Scatter fill="#e6b450" data={samples.map((sample) => ({ x: numeric(sample, x), y: numeric(sample, y) }))} /></ScatterChart></ResponsiveContainer></section>
+      <section className="card span-4"><SectionTitle title="Stats" help="Summarizes the plotted channels. Check sample count and ranges before trusting a relationship." /><AnalysisCards samples={samples} channels={[x, y]} /></section>
     </div>
   );
 }

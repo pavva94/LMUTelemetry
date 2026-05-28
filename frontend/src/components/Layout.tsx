@@ -11,7 +11,6 @@ import {
   FileSpreadsheet,
   Radio,
   Settings,
-  Table2,
   Timer,
   UserRound,
   Wrench,
@@ -28,13 +27,10 @@ const liveItems = [
   ["race-history", "Race History", History],
   ["xy-plotter", "X-Y Plotter", LineChart],
   ["stint-data", "Stint Data", ClipboardList],
-  ["opponent-stats", "Opponent Stats", Table2],
-  ["race-control", "Race Control", Flag],
-  ["settings", "Settings", Settings],
   ["planner", "Strategy Planner", Activity],
   ["pit", "Pit Window", Flag],
-  ["competitors", "Competitors", Table2],
   ["review", "Session Review", BarChart3],
+  ["settings", "Settings", Settings],
 ] as const;
 
 const csvItems = [

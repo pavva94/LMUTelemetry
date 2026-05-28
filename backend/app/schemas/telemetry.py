@@ -147,6 +147,8 @@ class CompetitorState(BaseModel):
 class TelemetrySnapshot(BaseModel):
     timestamp: datetime
     connected: bool
+    feed_paused: bool = False
+    pause_reason: str | None = None
     session: SessionState | None = None
     player: PlayerState | None = None
     competitors: list[CompetitorState] = Field(default_factory=list)

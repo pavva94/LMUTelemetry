@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { api } from "./api/client";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Layout, type PageKey } from "./components/Layout";
-import { Competitors } from "./pages/Competitors";
 import { LiveDashboard } from "./pages/LiveDashboard";
 import { MotecWorkspace } from "./pages/MotecWorkspace";
 import { PitWindow } from "./pages/PitWindow";
@@ -12,8 +11,6 @@ import {
   FieldSpread,
   LapCompare,
   OneLapTiming,
-  OpponentStats,
-  RaceControl,
   RaceHistory,
   RaceInfo,
   SettingsPage,
@@ -52,12 +49,9 @@ export default function App() {
         {page === "race-history" && <RaceHistory telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "xy-plotter" && <XYPlotter telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "stint-data" && <StintData telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
-        {page === "opponent-stats" && <OpponentStats telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
-        {page === "race-control" && <RaceControl telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "settings" && <SettingsPage telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
-        {page === "planner" && <StrategyPlanner strategy={strategy} />}
+        {page === "planner" && <StrategyPlanner strategy={strategy} telemetry={telemetry} />}
         {page === "pit" && <PitWindow strategy={strategy} />}
-        {page === "competitors" && <Competitors competitors={currentCompetitors} />}
         {page === "review" && <SessionReview />}
       </ErrorBoundary>
     </Layout>

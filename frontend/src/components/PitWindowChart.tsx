@@ -1,4 +1,5 @@
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { SectionTitle } from "./SectionTitle";
 import type { StrategyState } from "../types/strategy";
 
 export function PitWindowChart({ strategy }: { strategy?: StrategyState | null }) {
@@ -10,7 +11,7 @@ export function PitWindowChart({ strategy }: { strategy?: StrategyState | null }
   });
   return (
     <section className="card span-7">
-      <h2>Pit Lap Risk</h2>
+      <SectionTitle title="Pit Lap Risk" help="Ranks upcoming pit laps by combined strategy risk. A rising curve means waiting longer is becoming less attractive." />
       <ResponsiveContainer width="100%" height={240}>
         <LineChart data={data}>
           <CartesianGrid stroke="#27313a" />

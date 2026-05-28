@@ -30,6 +30,27 @@ def _max(values: list[float | None]) -> float | None:
     return max(clean) if clean else None
 
 
+def _median(values: list[float]) -> float | None:
+    clean = sorted(value for value in values if math.isfinite(value))
+    if not clean:
+        return None
+    middle = len(clean) // 2
+    if len(clean) % 2:
+        return clean[middle]
+    return (clean[middle - 1] + clean[middle]) / 2
+
+
+def _robust_normal(values: list[float | None], minimum: float = 0.0) -> float | None:
+    clean = [value for value in values if value is not None and math.isfinite(value) and value > minimum]
+    if not clean:
+        return None
+    preliminary = _median(clean)
+    if preliminary is None:
+        return None
+    plausible = [value for value in clean if preliminary * 0.70 <= value <= preliminary * 1.35]
+    return _median(plausible or clean)
+
+
 def _integrate_distance(samples: list[dict], time_key: str, speed_key: str) -> float | None:
     distance = 0.0
     usable = 0
@@ -77,6 +98,10 @@ class ProfileFilters:
 
 
 class ProfileRepository:
+    min_lap_time_ratio = 0.75
+    max_lap_time_ratio = 1.80
+    min_distance_ratio = 0.75
+
     def _live_laps(self) -> list[dict]:
         with SessionLocal() as db:
             sessions = db.scalars(select(SessionModel).order_by(SessionModel.created_at.asc())).all()
@@ -116,7 +141,7 @@ class ProfileRepository:
                     "session_type": session.session_type,
                             "lap_number": lap_number,
                             "lap_time": duration,
-                            "valid_lap": True,
+                            "valid_lap": None,
                             "distance_km": distance,
                             "fuel_start": first.fuel_liters,
                             "fuel_end": last.fuel_liters,
@@ -187,7 +212,7 @@ class ProfileRepository:
                             "session_type": session["session_type"] if "session_type" in session.keys() and session["session_type"] else "CSV Import",
                             "lap_number": lap["lap_number"],
                             "lap_time": duration,
-                            "valid_lap": True,
+                            "valid_lap": None,
                             "distance_km": distance,
                             "fuel_start": lap["fuel_start"],
                             "fuel_end": lap["fuel_end"],
@@ -218,7 +243,41 @@ class ProfileRepository:
         return rows
 
     def all_laps(self) -> list[dict]:
-        return self._live_laps() + self._motec_laps()
+        return self._with_lap_quality(self._live_laps() + self._motec_laps())
+
+    def _with_lap_quality(self, laps: list[dict]) -> list[dict]:
+        grouped: dict[str, list[dict]] = defaultdict(list)
+        for lap in laps:
+            grouped[f"{lap.get('source')}:{lap.get('session_id')}"].append(lap)
+        for session_laps in grouped.values():
+            normal_time = _robust_normal([_num(lap.get("lap_time")) for lap in session_laps], minimum=40.0)
+            normal_distance = _robust_normal([_num(lap.get("distance_km")) for lap in session_laps], minimum=0.5)
+            for lap in session_laps:
+                lap_time = _num(lap.get("lap_time"))
+                distance = _num(lap.get("distance_km"))
+                time_ratio = lap_time / normal_time if lap_time is not None and normal_time else None
+                distance_ratio = distance / normal_distance if distance is not None and normal_distance else None
+                valid = True
+                reason = "estimated_full_lap"
+                if lap_time is None or normal_time is None:
+                    valid = False
+                    reason = "insufficient_lap_time"
+                elif time_ratio is not None and time_ratio < self.min_lap_time_ratio:
+                    valid = False
+                    reason = "partial_or_out_lap"
+                elif time_ratio is not None and time_ratio > self.max_lap_time_ratio:
+                    valid = False
+                    reason = "very_slow_or_incident_lap"
+                elif distance_ratio is not None and distance_ratio < self.min_distance_ratio:
+                    valid = False
+                    reason = "short_distance_lap"
+                lap["expected_lap_time"] = normal_time
+                lap["lap_time_ratio"] = time_ratio
+                lap["expected_distance_km"] = normal_distance
+                lap["distance_ratio"] = distance_ratio
+                lap["valid_lap"] = valid
+                lap["lap_quality"] = reason
+        return laps
 
     def _sessions_from_laps(self, laps: list[dict]) -> dict[str, dict]:
         sessions: dict[str, dict] = {}
@@ -332,7 +391,7 @@ class ProfileRepository:
         for track, track_laps in self._group(laps, "track").items():
             distance = sum((_num(lap.get("distance_km")) or 0) for lap in track_laps)
             sessions = {f"{lap['source']}:{lap['session_id']}" for lap in track_laps}
-            best = min((_num(lap.get("lap_time")) for lap in track_laps if _num(lap.get("lap_time"))), default=None)
+            best = min((_num(lap.get("lap_time")) for lap in track_laps if lap.get("valid_lap") and _num(lap.get("lap_time"))), default=None)
             car_counter = Counter(str(lap.get("car") or "Unknown car") for lap in track_laps)
             rows.append(
                 {

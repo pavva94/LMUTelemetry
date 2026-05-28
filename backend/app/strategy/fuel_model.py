@@ -7,6 +7,10 @@ from app.schemas.telemetry import TelemetrySnapshot
 from app.telemetry.event_detector import _player_in_pits, _under_yellow
 
 
+def _valid_lap_time(value: float | None) -> float | None:
+    return value if value is not None and 40.0 <= value <= 900.0 else None
+
+
 class FuelModel:
     def __init__(self, assumptions: StrategyAssumptions):
         self.assumptions = assumptions
@@ -32,8 +36,9 @@ class FuelModel:
 
         fuel_per_lap = (sum(self._valid_usage) / len(self._valid_usage)) if self._valid_usage else None
         estimated_laps = None
-        if snapshot.session and snapshot.session.time_remaining and self.assumptions.normal_lap_time:
-            estimated_laps = snapshot.session.time_remaining / self.assumptions.normal_lap_time
+        normal_lap_time = self._normal_lap_time(snapshot)
+        if snapshot.session and snapshot.session.time_remaining and normal_lap_time:
+            estimated_laps = snapshot.session.time_remaining / normal_lap_time
         if not fuel_per_lap:
             return FuelState(estimated_laps_remaining=estimated_laps, confidence="low")
         fuel_laps = player.fuel_liters / fuel_per_lap
@@ -50,3 +55,22 @@ class FuelModel:
             recommended_fuel_save_per_lap=round(save, 3) if save else None,
             confidence=confidence,
         )
+
+    def _normal_lap_time(self, snapshot: TelemetrySnapshot) -> float | None:
+        player_car = next((car for car in snapshot.competitors if car.is_player), None)
+        for value in (
+            _valid_lap_time(player_car.last_lap_time if player_car else None),
+            _valid_lap_time(player_car.estimated_lap_time if player_car else None),
+            _valid_lap_time(player_car.best_lap_time if player_car else None),
+        ):
+            if value is not None:
+                return value
+        field_times = sorted(
+            value
+            for car in snapshot.competitors
+            for value in [_valid_lap_time(car.last_lap_time), _valid_lap_time(car.estimated_lap_time), _valid_lap_time(car.best_lap_time)]
+            if value is not None
+        )
+        if field_times:
+            return field_times[len(field_times) // 2]
+        return _valid_lap_time(self.assumptions.normal_lap_time)

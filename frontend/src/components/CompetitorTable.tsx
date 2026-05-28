@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { formatRaceGap, formatRaceTime } from "../lib/timeFormat";
 import type { CompetitorState } from "../types/telemetry";
+import { SectionTitle } from "./SectionTitle";
 import { StatusBadge } from "./StatusBadge";
 
 type SortDirection = "asc" | "desc";
@@ -42,7 +43,7 @@ export function CompetitorTable({ competitors }: { competitors: CompetitorState[
   return (
     <section className="card span-12">
       <div className="row" style={{ alignItems: "end" }}>
-        <h2>Competitors</h2>
+        <SectionTitle title="Competitors" help="Shows live race order, lap pace, gaps, stops, and threat estimates. Sort by gap or last lap to identify immediate traffic and strategy pressure." />
         <input style={{ maxWidth: 280 }} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search cars" />
       </div>
       <div className="table-wrap">

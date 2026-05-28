@@ -21,6 +21,7 @@ from app.strategy.recommendation_engine import RecommendationEngine
 from app.strategy.stint_model import StintModel
 from app.strategy.tyre_model import TyreModel
 from app.telemetry.event_detector import EventDetector
+from app.telemetry.event_detector import _player_in_pits
 from app.telemetry.lmu_collector import LMUTelemetryCollector
 from app.telemetry.mock_collector import MockTelemetryCollector
 
@@ -72,6 +73,10 @@ class TelemetryService:
         self._session_signature: tuple[str | None, str | None, str | None] | None = None
         self._last_game_time: float | None = None
         self._last_lap_number: int | None = None
+        self._idle_since_game_time: float | None = None
+        self._last_player_progress: tuple[int | None, float | None] | None = None
+        self.feed_paused = False
+        self.pause_reason: str | None = None
         self.strategy_state = StrategyState(assumptions=self.assumptions)
         self.competitors: list[CompetitorState] = []
         self.recommendation = StrategyRecommendation()
@@ -117,6 +122,8 @@ class TelemetryService:
         self.competitors = []
         self.recommendation = StrategyRecommendation()
         self.recommendation_payload = RecommendationPayload(current=self.recommendation)
+        self._idle_since_game_time = None
+        self._last_player_progress = None
 
     def _snapshot_signature(self, snapshot: TelemetrySnapshot) -> tuple[str | None, str | None, str | None]:
         session = snapshot.session
@@ -126,6 +133,59 @@ class TelemetryService:
             session.session_type if session else None,
             player.vehicle_name if player else None,
         )
+
+    def _player_track_progress(self, snapshot: TelemetrySnapshot) -> tuple[int | None, float | None]:
+        player = snapshot.player
+        player_id = player.vehicle_id if player else None
+        player_comp = next((car for car in snapshot.competitors if car.is_player or car.vehicle_id == player_id), None)
+        return (player.lap_number if player else None, player_comp.lap_distance if player_comp else None)
+
+    def _is_on_track(self, snapshot: TelemetrySnapshot) -> tuple[bool, str | None]:
+        player = snapshot.player
+        session = snapshot.session
+        if not snapshot.connected or not player:
+            return False, "telemetry unavailable"
+        phase = f"{session.game_phase if session else ''}".lower()
+        if any(token in phase for token in ("garage", "menu", "replay", "paused")):
+            return False, f"game phase {phase}".strip()
+        if _player_in_pits(snapshot):
+            return False, "car is in pit lane or garage"
+        progress = self._player_track_progress(snapshot)
+        previous_progress = self._last_player_progress
+        self._last_player_progress = progress
+        speed = player.speed_kph or 0.0
+        inputs_active = any((value or 0.0) > 0.03 for value in (player.throttle, player.brake, player.clutch))
+        progressed = (
+            previous_progress is not None
+            and progress[0] == previous_progress[0]
+            and progress[1] is not None
+            and previous_progress[1] is not None
+            and abs(progress[1] - previous_progress[1]) > 0.00005
+        )
+        if speed > 5 or inputs_active or progressed:
+            self._idle_since_game_time = None
+            return True, None
+        current_time = session.current_time if session else None
+        if current_time is None:
+            return False, "no session clock"
+        if self._idle_since_game_time is None:
+            self._idle_since_game_time = current_time
+            return True, None
+        if current_time - self._idle_since_game_time >= 15:
+            return False, "car stationary or menu idle"
+        return True, None
+
+    def _pause_live_feed(self, snapshot: TelemetrySnapshot, reason: str) -> None:
+        self.feed_paused = True
+        self.pause_reason = reason
+        frozen = self.latest_snapshot or snapshot
+        frozen.feed_paused = True
+        frozen.pause_reason = reason
+        self.latest_snapshot = frozen
+
+    def _resume_live_feed(self) -> None:
+        self.feed_paused = False
+        self.pause_reason = None
 
     def _maybe_rotate_session(self, snapshot: TelemetrySnapshot) -> None:
         session = snapshot.session
@@ -185,9 +245,17 @@ class TelemetryService:
             await asyncio.sleep(poll_delay)
 
     def _process(self, snapshot: TelemetrySnapshot) -> None:
-        self.latest_snapshot = snapshot
         if not snapshot.connected or not snapshot.player:
+            self._pause_live_feed(snapshot, "telemetry unavailable")
             return
+        on_track, reason = self._is_on_track(snapshot)
+        if not on_track:
+            self._pause_live_feed(snapshot, reason or "not on track")
+            return
+        self._resume_live_feed()
+        snapshot.feed_paused = False
+        snapshot.pause_reason = None
+        self.latest_snapshot = snapshot
         self._maybe_rotate_session(snapshot)
         self.event_detector.update(snapshot)
         fuel = self.fuel_model.update(snapshot)

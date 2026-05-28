@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api/client";
+import { SectionTitle } from "../components/SectionTitle";
 import { formatRaceGap, formatRaceTime } from "../lib/timeFormat";
 import type { SessionReview } from "../types/session";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
@@ -401,7 +402,7 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
   return (
     <div className="page grid">
       <section className="card span-4">
-        <h2>Fuel Strategy</h2>
+        <SectionTitle title="Fuel Strategy" help="Estimates fuel range, margin, and pit pressure. A negative margin means the current pace or consumption cannot safely reach the target." />
         <Metric label="Current fuel" value={`${fmt(player?.fuel_liters)} L`} />
         <Metric label="Fuel capacity" value={`${fmt(player?.fuel_capacity_liters)} L`} />
         <Metric label="Last lap used" value={`${fmt(fuel?.fuel_per_lap_liters, 2)} L`} />
@@ -412,7 +413,7 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
         <Metric label="Suggested pit lap" value={text(strategy?.pit_window?.optimal_pit_lap)} />
       </section>
       <section className="card span-4">
-        <h2>Tyre Strategy</h2>
+        <SectionTitle title="Tyre Strategy" help="Tracks tyre wear rate and remaining life. Faster rear wear suggests traction stress; faster front wear suggests understeer or overworking entry speed." />
         <FourCornerTyres tyres={tyres} />
         <Metric label="Wear per lap" value={pct(strategy?.tyres?.wear_rate_per_lap)} />
         <Metric label="Estimated life" value={`${fmt(strategy?.tyres?.estimated_remaining_tyre_life_laps)} laps`} />
@@ -420,7 +421,7 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
         <Metric label="Left/right delta" value="Estimate pending" />
       </section>
       <section className="card span-4">
-        <h2>Pit Strategy</h2>
+        <SectionTitle title="Pit Strategy" help="Combines fuel, tyre life, and traffic into a pit window. The safest stop is inside the window with acceptable rejoin traffic." />
         <Metric label="Current stint lap" value={text(strategy?.stint?.current_stint_lap)} />
         <Metric label="Pit window" value={`${text(strategy?.pit_window?.earliest_viable_pit_lap)}-${text(strategy?.pit_window?.latest_safe_pit_lap)}`} />
         <Metric label="Remaining stint laps" value={fmt(strategy?.tyres?.estimated_remaining_tyre_life_laps)} />
@@ -428,11 +429,11 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
         <Metric label="Pit status" value={text(playerCar?.pit_state || (playerCar?.in_pits ? "In pit" : "Not pitting"))} />
       </section>
       <section className="card span-6">
-        <h2>Lap Pace Trend</h2>
+        <SectionTitle title="Lap Pace Trend" help="Shows completed-lap pace and fuel used. Rising lap times with stable fuel usually point to tyre degradation, traffic, or consistency loss." />
         <BasicLineChart data={lapRows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"]]} />
       </section>
       <section className="card span-6">
-        <h2>Stint Summary</h2>
+        <SectionTitle title="Stint Summary" help="Summarizes current stint pace and top speed. Compare best, last, and average pace to judge whether the stint is improving or fading." />
         <div className="header-grid two">
           <Metric label="Current lap" value={text(player?.lap_number)} />
           <Metric label="Last lap" value={lapTime(playerCar?.last_lap_time)} />
@@ -452,7 +453,7 @@ export function Driving({ telemetry }: EngineeringProps) {
   return (
     <div className="page grid">
       <section className="card span-3">
-        <h2>Driver Inputs</h2>
+        <SectionTitle title="Driver Inputs" help="Shows throttle, brake, steering, and overlap. Smooth separated inputs generally improve tyre life and car balance." />
         <DataBar label="Throttle" value={player?.throttle} color="#69d28f" />
         <DataBar label="Brake" value={player?.brake} color="#ff6961" />
         <DataBar label="Steering" value={Math.abs(player?.steering ?? 0)} color="#6dd6ff" />
@@ -461,7 +462,7 @@ export function Driving({ telemetry }: EngineeringProps) {
         <Metric label="Smoothness" value="Estimate pending" />
       </section>
       <section className="card span-3">
-        <h2>Powertrain</h2>
+        <SectionTitle title="Powertrain" help="Shows gear, RPM, speed, limiter, ABS, and TC state. Frequent assists or limiter use can signal traction or gearing inefficiency." />
         <Metric label="Gear" value={text(player?.gear)} />
         <Metric label="RPM" value={fmt(player?.rpm, 0)} />
         <Metric label="Max RPM" value={fmt(player?.max_rpm, 0)} />
@@ -471,7 +472,7 @@ export function Driving({ telemetry }: EngineeringProps) {
         <Metric label="ABS / TC" value={`${player?.abs_active ? "ABS" : "--"} / ${player?.tc_active ? "TC" : "--"}`} />
       </section>
       <section className="card span-6">
-        <h2>Suspension And Aero</h2>
+        <SectionTitle title="Suspension And Aero" help="Shows ride-height and platform signals. Low ride heights or large front/rear changes suggest bottoming, pitch sensitivity, or aero instability." />
         <div className="header-grid">
           <Metric label="Front ride" value={fmt(player?.front_ride_height ?? avgField([{ value: player?.ride_height_fl }, { value: player?.ride_height_fr }], "value"), 3, " m")} />
           <Metric label="Rear ride" value={fmt(player?.rear_ride_height ?? avgField([{ value: player?.ride_height_rl }, { value: player?.ride_height_rr }], "value"), 3, " m")} />
@@ -484,9 +485,9 @@ export function Driving({ telemetry }: EngineeringProps) {
           <Metric label="Drag" value={fmt(player?.drag, 2)} />
         </div>
       </section>
-      <section className="card span-6"><h2>Tyre Engineering</h2><FourCornerTyres tyres={player?.tyre_state} dense /></section>
-      <section className="card span-3"><h2>Brake Engineering</h2><BrakeGrid player={player} dense /></section>
-      <section className="card span-3"><h2>Ahead Telemetry</h2><EmptyState detail="Selected-car live inputs are not exposed by the current shared-memory layer." /></section>
+      <section className="card span-6"><SectionTitle title="Tyre Engineering" help="Compares per-corner tyre state. Watch pressure, load, and wear balance to spot setup imbalance or overdriving one axle." /><FourCornerTyres tyres={player?.tyre_state} dense /></section>
+      <section className="card span-3"><SectionTitle title="Brake Engineering" help="Shows brake temperatures and pressure by wheel. Front/rear or left/right imbalance can explain locking and entry instability." /><BrakeGrid player={player} dense /></section>
+      <section className="card span-3"><SectionTitle title="Ahead Telemetry" help="Reserved for selected-car comparison. When available, use it to compare inputs and speed against traffic ahead." /><EmptyState detail="Selected-car live inputs are not exposed by the current shared-memory layer." /></section>
     </div>
   );
 }
@@ -568,7 +569,7 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
   return (
     <div className="page grid">
       <section className="card span-8">
-        <h2>Circle Map</h2>
+        <SectionTitle title="Circle Map" help="Places cars around a simplified lap circle by track progress. Use it to understand nearby traffic without needing real track geometry." />
         <div className="circle-map">
           {cars.slice(0, 48).map((car, index) => {
             const angle = (normalizedProgress(car, cars) * Math.PI * 2) - Math.PI / 2;
@@ -585,15 +586,15 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
         </div>
       </section>
       <section className="card span-4">
-        <h2>Traffic And Fuel</h2>
+        <SectionTitle title="Traffic And Fuel" help="Combines nearby gaps with fuel and pit state. Close gaps and low fuel should influence risk, pace targets, and pit timing." />
         <Metric label="Fuel remaining" value={`${fmt(player?.fuel_liters)} L`} />
         <Metric label="Estimated laps" value={fmt(strategy?.fuel?.fuel_laps_remaining)} />
         <Metric label="Pit status" value={text(cars.find((c) => c.is_player)?.pit_state || "Track")} />
         <Metric label="Current lap" value={text(player?.lap_number)} />
         <Metric label="Warnings" value={player?.gap_car_behind != null && player.gap_car_behind < 1 ? "Close car behind" : "Clear"} />
       </section>
-      <section className="card span-6"><h2>Cars Ahead</h2><CompetitorRows competitors={cars.filter((c) => !c.is_player).slice(0, 3)} /></section>
-      <section className="card span-6"><h2>Cars Behind</h2><CompetitorRows competitors={cars.filter((c) => !c.is_player).slice(3, 6)} /></section>
+      <section className="card span-6"><SectionTitle title="Cars Ahead" help="Shows immediate traffic targets. Compare last laps and gaps to decide whether to attack, save, or wait." /><CompetitorRows competitors={cars.filter((c) => !c.is_player).slice(0, 3)} /></section>
+      <section className="card span-6"><SectionTitle title="Cars Behind" help="Shows pressure from behind. A faster car behind may require defensive positioning or earlier traffic planning." /><CompetitorRows competitors={cars.filter((c) => !c.is_player).slice(3, 6)} /></section>
     </div>
   );
 }
@@ -609,7 +610,7 @@ export function LapCompare({ telemetry }: EngineeringProps) {
   return (
     <div className="page grid">
       <section className="card span-12">
-        <h2>Lap Selectors</h2>
+        <SectionTitle title="Lap Selectors" help="Choose two laps from the recorded live session. Comparing similar fuel and tyre states gives the clearest driving conclusions." />
         <div className="input-grid">
           <input value="Current session" readOnly />
           <input value="Player" readOnly />
@@ -618,11 +619,11 @@ export function LapCompare({ telemetry }: EngineeringProps) {
           <input value="Tyre/fuel when available" readOnly />
         </div>
       </section>
-      <section className="card span-4"><h2>Comparison Summary</h2><Metric label="Lap A" value={lapA || text(playerCar?.total_laps)} /><Metric label="Lap B" value={lapB || "previous"} /><Metric label="Difference" value="Sector data pending" /><Metric label="Top speed" value={fmt(maxField(selectedSamples, "speed_kph"), 0, " km/h")} /><Metric label="Fuel delta" value="Needs complete lap samples" /></section>
-      <section className="card span-8"><h2>Speed vs Lap Distance</h2><BasicLineChart data={selectedSamples} xKey="distance" lines={[["speed_kph", "#e6b450"], ["throttle", "#69d28f"], ["brake", "#ff6961"]]} /></section>
-      <section className="card span-6"><h2>Telemetry Comparison</h2><BasicLineChart data={selectedSamples} xKey="distance" lines={[["rpm", "#6dd6ff"], ["steering", "#ff8c69"], ["gear", "#c7a8ff"]]} /></section>
-      <section className="card span-3"><h2>Sector Breakdown</h2><Metric label="Sector 1 delta" value="--" /><Metric label="Sector 2 delta" value="--" /><Metric label="Sector 3 delta" value="--" /><Metric label="Largest loss" value="Not enough lap data" /></section>
-      <section className="card span-3"><h2>Coaching Insight</h2><p className="muted">Collect complete lap samples to compare braking, minimum speed, throttle pickup, exits, and steering consistency.</p></section>
+      <section className="card span-4"><SectionTitle title="Comparison Summary" help="Summarizes the selected laps. Look for speed, fuel, and timing differences before judging driving changes." /><Metric label="Lap A" value={lapA || text(playerCar?.total_laps)} /><Metric label="Lap B" value={lapB || "previous"} /><Metric label="Difference" value="Sector data pending" /><Metric label="Top speed" value={fmt(maxField(selectedSamples, "speed_kph"), 0, " km/h")} /><Metric label="Fuel delta" value="Needs complete lap samples" /></section>
+      <section className="card span-8"><SectionTitle title="Speed vs Lap Distance" help="Compares speed, throttle, and brake across the lap. Time is often gained by braking cleanly, carrying minimum speed, and applying throttle earlier." /><BasicLineChart data={selectedSamples} xKey="distance" lines={[["speed_kph", "#e6b450"], ["throttle", "#69d28f"], ["brake", "#ff6961"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Telemetry Comparison" help="Compares RPM, steering, and gear choice. Extra steering or wrong gear selection can cost exit speed and increase tyre stress." /><BasicLineChart data={selectedSamples} xKey="distance" lines={[["rpm", "#6dd6ff"], ["steering", "#ff8c69"], ["gear", "#c7a8ff"]]} /></section>
+      <section className="card span-3"><SectionTitle title="Sector Breakdown" help="Breaks time loss into track sections. Focus first on the largest loss area rather than chasing every corner." /><Metric label="Sector 1 delta" value="--" /><Metric label="Sector 2 delta" value="--" /><Metric label="Sector 3 delta" value="--" /><Metric label="Largest loss" value="Not enough lap data" /></section>
+      <section className="card span-3"><SectionTitle title="Coaching Insight" help="Uses simple driving rules to point at likely improvements. Treat it as a starting hypothesis to confirm in the charts." /><p className="muted">Collect complete lap samples to compare braking, minimum speed, throttle pickup, exits, and steering consistency.</p></section>
     </div>
   );
 }
@@ -642,7 +643,7 @@ export function OneLapTiming({ competitors }: EngineeringProps) {
   return (
     <div className="page grid">
       <section className="card span-12">
-        <h2>Reference Lap And Filters</h2>
+        <SectionTitle title="Reference Lap And Filters" help="Sets the timing comparison context. Use same-class and ahead/behind filters to focus on the cars that matter tactically." />
         <div className="control-row">
           <select defaultValue="player-best"><option value="player-best">Player best</option><option value="session-best">Session best</option><option value="saved">Saved lap</option></select>
           <select value={filter} onChange={(event) => setFilter(event.target.value)}>
@@ -657,7 +658,7 @@ export function OneLapTiming({ competitors }: EngineeringProps) {
         </div>
       </section>
       <section className="card span-12">
-        <h2>Timing Table</h2>
+        <SectionTitle title="Timing Table" help="Shows current pace and position for visible cars. Look for pit state, invalid laps, and sector loss to understand who is genuinely fast." />
         <CompetitorRows competitors={rows} limit={60} />
       </section>
     </div>
@@ -679,7 +680,7 @@ export function FieldSpread({ telemetry, competitors }: EngineeringProps) {
   return (
     <div className="page grid">
       <section className="card span-12">
-        <h2>Controls</h2>
+        <SectionTitle title="Controls" help="Changes how the field is grouped. Same-class and pit filters make race gaps easier to read during traffic." />
         <div className="control-row">
           <select value={gapMode} onChange={(event) => setGapMode(event.target.value as "leader" | "player")}>
             <option value="leader">Gaps to leader</option>
@@ -690,7 +691,7 @@ export function FieldSpread({ telemetry, competitors }: EngineeringProps) {
         </div>
       </section>
       <section className="card span-12">
-        <h2>Field Spread</h2>
+        <SectionTitle title="Field Spread" help="Plots cars by race gap rather than track position. Clusters show traffic packs, safety-car compression, or pit-cycle groups." />
         <div className="spread-chart">
           {visibleCars.slice(0, 50).map((car, index) => {
             const rawGap = gapMode === "player" ? Math.abs((car.position ?? 0) - (player?.position ?? 0)) * 3 : (car.time_behind_leader ?? car.time_behind_next ?? index * 4);
@@ -699,8 +700,8 @@ export function FieldSpread({ telemetry, competitors }: EngineeringProps) {
           })}
         </div>
       </section>
-      <section className="card span-4"><h2>Race State</h2><Metric label="Leader" value={text(leader?.driver_name || leader?.vehicle_name)} /><Metric label="Player position" value={text(player?.position)} /><Metric label="Player class" value={text(player?.class_position)} /><Metric label="Gap ahead" value={seconds(telemetry?.player?.gap_car_ahead)} /><Metric label="Cars in pits" value={cars.filter((c) => c.in_pits).length} /></section>
-      <section className="card span-8"><h2>Gap Table</h2><CompetitorRows competitors={visibleCars} limit={60} /></section>
+      <section className="card span-4"><SectionTitle title="Race State" help="Summarizes the current race picture. Use it to judge whether to attack, defend, save fuel, or react to pit traffic." /><Metric label="Leader" value={text(leader?.driver_name || leader?.vehicle_name)} /><Metric label="Player position" value={text(player?.position)} /><Metric label="Player class" value={text(player?.class_position)} /><Metric label="Gap ahead" value={seconds(telemetry?.player?.gap_car_ahead)} /><Metric label="Cars in pits" value={cars.filter((c) => c.in_pits).length} /></section>
+      <section className="card span-8"><SectionTitle title="Gap Table" help="Lists gaps in race order. Gaps to next car show immediate battle pressure, while leader gaps show overall race spread." /><CompetitorRows competitors={visibleCars} limit={60} /></section>
     </div>
   );
 }
@@ -712,13 +713,13 @@ export function RaceHistory({ telemetry }: EngineeringProps) {
   if (error && !samples.length) return <div className="page"><section className="card"><EmptyState title="No saved sessions" detail="Session history will appear after recording telemetry samples." /></section></div>;
   return (
     <div className="page grid">
-      <section className="card span-6"><h2>Lap Time History</h2><BasicLineChart data={laps} lines={[["lap_time", "#6dd6ff"]]} /></section>
-      <section className="card span-6"><h2>Lap Fuel Usage</h2><BasicLineChart data={laps} lines={[["fuel_used", "#e6b450"]]} /></section>
-      <section className="card span-6"><h2>Fuel Over Session</h2><BasicLineChart data={samples} xKey="game_time" lines={[["fuel_liters", "#e6b450"]]} /></section>
-      <section className="card span-6"><h2>Tyre Wear History</h2><BasicLineChart data={samples} xKey="game_time" lines={[["tyre_wear_fl", "#6dd6ff"], ["tyre_wear_fr", "#ff8c69"], ["tyre_wear_rl", "#91e48f"], ["tyre_wear_rr", "#c7a8ff"]]} /></section>
-      <section className="card span-6"><h2>Speed Trace</h2><BasicLineChart data={samples} xKey="game_time" lines={[["speed_kph", "#e6b450"], ["rpm", "#6dd6ff"]]} /></section>
-      <section className="card span-6"><h2>Driver Inputs</h2><BasicLineChart data={samples} xKey="game_time" lines={[["throttle", "#69d28f"], ["brake", "#ff6961"], ["steering", "#c7a8ff"]]} /></section>
-      <section className="card span-12"><h2>Event Timeline</h2><EventList review={review} /></section>
+      <section className="card span-6"><SectionTitle title="Lap Time History" help="Shows pace evolution over the session. Rising lap times can indicate tyre degradation, fuel saving, traffic, or inconsistency." /><BasicLineChart data={laps} lines={[["lap_time", "#6dd6ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Lap Fuel Usage" help="Shows fuel burned per completed lap. Stable values improve strategy confidence; spikes often mean traffic, draft, or driving style changes." /><BasicLineChart data={laps} lines={[["fuel_used", "#e6b450"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Fuel Over Session" help="Tracks remaining fuel through time. A linear slope makes finish estimates reliable; jumps usually mark refuelling or session changes." /><BasicLineChart data={samples} xKey="game_time" lines={[["fuel_liters", "#e6b450"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Tyre Wear History" help="Tracks tyre condition by corner. Uneven wear points to balance, setup, or driving load concentrated on one axle or side." /><BasicLineChart data={samples} xKey="game_time" lines={[["tyre_wear_fl", "#6dd6ff"], ["tyre_wear_fr", "#ff8c69"], ["tyre_wear_rl", "#91e48f"], ["tyre_wear_rr", "#c7a8ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Speed Trace" help="Shows speed and RPM over the session. Compare peaks and drops to spot traffic, mistakes, gearing limits, or changing conditions." /><BasicLineChart data={samples} xKey="game_time" lines={[["speed_kph", "#e6b450"], ["rpm", "#6dd6ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Driver Inputs" help="Shows throttle, brake, and steering history. Smooth, separated inputs usually help tyre life and repeatable lap times." /><BasicLineChart data={samples} xKey="game_time" lines={[["throttle", "#69d28f"], ["brake", "#ff6961"], ["steering", "#c7a8ff"]]} /></section>
+      <section className="card span-12"><SectionTitle title="Event Timeline" help="Lists recorded session events and recommendations. Use it to connect pace changes with pits, warnings, or notable moments." /><EventList review={review} /></section>
     </div>
   );
 }
@@ -739,11 +740,11 @@ export function StintData({ telemetry, strategy }: EngineeringProps) {
   const summary = selected?.summary || {};
   return (
     <div className="page grid">
-      <section className="card span-12"><h2>Stint Selector</h2><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<button>Compare stints</button><span className="muted">Splits are inferred from fuel increases greater than 2 L.</span></div></section>
-      <section className="card span-3"><h2>Summary</h2><Metric label="Stint length" value={text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Fuel used" value={`${fmt(summary.fuel_used as number ?? telemetry?.player?.fuel_liters)} L`} /></section>
-      <section className="card span-3"><h2>Tyres</h2><Metric label="Wear delta" value={pct(strategy?.tyres?.average_wear)} /><Metric label="Deg per lap" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
-      <section className="card span-6"><h2>Stint Comparison</h2><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
-      <section className="card span-12"><h2>Stint Lap Table</h2><LapTable rows={rows} /></section>
+      <section className="card span-12"><SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits are inferred from pit stops or fuel increases, so check unusual short stints manually." /><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<button>Compare stints</button><span className="muted">Splits are inferred from fuel increases greater than 2 L.</span></div></section>
+      <section className="card span-3"><SectionTitle title="Summary" help="Condenses stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Stint length" value={text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Fuel used" value={`${fmt(summary.fuel_used as number ?? telemetry?.player?.fuel_liters)} L`} /></section>
+      <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Wear delta" value={pct(strategy?.tyres?.average_wear)} /><Metric label="Deg per lap" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
+      <section className="card span-6"><SectionTitle title="Stint Comparison" help="Compares lap time, fuel use, and tyre change across the stint. Look for degradation trends after fuel load falls." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
+      <section className="card span-12"><SectionTitle title="Stint Lap Table" help="Shows every lap in the selected stint. Sort the story by lap time, fuel used, and events before changing setup assumptions." /><LapTable rows={rows} /></section>
     </div>
   );
 }
@@ -806,10 +807,10 @@ export function XYPlotter({ telemetry }: EngineeringProps) {
   ];
   return (
     <div className="page grid">
-      <section className="card span-12"><h2>Data Selectors</h2><div className="input-grid"><select value={xKey} onChange={(e) => setXKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><select value={yKey} onChange={(e) => setYKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><input value={`${options.length} numeric fields available`} readOnly /><input value="Compare lap off" readOnly /></div></section>
-      <section className="card span-8"><h2>Plot Area</h2>{samples.length ? <ResponsiveContainer width="100%" height={320}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey={xKey} name={xKey} stroke="#8896a3" /><YAxis dataKey={yKey} name={yKey} stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Scatter data={samples} fill="#e6b450" line /></ScatterChart></ResponsiveContainer> : <EmptyState detail="Choose fields after recorded samples are available." />}</section>
-      <section className="card span-4"><h2>Stats</h2><Metric label="Min" value={Number.isFinite(stats.min) ? fmt(stats.min) : "--"} /><Metric label="Max" value={Number.isFinite(stats.max) ? fmt(stats.max) : "--"} /><Metric label="Average" value={fmt(stats.avg)} /><Metric label="Std dev" value={fmt(stats.sd)} /><Metric label="Samples" value={stats.count} /></section>
-      <section className="card span-12"><h2>Preset Plots</h2><div className="control-row">{presets.filter(([, x, y]) => options.includes(x) && options.includes(y)).map(([label, x, y]) => <button key={label} onClick={() => { setXKey(x); setYKey(y); }}>{label}</button>)}</div></section>
+      <section className="card span-12"><SectionTitle title="Data Selectors" help="Chooses numeric channels for custom plots. Put cause on X and response on Y to test setup or driving relationships." /><div className="input-grid"><select value={xKey} onChange={(e) => setXKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><select value={yKey} onChange={(e) => setYKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><input value={`${options.length} numeric fields available`} readOnly /><input value="Compare lap off" readOnly /></div></section>
+      <section className="card span-8"><SectionTitle title="Plot Area" help="Shows the selected relationship. Tight patterns indicate consistent behavior; wide scatter often points to traffic, mistakes, or changing conditions." />{samples.length ? <ResponsiveContainer width="100%" height={320}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey={xKey} name={xKey} stroke="#8896a3" /><YAxis dataKey={yKey} name={yKey} stroke="#8896a3" /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} /><Scatter data={samples} fill="#e6b450" line /></ScatterChart></ResponsiveContainer> : <EmptyState detail="Choose fields after recorded samples are available." />}</section>
+      <section className="card span-4"><SectionTitle title="Stats" help="Summarizes the selected Y channel. Use spread and sample count to judge whether the plot is meaningful." /><Metric label="Min" value={Number.isFinite(stats.min) ? fmt(stats.min) : "--"} /><Metric label="Max" value={Number.isFinite(stats.max) ? fmt(stats.max) : "--"} /><Metric label="Average" value={fmt(stats.avg)} /><Metric label="Std dev" value={fmt(stats.sd)} /><Metric label="Samples" value={stats.count} /></section>
+      <section className="card span-12"><SectionTitle title="Preset Plots" help="Quickly loads common engineering relationships. Presets help validate braking, throttle, steering, fuel, and speed behavior." /><div className="control-row">{presets.filter(([, x, y]) => options.includes(x) && options.includes(y)).map(([label, x, y]) => <button key={label} onClick={() => { setXKey(x); setYKey(y); }}>{label}</button>)}</div></section>
     </div>
   );
 }
@@ -843,12 +844,12 @@ export function SettingsPage({ telemetry, strategy }: EngineeringProps) {
   });
   return (
     <div className="page grid">
-      <section className="card span-4"><h2>Connection</h2><Metric label="Data source" value={text(settings.source || "Mock/LMU auto")} /><Metric label="Status" value={telemetry?.connected ? "Connected" : "Not connected"} /><label>Refresh rate<input type="number" min="1" max="60" value={Number(settings.refreshRate || 10)} onChange={(e) => set("refreshRate", Math.max(1, Number(e.target.value)))} /></label><label><input type="checkbox" checked={Boolean(settings.autoReconnect ?? true)} onChange={(e) => set("autoReconnect", e.target.checked)} /> Auto-reconnect</label></section>
-      <section className="card span-4"><h2>Recording</h2><label><input type="checkbox" checked={Boolean(settings.recording ?? true)} onChange={(e) => set("recording", e.target.checked)} /> Enable recording</label><label>Sample rate<input type="number" min="1" max="60" value={Number(settings.sampleRate || 5)} onChange={(e) => set("sampleRate", Math.max(1, Number(e.target.value)))} /></label><Metric label="Data folder" value="data/sessions" /><label><input type="checkbox" checked={Boolean(settings.validOnly)} onChange={(e) => set("validOnly", e.target.checked)} /> Save only valid laps</label></section>
-      <section className="card span-4"><h2>UI</h2><Metric label="Theme" value={text(settings.theme || "dark")} /><Metric label="Units" value={text(settings.units || "metric")} /><label><input type="checkbox" checked={Boolean(settings.smoothing ?? true)} onChange={(e) => set("smoothing", e.target.checked)} /> Chart smoothing</label><label><input type="checkbox" checked={Boolean(settings.advanced ?? true)} onChange={(e) => set("advanced", e.target.checked)} /> Advanced engineering data</label></section>
-      <section className="card span-4"><h2>Strategy</h2><Metric label="Fuel margin" value={text(strategy?.assumptions?.fuel_safety_margin_liters ?? settings.fuelMargin ?? "--")} /><Metric label="Pit loss" value={formatRaceTime(Number(strategy?.assumptions?.pit_loss_seconds ?? settings.pitLoss ?? NaN))} /><Metric label="Race length" value={formatRaceTime(Number(strategy?.assumptions?.race_duration_minutes ?? settings.raceLength ?? NaN) * 60)} /><Metric label="Tyre warning" value={text(settings.tyreWarning || "75%")} /></section>
-      <section className="card span-4"><h2>Track Map</h2><label><input type="checkbox" checked={Boolean(settings.autoMap ?? true)} onChange={(e) => set("autoMap", e.target.checked)} /> Auto-generate map</label><button>Rebuild current map</button><label><input type="checkbox" checked={Boolean(settings.mapLabels ?? true)} onChange={(e) => set("mapLabels", e.target.checked)} /> Show labels</label><Metric label="Class colors" value="Default palette" /></section>
-      <section className="card span-4"><h2>AI And Coaching</h2><label><input type="checkbox" checked={Boolean(settings.ruleInsights ?? true)} onChange={(e) => set("ruleInsights", e.target.checked)} /> Rule-based insights</label><label><input type="checkbox" checked={Boolean(settings.aiInsights)} onChange={(e) => set("aiInsights", e.target.checked)} /> AI insights later</label><Metric label="Insight frequency" value={text(settings.insightFrequency || "Per lap")} /><Metric label="Modes" value="Driving coach / race engineer" /></section>
+      <section className="card span-4"><SectionTitle title="Connection" help="Controls how live telemetry is read. A stable connection and sensible refresh rate matter more than chasing maximum update speed." /><Metric label="Data source" value={text(settings.source || "Mock/LMU auto")} /><Metric label="Status" value={telemetry?.connected ? "Connected" : "Not connected"} /><label>Refresh rate<input type="number" min="1" max="60" value={Number(settings.refreshRate || 10)} onChange={(e) => set("refreshRate", Math.max(1, Number(e.target.value)))} /></label><label><input type="checkbox" checked={Boolean(settings.autoReconnect ?? true)} onChange={(e) => set("autoReconnect", e.target.checked)} /> Auto-reconnect</label></section>
+      <section className="card span-4"><SectionTitle title="Recording" help="Controls historical data capture. Higher sample rates improve analysis but increase storage and processing cost." /><label><input type="checkbox" checked={Boolean(settings.recording ?? true)} onChange={(e) => set("recording", e.target.checked)} /> Enable recording</label><label>Sample rate<input type="number" min="1" max="60" value={Number(settings.sampleRate || 5)} onChange={(e) => set("sampleRate", Math.max(1, Number(e.target.value)))} /></label><Metric label="Data folder" value="data/sessions" /><label><input type="checkbox" checked={Boolean(settings.validOnly)} onChange={(e) => set("validOnly", e.target.checked)} /> Save only valid laps</label></section>
+      <section className="card span-4"><SectionTitle title="UI" help="Changes display preferences. Use smoothing for trend reading, and advanced data when you want engineering detail over simplicity." /><Metric label="Theme" value={text(settings.theme || "dark")} /><Metric label="Units" value={text(settings.units || "metric")} /><label><input type="checkbox" checked={Boolean(settings.smoothing ?? true)} onChange={(e) => set("smoothing", e.target.checked)} /> Chart smoothing</label><label><input type="checkbox" checked={Boolean(settings.advanced ?? true)} onChange={(e) => set("advanced", e.target.checked)} /> Advanced engineering data</label></section>
+      <section className="card span-4"><SectionTitle title="Strategy" help="Sets assumptions used by fuel and pit calculations. Conservative margins are useful when traffic, weather, or safety cars are uncertain." /><Metric label="Fuel margin" value={text(strategy?.assumptions?.fuel_safety_margin_liters ?? settings.fuelMargin ?? "--")} /><Metric label="Pit loss" value={formatRaceTime(Number(strategy?.assumptions?.pit_loss_seconds ?? settings.pitLoss ?? NaN))} /><Metric label="Race length" value={formatRaceTime(Number(strategy?.assumptions?.race_duration_minutes ?? settings.raceLength ?? NaN) * 60)} /><Metric label="Tyre warning" value={text(settings.tyreWarning || "75%")} /></section>
+      <section className="card span-4"><SectionTitle title="Track Map" help="Controls map generation and labels. Clear labels help traffic awareness, but hiding them can make crowded races easier to scan." /><label><input type="checkbox" checked={Boolean(settings.autoMap ?? true)} onChange={(e) => set("autoMap", e.target.checked)} /> Auto-generate map</label><button>Rebuild current map</button><label><input type="checkbox" checked={Boolean(settings.mapLabels ?? true)} onChange={(e) => set("mapLabels", e.target.checked)} /> Show labels</label><Metric label="Class colors" value="Default palette" /></section>
+      <section className="card span-4"><SectionTitle title="AI And Coaching" help="Controls rule-based and future AI hints. Deterministic insights should explain evidence before suggesting setup or driving changes." /><label><input type="checkbox" checked={Boolean(settings.ruleInsights ?? true)} onChange={(e) => set("ruleInsights", e.target.checked)} /> Rule-based insights</label><label><input type="checkbox" checked={Boolean(settings.aiInsights)} onChange={(e) => set("aiInsights", e.target.checked)} /> AI insights later</label><Metric label="Insight frequency" value={text(settings.insightFrequency || "Per lap")} /><Metric label="Modes" value="Driving coach / race engineer" /></section>
     </div>
   );
 }

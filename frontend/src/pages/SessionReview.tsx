@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
+import { SectionTitle } from "../components/SectionTitle";
 import { formatRaceTime } from "../lib/timeFormat";
 import type { SavedSession, SessionReview as Review } from "../types/session";
 
@@ -125,7 +126,7 @@ export function SessionReview() {
   return (
     <div className="page grid">
       <section className="card span-12">
-        <h2>Saved Session Review</h2>
+        <SectionTitle title="Saved Session Review" help="Selects a recorded live segment for review. Finalize the current segment when you want to store the latest data for later analysis." />
         <div className="input-grid">
           <select value={sessionTypeFilter} onChange={(event) => setSessionTypeFilter(event.target.value)}>
             <option value="all">All session types</option>
@@ -144,7 +145,7 @@ export function SessionReview() {
       </section>
 
       <section className="card span-12">
-        <h2>Detected Sessions</h2>
+        <SectionTitle title="Detected Sessions" help="Lists recorded practice, qualifying, and race segments. Session boundaries help compare the right laps under the right conditions." />
         {sessions.length ? (
           <div className="table-wrap">
             <table>
@@ -181,17 +182,17 @@ export function SessionReview() {
         </div>
       </section>
 
-      <section className="card span-6"><h2>Lap Times</h2><Chart data={laps} xKey="lap_number" lines={[["lap_time", "#6dd6ff"]]} /></section>
-      <section className="card span-6"><h2>Lap Fuel</h2><Chart data={laps} xKey="lap_number" lines={[["fuel_used", "#e6b450"], ["fuel_added", "#69d28f"]]} /></section>
-      <section className="card span-6"><h2>Speed And RPM</h2><Chart data={samples} lines={[["speed_kph", "#e6b450"], ["rpm", "#6dd6ff"]]} /></section>
-      <section className="card span-6"><h2>Driver Inputs</h2><Chart data={samples} lines={[["throttle", "#69d28f"], ["brake", "#ff6961"], ["steering", "#c7a8ff"]]} /></section>
-      <section className="card span-6"><h2>Tyre Wear</h2><Chart data={samples} lines={[["tyre_wear_fl", "#6dd6ff"], ["tyre_wear_fr", "#ff8c69"], ["tyre_wear_rl", "#91e48f"], ["tyre_wear_rr", "#c7a8ff"]]} /></section>
-      <section className="card span-6"><h2>Tyre Temperatures</h2><Chart data={samples} lines={[["tyre_temp_fl", "#6dd6ff"], ["tyre_temp_fr", "#ff8c69"], ["tyre_temp_rl", "#91e48f"], ["tyre_temp_rr", "#c7a8ff"]]} /></section>
-      <section className="card span-6"><h2>Brake Temperatures</h2><Chart data={samples} lines={[["brake_temp_fl", "#6dd6ff"], ["brake_temp_fr", "#ff8c69"], ["brake_temp_rl", "#91e48f"], ["brake_temp_rr", "#c7a8ff"]]} /></section>
-      <section className="card span-6"><h2>Ride Heights</h2><Chart data={samples} lines={[["ride_height_fl", "#6dd6ff"], ["ride_height_fr", "#ff8c69"], ["ride_height_rl", "#91e48f"], ["ride_height_rr", "#c7a8ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Lap Times" help="Shows saved lap pace across the segment. Separate fuel effects, tyre degradation, and traffic before judging driver consistency." /><Chart data={laps} xKey="lap_number" lines={[["lap_time", "#6dd6ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Lap Fuel" help="Shows fuel used and added per lap. Spikes or jumps usually indicate refuel events, pit sequences, or unusual running." /><Chart data={laps} xKey="lap_number" lines={[["fuel_used", "#e6b450"], ["fuel_added", "#69d28f"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Speed And RPM" help="Shows powertrain and speed history. Falling speed peaks with similar RPM can point to traffic, drag, or corner-exit loss." /><Chart data={samples} lines={[["speed_kph", "#e6b450"], ["rpm", "#6dd6ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Driver Inputs" help="Shows throttle, brake, and steering samples. Clean separation and smooth steering usually improve tyre life and lap repeatability." /><Chart data={samples} lines={[["throttle", "#69d28f"], ["brake", "#ff6961"], ["steering", "#c7a8ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Tyre Wear" help="Tracks tyre wear by corner. Front/rear or left/right imbalance is a useful setup and driving-style clue." /><Chart data={samples} lines={[["tyre_wear_fl", "#6dd6ff"], ["tyre_wear_fr", "#ff8c69"], ["tyre_wear_rl", "#91e48f"], ["tyre_wear_rr", "#c7a8ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Tyre Temperatures" help="Shows tyre heat by corner when available. Persistent overheating suggests pressure, camber, balance, or sliding issues." /><Chart data={samples} lines={[["tyre_temp_fl", "#6dd6ff"], ["tyre_temp_fr", "#ff8c69"], ["tyre_temp_rl", "#91e48f"], ["tyre_temp_rr", "#c7a8ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Brake Temperatures" help="Shows brake heat by corner. Front/rear or side imbalance can indicate bias, cooling, or locked-wheel behavior." /><Chart data={samples} lines={[["brake_temp_fl", "#6dd6ff"], ["brake_temp_fr", "#ff8c69"], ["brake_temp_rl", "#91e48f"], ["brake_temp_rr", "#c7a8ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Ride Heights" help="Shows platform movement when available. Low ride height under braking or high speed can indicate bottoming or aero instability." /><Chart data={samples} lines={[["ride_height_fl", "#6dd6ff"], ["ride_height_fr", "#ff8c69"], ["ride_height_rl", "#91e48f"], ["ride_height_rr", "#c7a8ff"]]} /></section>
 
       <section className="card span-12">
-        <h2>Lap Table</h2>
+        <SectionTitle title="Lap Table" help="Lists each saved lap with fuel and speed context. Use it to identify representative laps before deeper analysis." />
         {laps.length ? (
           <div className="table-wrap">
             <table>
@@ -218,7 +219,7 @@ export function SessionReview() {
       </section>
 
       <section className="card span-12">
-        <h2>Events And Recommendations</h2>
+        <SectionTitle title="Events And Recommendations" help="Connects pits and recommendations to the session timeline. Use events to explain sudden changes in pace or fuel use." />
         <div className="table-wrap">
           <table>
             <thead><tr><th>Lap</th><th>Type</th><th>Priority</th><th>Message</th></tr></thead>

@@ -1,5 +1,6 @@
 import { CompetitorTable } from "../components/CompetitorTable";
 import { RecommendationPanel } from "../components/RecommendationPanel";
+import { SectionTitle } from "../components/SectionTitle";
 import { formatRaceTime } from "../lib/timeFormat";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { PlayerState, TelemetrySnapshot, TyreState, TyreTemps } from "../types/telemetry";
@@ -39,7 +40,7 @@ function Header({ telemetry, connected }: { telemetry: TelemetrySnapshot | null;
   return (
     <section className="card span-12 page-header-card">
       <div className="header-grid">
-        <div><span className="label">Connection</span><strong className={connected && telemetry?.connected ? "ok-text" : "warn-text"}>{connected && telemetry?.connected ? "Live" : "Mock/offline"}</strong></div>
+        <div><span className="label">Connection</span><strong className={telemetry?.feed_paused ? "warn-text" : connected && telemetry?.connected ? "ok-text" : "warn-text"}>{telemetry?.feed_paused ? "Paused" : connected && telemetry?.connected ? "Live" : "Mock/offline"}</strong>{telemetry?.feed_paused && <span className="subvalue">{telemetry.pause_reason || "not on track"}</span>}</div>
         <div><span className="label">Track</span><strong>{text(session?.track_name)}</strong></div>
         <div><span className="label">Session</span><strong>{text(session?.session_type)}</strong></div>
         <div><span className="label">Car</span><strong>{text(player?.vehicle_name)}</strong></div>
@@ -55,7 +56,7 @@ function DrivingDisplay({ player }: { player?: PlayerState }) {
   const rpmRatio = Math.min(1, (player?.rpm ?? 0) / Math.max(player?.max_rpm ?? 9000, 1));
   return (
     <section className="card span-5 driving-display">
-      <h2>Main Driving Display</h2>
+      <SectionTitle title="Main Driving Display" help="Shows speed, gear, revs, and driver inputs at a glance. Smooth inputs and stable RPM help preserve tyres and keep traction predictable." />
       <div className="speed-gear">
         <div><span>{fmt(player?.speed_kph, 0)}</span><small>km/h</small></div>
         <div><span>{text(player?.gear)}</span><small>gear</small></div>
@@ -79,7 +80,7 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected }
       <Header telemetry={telemetry} connected={connected} />
       <DrivingDisplay player={player} />
       <section className="card span-3">
-        <h2>Lap Timing</h2>
+        <SectionTitle title="Lap Timing" help="Shows current pace markers against recent and best laps. A growing delta usually means traffic, tyre drop-off, mistakes, or worse exits." />
         <div className="metric"><span className="label">Current lap</span><span className="value">--</span></div>
         <div className="metric"><span className="label">Last lap</span><span className="value">{formatRaceTime(telemetry?.competitors?.find((c) => c.is_player)?.last_lap_time)}</span></div>
         <div className="metric"><span className="label">Best lap</span><span className="value">{formatRaceTime(telemetry?.competitors?.find((c) => c.is_player)?.best_lap_time)}</span></div>
@@ -88,7 +89,7 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected }
         {player?.track_limits_steps != null && <span className="badge amber">Track limits {player.track_limits_steps}</span>}
       </section>
       <section className="card span-4">
-        <h2>Fuel</h2>
+        <SectionTitle title="Fuel" help="Shows fuel range and margin to finish. Keep margin positive; if consumption rises, pit timing or lift-and-coast may need adjustment." />
         <div className="header-grid two">
           <div><span className="label">Current</span><strong>{fmt(player?.fuel_liters)} L</strong></div>
           <div><span className="label">Capacity</span><strong>{fmt(player?.fuel_capacity_liters)} L</strong></div>
@@ -100,7 +101,7 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected }
         </div>
       </section>
       <section className="card span-6">
-        <h2>Tyres</h2>
+        <SectionTitle title="Tyres" help="Shows pressure, wear, and temperature by corner. Large left/right or front/rear differences point to balance, setup, or driving-load issues." />
         <div className="corner-grid">
           <TyreCorner label="FL" tyres={tyres} keyName="fl" />
           <TyreCorner label="FR" tyres={tyres} keyName="fr" />
@@ -110,7 +111,7 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected }
         <span className={strategy?.tyres?.tyre_risk_level === "high" ? "badge red" : "badge green"}>{strategy?.tyres?.tyre_risk_level || "No tyre warning"}</span>
       </section>
       <section className="card span-3">
-        <h2>Brakes</h2>
+        <SectionTitle title="Brakes" help="Shows brake temperature and pressure by wheel. Overheated or imbalanced brakes can cause longer stops, locking, and unstable corner entry." />
         <div className="corner-grid">
           {(["fl", "fr", "rl", "rr"] as const).map((wheel) => (
             <div className="corner-cell" key={wheel}>

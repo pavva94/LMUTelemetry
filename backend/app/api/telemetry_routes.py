@@ -13,6 +13,8 @@ def health(request: Request) -> dict:
         "connected": service.collector.is_connected(),
         "mock": service.settings.use_mock_telemetry,
         "session_id": service.session_id,
+        "feed_paused": service.feed_paused,
+        "pause_reason": service.pause_reason,
     }
 
 

@@ -190,7 +190,7 @@ function LapTable({ rows, compact = false, sort, direction, onSort }: { rows: Pr
               <td>{text(lap.car_class)}</td>
               <td>{text(lap.lap_number)}</td>
               <td>{formatRaceTime(lap.lap_time)}</td>
-              <td>{lap.valid_lap === false ? <span className="badge red">Invalid</span> : <span className="badge green">Valid</span>}</td>
+              <td>{validityBadge(lap)}</td>
               <td>{fmt(lap.fuel_start, 2, " L")} / {fmt(lap.fuel_end, 2, " L")}</td>
               <td>{fmt(lap.fuel_used, 2, " L")}</td>
               <td>{fmt(lap.tyre_wear_fl, 1)} / {fmt(lap.tyre_wear_fr, 1)} / {fmt(lap.tyre_wear_rl, 1)} / {fmt(lap.tyre_wear_rr, 1)}</td>
@@ -207,6 +207,13 @@ function LapTable({ rows, compact = false, sort, direction, onSort }: { rows: Pr
       </table>
     </div>
   );
+}
+
+function validityBadge(lap: ProfileLap) {
+  const label = lap.valid_lap ? "Valid" : "Invalid";
+  const ratio = lap.lap_time_ratio ? `${fmt(lap.lap_time_ratio * 100, 0, "%")} of normal` : "no estimate";
+  const reason = lap.lap_quality ? lap.lap_quality.replace(/_/g, " ") : ratio;
+  return <span className={`badge ${lap.valid_lap ? "green" : "red"}`} title={`Expected lap: ${formatRaceTime(lap.expected_lap_time)}; ${ratio}; ${reason}`}>{label}</span>;
 }
 
 function formatCell(column: string, value: unknown) {

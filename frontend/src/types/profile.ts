@@ -13,6 +13,11 @@ export type ProfileLap = {
   lap_number: string | number;
   lap_time?: number | null;
   valid_lap?: boolean | null;
+  expected_lap_time?: number | null;
+  lap_time_ratio?: number | null;
+  lap_quality?: string | null;
+  expected_distance_km?: number | null;
+  distance_ratio?: number | null;
   distance_km?: number | null;
   fuel_start?: number | null;
   fuel_end?: number | null;
