@@ -92,6 +92,17 @@ http://127.0.0.1:5173
 
 If Vite chooses another port, such as `5174`, use the URL shown in the terminal.
 
+To view the live dashboard from another computer on the same network, keep the backend
+running on the LMU computer and open the frontend through that computer's LAN IP:
+
+```text
+http://<LMU-PC-IP>:5173
+```
+
+The frontend proxies `/api` and `/ws` back to the local backend on the LMU computer,
+so the second computer only needs to reach the frontend port. If the page loads but
+live data does not, allow port `5173` through Windows Firewall on the LMU computer.
+
 ## Live Mode
 
 Live Mode includes:

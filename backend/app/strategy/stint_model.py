@@ -9,14 +9,18 @@ class StintModel:
     def __init__(self) -> None:
         self.last_pit_lap = 0
         self._was_in_pits = False
+        self._stint_active = True
 
     def update(self, snapshot: TelemetrySnapshot, fuel_state: FuelState, tyre_state: TyreStrategyState) -> StintState:
         lap = snapshot.player.lap_number if snapshot.player else None
         in_pits = _player_in_pits(snapshot)
+        if in_pits and not self._was_in_pits:
+            self._stint_active = False
         if self._was_in_pits and not in_pits and lap is not None:
             self.last_pit_lap = lap
+            self._stint_active = True
         self._was_in_pits = in_pits
-        current_stint_lap = lap - self.last_pit_lap if lap is not None else None
+        current_stint_lap = (lap - self.last_pit_lap) if lap is not None and self._stint_active else 0
         fuel_end = int(lap + fuel_state.fuel_laps_remaining) if lap is not None and fuel_state.fuel_laps_remaining is not None else None
         tyre_end = int(lap + tyre_state.estimated_remaining_tyre_life_laps) if lap is not None and tyre_state.estimated_remaining_tyre_life_laps is not None else None
         recommended = min([v for v in [fuel_end, tyre_end] if v is not None], default=None)

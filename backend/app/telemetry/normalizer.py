@@ -126,6 +126,9 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
     wheels = list(attr(telemetry, "mWheels", default=[]) or [])
     def wheel_value(index: int, name: str) -> float | None:
         return safe_float(attr(wheels[index], name, default=None)) if index < len(wheels) else None
+    elapsed = safe_float(attr(telemetry, "mElapsedTime", default=None))
+    lap_start = safe_float(attr(telemetry, "mLapStartET", default=None))
+    current_lap_time = elapsed - lap_start if elapsed is not None and lap_start is not None and elapsed >= lap_start else None
 
     return PlayerState(
         vehicle_id=attr(vehicle, "mID", "mVehicleID", default=0),
@@ -134,10 +137,16 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         position=attr(vehicle, "mPlace", default=None),
         class_position=attr(vehicle, "mClassPosition", default=None),
         lap_number=attr(vehicle, "mTotalLaps", default=None),
-        current_sector=attr(vehicle, "mSector", default=None),
+        current_sector=attr(telemetry, "mCurrentSector", default=attr(vehicle, "mSector", default=None)),
+        current_lap_time=current_lap_time,
+        last_lap_time=safe_float(attr(vehicle, "mLastLapTime", default=None)),
+        best_lap_time=safe_float(attr(vehicle, "mBestLapTime", default=None)),
+        delta_best=safe_float(attr(telemetry, "mDeltaBest", default=None)),
         speed_kph=vector_speed_kph(attr(vehicle, "mLocalVel", "mVel", default=None)),
         gear=attr(telemetry, "mGear", default=None),
         rpm=safe_float(attr(telemetry, "mEngineRPM", default=None)),
+        max_rpm=safe_float(attr(telemetry, "mEngineMaxRPM", default=None)),
+        engine_torque=safe_float(attr(telemetry, "mEngineTorque", default=None)),
         fuel_liters=safe_float(attr(telemetry, "mFuel", default=None)),
         fuel_capacity_liters=safe_float(attr(telemetry, "mFuelCapacity", default=None)),
         engine_oil_temp=safe_float(attr(telemetry, "mEngineOilTemp", default=None)),
@@ -147,6 +156,14 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         steering=safe_float(attr(telemetry, "mUnfilteredSteering", "mSteering", default=None)),
         clutch=safe_float(attr(telemetry, "mUnfilteredClutch", "mClutch", default=None)),
         speed_limiter=bool(attr(telemetry, "mSpeedLimiter", default=False)),
+        abs_active=bool(attr(telemetry, "mABSActive", default=False)),
+        tc_active=bool(attr(telemetry, "mTCActive", default=False)),
+        abs_setting=attr(telemetry, "mABS", default=None),
+        abs_max=attr(telemetry, "mABSMax", default=None),
+        tc_setting=attr(telemetry, "mTC", default=None),
+        tc_max=attr(telemetry, "mTCMax", default=None),
+        tc_slip_setting=attr(telemetry, "mTCSlip", default=None),
+        tc_cut_setting=attr(telemetry, "mTCCut", default=None),
         brake_temp_fl=wheel_value(0, "mBrakeTemp"),
         brake_temp_fr=wheel_value(1, "mBrakeTemp"),
         brake_temp_rl=wheel_value(2, "mBrakeTemp"),
@@ -163,6 +180,8 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         suspension_deflection_fr=wheel_value(1, "mSuspensionDeflection"),
         suspension_deflection_rl=wheel_value(2, "mSuspensionDeflection"),
         suspension_deflection_rr=wheel_value(3, "mSuspensionDeflection"),
+        front_third_deflection=safe_float(attr(telemetry, "mFront3rdDeflection", default=None)),
+        rear_third_deflection=safe_float(attr(telemetry, "mRear3rdDeflection", default=None)),
         front_ride_height=safe_float(attr(telemetry, "mFrontRideHeight", default=None)),
         rear_ride_height=safe_float(attr(telemetry, "mRearRideHeight", default=None)),
         front_downforce=safe_float(attr(telemetry, "mFrontDownforce", default=None)),

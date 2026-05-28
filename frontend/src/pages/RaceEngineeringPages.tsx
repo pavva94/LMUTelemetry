@@ -45,6 +45,10 @@ const text = (value?: string | number | boolean | null) => (value == null || val
 const seconds = (value?: number | null) => formatRaceGap(value);
 const tyreTemp = (value?: TyreTemps) => fmt(value?.center_c ?? value?.left_c ?? value?.right_c ?? value?.carcass_c, 1, " C");
 const lapTime = (value?: number | null) => formatRaceTime(value);
+const assistSetting = (active?: boolean | null, setting?: number | null, max?: number | null) => {
+  const settingText = setting == null ? "--" : max != null && max > 0 ? `${setting}/${max}` : String(setting);
+  return `${active ? "Active" : "Ready"} (${settingText})`;
+};
 
 const asNumber = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
 const validLap = (value?: number | null) => (value != null && value > 0 ? value : null);
@@ -120,6 +124,10 @@ const minField = (rows: Field[], key: string) => {
 const avgField = (rows: Field[], key: string) => {
   const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+};
+const avgNumbers = (values: Array<number | null | undefined>) => {
+  const clean = values.filter((value): value is number => value != null && Number.isFinite(value));
+  return clean.length ? clean.reduce((sum, value) => sum + value, 0) / clean.length : null;
 };
 const isRaceTimeField = (key: string) => key.includes("time") || key.includes("gap");
 
@@ -396,17 +404,25 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
   const player = telemetry?.player;
   const fuel = strategy?.fuel;
   const tyres = telemetry?.player?.tyre_state;
+  const tyreModel = strategy?.tyres;
   const rows = sampleWithLive(review, telemetry, 80);
   const lapRows = sampleLapRows(review);
   const playerCar = (telemetry?.competitors || []).find((c) => c.is_player);
+  const lastLap = player?.last_lap_time ?? playerCar?.last_lap_time;
+  const bestLap = player?.best_lap_time ?? playerCar?.best_lap_time;
+  const frontWear = avgNumbers([tyres?.wear_fl, tyres?.wear_fr]);
+  const rearWear = avgNumbers([tyres?.wear_rl, tyres?.wear_rr]);
+  const leftWear = avgNumbers([tyres?.wear_fl, tyres?.wear_rl]);
+  const rightWear = avgNumbers([tyres?.wear_fr, tyres?.wear_rr]);
+  const lapsNeeded = Math.max(0, (tyreModel?.laps_required ?? 3) - (tyreModel?.observed_laps ?? 0));
   return (
     <div className="page grid">
       <section className="card span-4">
         <SectionTitle title="Fuel Strategy" help="Estimates fuel range, margin, and pit pressure. A negative margin means the current pace or consumption cannot safely reach the target." />
         <Metric label="Current fuel" value={`${fmt(player?.fuel_liters)} L`} />
         <Metric label="Fuel capacity" value={`${fmt(player?.fuel_capacity_liters)} L`} />
-        <Metric label="Last lap used" value={`${fmt(fuel?.fuel_per_lap_liters, 2)} L`} />
-        <Metric label="3-lap average" value={`${fmt(fuel?.fuel_per_lap_liters, 2)} L`} />
+        <Metric label="Last lap used" value={`${fmt(fuel?.last_lap_fuel_used_liters, 2)} L`} />
+        <Metric label="Stint average" value={`${fmt(fuel?.fuel_per_lap_liters, 2)} L`} sub={`${fuel?.stint_laps_observed ?? 0} laps, ${fuel?.confidence || "low"} confidence`} />
         <Metric label="Laps remaining" value={fmt(fuel?.fuel_laps_remaining)} />
         <Metric label="Needed to finish" value={`${fmt(fuel?.required_fuel_to_finish)} L`} />
         <Metric label="Fuel margin" value={`${fmt(fuel?.fuel_delta_to_finish)} L`} />
@@ -415,10 +431,10 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
       <section className="card span-4">
         <SectionTitle title="Tyre Strategy" help="Tracks tyre wear rate and remaining life. Faster rear wear suggests traction stress; faster front wear suggests understeer or overworking entry speed." />
         <FourCornerTyres tyres={tyres} />
-        <Metric label="Wear per lap" value={pct(strategy?.tyres?.wear_rate_per_lap)} />
-        <Metric label="Estimated life" value={`${fmt(strategy?.tyres?.estimated_remaining_tyre_life_laps)} laps`} />
-        <Metric label="Front/rear delta" value="Estimate pending" />
-        <Metric label="Left/right delta" value="Estimate pending" />
+        <Metric label="Wear per lap" value={pct(tyreModel?.wear_rate_per_lap)} sub={`${tyreModel?.confidence || "low"} confidence`} />
+        <Metric label="Estimated life" value={`${fmt(tyreModel?.estimated_remaining_tyre_life_laps)} laps`} sub={lapsNeeded > 0 ? `${lapsNeeded} more clean lap${lapsNeeded === 1 ? "" : "s"} for a stable estimate` : "Estimate stabilized"} />
+        <Metric label="Front/rear delta" value={frontWear != null && rearWear != null ? pct(frontWear - rearWear) : "--"} />
+        <Metric label="Left/right delta" value={leftWear != null && rightWear != null ? pct(leftWear - rightWear) : "--"} />
       </section>
       <section className="card span-4">
         <SectionTitle title="Pit Strategy" help="Combines fuel, tyre life, and traffic into a pit window. The safest stop is inside the window with acceptable rejoin traffic." />
@@ -436,8 +452,9 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
         <SectionTitle title="Stint Summary" help="Summarizes current stint pace and top speed. Compare best, last, and average pace to judge whether the stint is improving or fading." />
         <div className="header-grid two">
           <Metric label="Current lap" value={text(player?.lap_number)} />
-          <Metric label="Last lap" value={lapTime(playerCar?.last_lap_time)} />
-          <Metric label="Best lap" value={lapTime(playerCar?.best_lap_time)} />
+          <Metric label="Current lap time" value={lapTime(player?.current_lap_time)} />
+          <Metric label="Last lap" value={lapTime(lastLap)} />
+          <Metric label="Best lap" value={lapTime(bestLap)} />
           <Metric label="Current stint" value={text(strategy?.stint?.current_stint_lap)} />
           <Metric label="Top speed" value={fmt(maxField(rows, "speed_kph"), 0, " km/h")} />
           <Metric label="Saved laps" value={lapRows.length} />
@@ -469,7 +486,8 @@ export function Driving({ telemetry }: EngineeringProps) {
         <Metric label="Speed" value={`${fmt(player?.speed_kph, 0)} km/h`} />
         <Metric label="Torque" value={fmt(player?.engine_torque, 0)} />
         <Metric label="Limiter" value={player?.speed_limiter ? "On" : "Off"} />
-        <Metric label="ABS / TC" value={`${player?.abs_active ? "ABS" : "--"} / ${player?.tc_active ? "TC" : "--"}`} />
+        <Metric label="ABS" value={assistSetting(player?.abs_active, player?.abs_setting, player?.abs_max)} />
+        <Metric label="TC" value={assistSetting(player?.tc_active, player?.tc_setting, player?.tc_max)} sub={`Slip ${text(player?.tc_slip_setting)} / Cut ${text(player?.tc_cut_setting)}`} />
       </section>
       <section className="card span-6">
         <SectionTitle title="Suspension And Aero" help="Shows ride-height and platform signals. Low ride heights or large front/rear changes suggest bottoming, pitch sensitivity, or aero instability." />
@@ -478,8 +496,9 @@ export function Driving({ telemetry }: EngineeringProps) {
           <Metric label="Rear ride" value={fmt(player?.rear_ride_height ?? avgField([{ value: player?.ride_height_rl }, { value: player?.ride_height_rr }], "value"), 3, " m")} />
           <Metric label="FL / FR ride" value={`${fmt(player?.ride_height_fl, 3, " m")} / ${fmt(player?.ride_height_fr, 3, " m")}`} />
           <Metric label="RL / RR ride" value={`${fmt(player?.ride_height_rl, 3, " m")} / ${fmt(player?.ride_height_rr, 3, " m")}`} />
-          <Metric label="Deflection" value={fmt(player?.suspension_deflection_fl, 3, " m")} />
-          <Metric label="Camber" value="--" />
+          <Metric label="FL / FR deflection" value={`${fmt(player?.suspension_deflection_fl, 3, " m")} / ${fmt(player?.suspension_deflection_fr, 3, " m")}`} />
+          <Metric label="RL / RR deflection" value={`${fmt(player?.suspension_deflection_rl, 3, " m")} / ${fmt(player?.suspension_deflection_rr, 3, " m")}`} />
+          <Metric label="3rd spring F/R" value={`${fmt(player?.front_third_deflection, 3, " m")} / ${fmt(player?.rear_third_deflection, 3, " m")}`} />
           <Metric label="Front DF" value={fmt(player?.front_downforce, 0)} />
           <Metric label="Rear DF" value={fmt(player?.rear_downforce, 0)} />
           <Metric label="Drag" value={fmt(player?.drag, 2)} />

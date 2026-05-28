@@ -36,7 +36,9 @@ function TyreCorner({ label, tyres, keyName }: { label: string; tyres?: TyreStat
 function Header({ telemetry, connected }: { telemetry: TelemetrySnapshot | null; connected: boolean }) {
   const player = telemetry?.player;
   const session = telemetry?.session;
-  const driver = telemetry?.competitors?.find((car) => car.is_player)?.driver_name || "Player";
+  const playerCar = telemetry?.competitors?.find((car) => car.is_player);
+  const driver = playerCar?.driver_name || "Player";
+  const position = player?.position ?? playerCar?.position;
   return (
     <section className="card span-12 page-header-card">
       <div className="header-grid">
@@ -45,6 +47,7 @@ function Header({ telemetry, connected }: { telemetry: TelemetrySnapshot | null;
         <div><span className="label">Session</span><strong>{text(session?.session_type)}</strong></div>
         <div><span className="label">Car</span><strong>{text(player?.vehicle_name)}</strong></div>
         <div><span className="label">Driver</span><strong>{driver}</strong></div>
+        <div><span className="label">Position</span><strong>{position != null ? `P${position}` : "--"}</strong></div>
         <div><span className="label">Lap</span><strong>{text(player?.lap_number ?? session?.current_lap)}</strong></div>
         <div><span className="label">Remaining</span><strong>{formatRaceTime(session?.time_remaining)}</strong></div>
       </div>
@@ -72,6 +75,7 @@ function DrivingDisplay({ player }: { player?: PlayerState }) {
 
 export function LiveDashboard({ telemetry, strategy, recommendation, connected }: { telemetry: TelemetrySnapshot | null; strategy: StrategyState | null; recommendation: RecommendationPayload | null; connected: boolean }) {
   const player = telemetry?.player;
+  const playerCar = telemetry?.competitors?.find((c) => c.is_player);
   const tyres = player?.tyre_state;
   const fuel = strategy?.fuel;
   const invalid = player?.lap_invalidated;
@@ -81,10 +85,10 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected }
       <DrivingDisplay player={player} />
       <section className="card span-3">
         <SectionTitle title="Lap Timing" help="Shows current pace markers against recent and best laps. A growing delta usually means traffic, tyre drop-off, mistakes, or worse exits." />
-        <div className="metric"><span className="label">Current lap</span><span className="value">--</span></div>
-        <div className="metric"><span className="label">Last lap</span><span className="value">{formatRaceTime(telemetry?.competitors?.find((c) => c.is_player)?.last_lap_time)}</span></div>
-        <div className="metric"><span className="label">Best lap</span><span className="value">{formatRaceTime(telemetry?.competitors?.find((c) => c.is_player)?.best_lap_time)}</span></div>
-        <div className="row"><span className="subvalue">Delta best --</span><span className="subvalue">S1/S2/S3 --</span></div>
+        <div className="metric"><span className="label">Current lap</span><span className="value">{formatRaceTime(player?.current_lap_time)}</span></div>
+        <div className="metric"><span className="label">Last lap</span><span className="value">{formatRaceTime(player?.last_lap_time ?? playerCar?.last_lap_time)}</span></div>
+        <div className="metric"><span className="label">Best lap</span><span className="value">{formatRaceTime(player?.best_lap_time ?? playerCar?.best_lap_time)}</span></div>
+        <div className="row"><span className="subvalue">Delta best {fmt(player?.delta_best, 2, " s")}</span><span className="subvalue">Sector {text(player?.current_sector)}</span></div>
         {invalid && <span className="badge red">Lap invalidated</span>}
         {player?.track_limits_steps != null && <span className="badge amber">Track limits {player.track_limits_steps}</span>}
       </section>
@@ -93,8 +97,8 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected }
         <div className="header-grid two">
           <div><span className="label">Current</span><strong>{fmt(player?.fuel_liters)} L</strong></div>
           <div><span className="label">Capacity</span><strong>{fmt(player?.fuel_capacity_liters)} L</strong></div>
-          <div><span className="label">Last lap</span><strong>{fmt(fuel?.fuel_per_lap_liters, 2)} L</strong></div>
-          <div><span className="label">Average</span><strong>{fmt(fuel?.fuel_per_lap_liters, 2)} L/lap</strong></div>
+          <div><span className="label">Last lap</span><strong>{fmt(fuel?.last_lap_fuel_used_liters, 2)} L</strong></div>
+          <div><span className="label">Stint average</span><strong>{fmt(fuel?.fuel_per_lap_liters, 2)} L/lap</strong><span className="subvalue">{fuel?.stint_laps_observed ?? 0} laps</span></div>
           <div><span className="label">Range</span><strong>{fmt(fuel?.fuel_laps_remaining)} laps</strong></div>
           <div><span className="label">Needed</span><strong>{fmt(fuel?.required_fuel_to_finish)} L</strong></div>
           <div><span className="label">Margin</span><strong>{fmt(fuel?.fuel_delta_to_finish)} L</strong></div>

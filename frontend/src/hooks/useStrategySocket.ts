@@ -1,12 +1,36 @@
 import { useEffect, useRef, useState } from "react";
-import { WS_BASE } from "../api/client";
+import { api, WS_BASE } from "../api/client";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 
 export function useStrategySocket() {
   const [strategy, setStrategy] = useState<StrategyState | null>(null);
   const [recommendation, setRecommendation] = useState<RecommendationPayload | null>(null);
-  const [connected, setConnected] = useState(false);
+  const [socketConnected, setSocketConnected] = useState(false);
+  const [apiReachable, setApiReachable] = useState(false);
   const retry = useRef<number>();
+
+  useEffect(() => {
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const [nextStrategy, nextRecommendation] = await Promise.all([api.strategy(), api.recommendation()]);
+        if (!cancelled) {
+          setStrategy(nextStrategy);
+          setRecommendation(nextRecommendation);
+          setApiReachable(true);
+        }
+      } catch {
+        if (!cancelled) setApiReachable(false);
+      }
+    };
+    void poll();
+    const id = window.setInterval(() => void poll(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, []);
+
   useEffect(() => {
     let strategySocket: WebSocket | null = null;
     let recommendationSocket: WebSocket | null = null;
@@ -14,9 +38,9 @@ export function useStrategySocket() {
     const connect = () => {
       strategySocket = new WebSocket(`${WS_BASE}/ws/strategy`);
       recommendationSocket = new WebSocket(`${WS_BASE}/ws/recommendations`);
-      strategySocket.onopen = () => setConnected(true);
+      strategySocket.onopen = () => setSocketConnected(true);
       strategySocket.onclose = () => {
-        setConnected(false);
+        setSocketConnected(false);
         if (!cancelled) retry.current = window.setTimeout(connect, 1200);
       };
       strategySocket.onerror = () => strategySocket?.close();
@@ -35,5 +59,5 @@ export function useStrategySocket() {
       recommendationSocket?.close();
     };
   }, []);
-  return { strategy, recommendation, connected };
+  return { strategy, recommendation, connected: socketConnected || apiReachable };
 }

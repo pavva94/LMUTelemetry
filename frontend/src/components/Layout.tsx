@@ -62,7 +62,17 @@ function modeForPage(page: PageKey) {
   return modes.find(([, , , , modeItems]) => modeItems.some(([key]) => key === page)) || modes[0];
 }
 
-export function Layout({ page, setPage, connected, children }: { page: PageKey; setPage: (page: PageKey) => void; connected: boolean; children: React.ReactNode }) {
+export function Layout({
+  page,
+  setPage,
+  connected,
+  children,
+}: {
+  page: PageKey;
+  setPage: (page: PageKey) => void;
+  connected: boolean;
+  children: React.ReactNode;
+}) {
   const activeMode = modeForPage(page);
   const [, modeLabel, , , activeItems] = activeMode;
   const isCsvMode = activeMode[0] === "csv";

@@ -4,8 +4,8 @@ import type { SavedSession, SessionReview } from "../types/session";
 import type { MotecSession, MotecSample } from "../types/motec";
 import type { ProfileLap, ProfileLapResponse, ProfileSummary } from "../types/profile";
 
-export const API_BASE = "http://127.0.0.1:8000";
-export const WS_BASE = "ws://127.0.0.1:8000";
+export const API_BASE = "";
+export const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
 
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`);

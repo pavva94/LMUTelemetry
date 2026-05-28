@@ -146,10 +146,12 @@ class TelemetryService:
         if not snapshot.connected or not player:
             return False, "telemetry unavailable"
         phase = f"{session.game_phase if session else ''}".lower()
+        in_pits = _player_in_pits(snapshot)
         if any(token in phase for token in ("garage", "menu", "replay", "paused")):
             return False, f"game phase {phase}".strip()
-        if _player_in_pits(snapshot):
-            return False, "car is in pit lane or garage"
+        if in_pits:
+            self._idle_since_game_time = None
+            return True, None
         progress = self._player_track_progress(snapshot)
         previous_progress = self._last_player_progress
         self._last_player_progress = progress
@@ -179,6 +181,7 @@ class TelemetryService:
         self.feed_paused = True
         self.pause_reason = reason
         frozen = self.latest_snapshot or snapshot
+        frozen.session = snapshot.session
         frozen.feed_paused = True
         frozen.pause_reason = reason
         self.latest_snapshot = frozen

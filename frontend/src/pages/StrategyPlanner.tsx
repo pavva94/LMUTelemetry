@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
 import { formatRaceTime } from "../lib/timeFormat";
@@ -87,6 +87,17 @@ function buildRaceModel(strategy: StrategyState | null, telemetry: TelemetrySnap
   };
 }
 
+function liveRaceDurationMinutes(telemetry?: TelemetrySnapshot | null) {
+  const endTime = Number(telemetry?.session?.end_time);
+  if (Number.isFinite(endTime) && endTime > 0) return endTime / 60;
+  const currentTime = Number(telemetry?.session?.current_time);
+  const remaining = Number(telemetry?.session?.time_remaining);
+  if (Number.isFinite(currentTime) && Number.isFinite(remaining) && currentTime >= 0 && remaining > 0) {
+    return (currentTime + remaining) / 60;
+  }
+  return null;
+}
+
 function liftCoastAnalysis(model: RaceModel, normalLapTime: number, targetStops?: number) {
   const availableFuel = model.tankLiters != null && targetStops != null ? model.tankLiters * (targetStops + 1) : null;
   const shortage = model.requiredFuel != null && availableFuel != null ? model.requiredFuel - availableFuel : null;
@@ -171,6 +182,7 @@ function buildPlans(strategy: StrategyState | null, form: FormState, model: Race
 }
 
 export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategyState | null; telemetry?: TelemetrySnapshot | null }) {
+  const seededSession = useRef<string | null>(null);
   const [form, setForm] = useState<FormState>({
     race_duration_minutes: Number(strategy?.assumptions.race_duration_minutes || 120),
     pit_loss_seconds: Number(strategy?.assumptions.pit_loss_seconds || 28),
@@ -181,6 +193,23 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     safety_car_pit_loss_seconds: Number(strategy?.assumptions.safety_car_pit_loss_seconds || 16),
     fuel_safety_margin_laps: Number(strategy?.assumptions.fuel_safety_margin_laps || 1),
   });
+  useEffect(() => {
+    const sessionKey = `${telemetry?.session?.track_name || ""}:${telemetry?.session?.session_type || ""}:${telemetry?.session?.end_time || ""}`;
+    if (!sessionKey.trim() || seededSession.current === sessionKey) return;
+    const liveDuration = liveRaceDurationMinutes(telemetry);
+    setForm((current) => ({
+      ...current,
+      race_duration_minutes: liveDuration ?? Number(strategy?.assumptions.race_duration_minutes || current.race_duration_minutes),
+      pit_loss_seconds: Number(strategy?.assumptions.pit_loss_seconds || current.pit_loss_seconds),
+      fuel_safety_margin_liters: Number(strategy?.assumptions.fuel_safety_margin_liters || current.fuel_safety_margin_liters),
+      max_tyre_wear: Number(strategy?.assumptions.max_tyre_wear || current.max_tyre_wear),
+      normal_lap_time: Number(strategy?.assumptions.normal_lap_time || current.normal_lap_time),
+      pit_stationary_seconds: Number(strategy?.assumptions.pit_stationary_seconds || current.pit_stationary_seconds),
+      safety_car_pit_loss_seconds: Number(strategy?.assumptions.safety_car_pit_loss_seconds || current.safety_car_pit_loss_seconds),
+      fuel_safety_margin_laps: Number(strategy?.assumptions.fuel_safety_margin_laps || current.fuel_safety_margin_laps),
+    }));
+    seededSession.current = sessionKey;
+  }, [strategy, telemetry]);
   const update = (key: keyof FormState, value: string) => setForm({ ...form, [key]: Number(value) });
   const liveLap = liveNormalLapTime(telemetry, form.normal_lap_time);
   const model = buildRaceModel(strategy, telemetry, form, liveLap.value);

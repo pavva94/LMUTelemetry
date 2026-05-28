@@ -50,9 +50,15 @@ class PlayerState(BaseModel):
     class_position: int | None = None
     lap_number: int | None = None
     current_sector: int | None = None
+    current_lap_time: float | None = None
+    last_lap_time: float | None = None
+    best_lap_time: float | None = None
+    delta_best: float | None = None
     speed_kph: float | None = None
     gear: int | None = None
     rpm: float | None = None
+    max_rpm: float | None = None
+    engine_torque: float | None = None
     fuel_liters: float | None = None
     fuel_capacity_liters: float | None = None
     engine_oil_temp: float | None = None
@@ -64,6 +70,12 @@ class PlayerState(BaseModel):
     speed_limiter: bool | None = None
     abs_active: bool | None = None
     tc_active: bool | None = None
+    abs_setting: int | None = None
+    abs_max: int | None = None
+    tc_setting: int | None = None
+    tc_max: int | None = None
+    tc_slip_setting: int | None = None
+    tc_cut_setting: int | None = None
     brake_temp_fl: float | None = None
     brake_temp_fr: float | None = None
     brake_temp_rl: float | None = None
@@ -80,6 +92,8 @@ class PlayerState(BaseModel):
     suspension_deflection_fr: float | None = None
     suspension_deflection_rl: float | None = None
     suspension_deflection_rr: float | None = None
+    front_third_deflection: float | None = None
+    rear_third_deflection: float | None = None
     front_ride_height: float | None = None
     rear_ride_height: float | None = None
     front_downforce: float | None = None

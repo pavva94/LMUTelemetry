@@ -15,12 +15,14 @@ class StrategyAssumptions(BaseModel):
 
 
 class FuelState(BaseModel):
+    last_lap_fuel_used_liters: float | None = None
     fuel_per_lap_liters: float | None = None
     fuel_laps_remaining: float | None = None
     estimated_laps_remaining: float | None = None
     required_fuel_to_finish: float | None = None
     fuel_delta_to_finish: float | None = None
     recommended_fuel_save_per_lap: float | None = None
+    stint_laps_observed: int = 0
     confidence: str = "low"
 
 
@@ -30,6 +32,9 @@ class TyreStrategyState(BaseModel):
     estimated_remaining_tyre_life_laps: float | None = None
     pace_degradation_per_lap: float | None = None
     tyre_risk_level: str = "unknown"
+    confidence: str = "low"
+    observed_laps: int = 0
+    laps_required: int = 3
     reason_codes: list[str] = Field(default_factory=list)
 
 

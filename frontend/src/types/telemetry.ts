@@ -35,6 +35,10 @@ export type PlayerState = {
   class_position?: number;
   lap_number?: number;
   current_sector?: number;
+  current_lap_time?: number;
+  last_lap_time?: number;
+  best_lap_time?: number;
+  delta_best?: number;
   speed_kph?: number;
   gear?: number;
   rpm?: number;
@@ -51,6 +55,12 @@ export type PlayerState = {
   speed_limiter?: boolean;
   abs_active?: boolean;
   tc_active?: boolean;
+  abs_setting?: number;
+  abs_max?: number;
+  tc_setting?: number;
+  tc_max?: number;
+  tc_slip_setting?: number;
+  tc_cut_setting?: number;
   brake_temp_fl?: number;
   brake_temp_fr?: number;
   brake_temp_rl?: number;
@@ -67,6 +77,8 @@ export type PlayerState = {
   suspension_deflection_fr?: number;
   suspension_deflection_rl?: number;
   suspension_deflection_rr?: number;
+  front_third_deflection?: number;
+  rear_third_deflection?: number;
   front_ride_height?: number;
   rear_ride_height?: number;
   front_downforce?: number;
@@ -87,7 +99,9 @@ export type SessionState = {
   session_type?: string;
   game_phase?: string;
   current_time?: number;
+  end_time?: number;
   time_remaining?: number;
+  max_laps?: number;
   num_vehicles?: number;
   yellow_flag_state?: string;
   current_lap?: number;
