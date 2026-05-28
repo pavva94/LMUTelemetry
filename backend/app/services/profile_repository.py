@@ -406,14 +406,42 @@ class ProfileRepository:
                 csv_sessions = int(db.execute("select count(*) from motec_sessions").fetchone()[0] or 0)
         return {"live": int(live_sessions), "csv": csv_sessions, "total": int(live_sessions) + csv_sessions}
 
+    def _live_session_distances(self) -> dict[str, float]:
+        with SessionLocal() as db:
+            sessions = db.scalars(select(SessionModel).order_by(SessionModel.created_at.asc())).all()
+            distances: dict[str, float] = {}
+            for session in sessions:
+                samples = db.scalars(
+                    select(TelemetrySampleModel)
+                    .where(TelemetrySampleModel.session_id == session.id)
+                    .order_by(TelemetrySampleModel.id.asc())
+                ).all()
+                distance = _integrate_distance([_sample_dict(sample) for sample in samples], "game_time", "speed_kph")
+                distances[f"live:{session.id}"] = distance or 0.0
+            return distances
+
+    def _motec_session_distances(self) -> dict[str, float]:
+        init_motec_db()
+        if not MOTEC_DB_PATH.exists():
+            return {}
+        with sqlite3.connect(MOTEC_DB_PATH) as db:
+            db.row_factory = sqlite3.Row
+            rows = db.execute("select session_id, sum(coalesce(distance_km, 0)) as distance from motec_laps group by session_id").fetchall()
+            return {f"csv:{row['session_id']}": float(row["distance"] or 0.0) for row in rows}
+
+    def _career_session_distances(self) -> dict[str, float]:
+        return {**self._live_session_distances(), **self._motec_session_distances()}
+
     def summary(self) -> dict:
         laps = self.all_laps()
         sessions = self._sessions_from_laps(laps)
         persisted_sessions = self._persisted_session_counts()
-        total_distance = sum((_num(lap.get("distance_km")) or 0) for lap in laps)
+        session_distances = self._career_session_distances()
+        total_distance = sum(session_distances.values())
         total_driving_time = sum((_num(lap.get("lap_time")) or 0) for lap in laps)
         valid_laps = [lap for lap in laps if lap.get("valid_lap")]
         session_values = list(sessions.values())
+        total_session_count = max(len(sessions), persisted_sessions["total"])
         race_sessions = [session for session in session_values if self._is_race_session(session)]
         wins = sum(1 for session in race_sessions if session.get("finish_position") == 1)
         podiums = sum(1 for session in race_sessions if (session.get("finish_position") or 999) <= 3)
@@ -436,15 +464,15 @@ class ProfileRepository:
         return {
             "totals": {
                 "total_distance_km": total_distance,
-                "total_sessions": max(len(sessions), persisted_sessions["total"]),
+                "total_sessions": total_session_count,
                 "total_laps": len(laps),
                 "valid_laps": len(valid_laps),
                 "total_driving_time": total_driving_time,
                 "different_cars": len({lap["car"] for lap in laps if lap.get("car")}),
                 "different_tracks": len({lap["track"] for lap in laps if lap.get("track")}),
-                "average_session_duration": total_driving_time / max(len(sessions), 1) if sessions else None,
-                "average_distance_per_session": total_distance / max(len(sessions), 1) if sessions else None,
-                "average_laps_per_session": len(laps) / max(len(sessions), 1) if sessions else None,
+                "average_session_duration": total_driving_time / total_session_count if total_session_count else None,
+                "average_distance_per_session": total_distance / total_session_count if total_session_count else None,
+                "average_laps_per_session": len(laps) / total_session_count if total_session_count else None,
                 "wins": wins,
                 "podiums": podiums,
                 "top10": top10,

@@ -152,11 +152,13 @@ def test_profile_total_distance_includes_invalid_stored_live_laps(monkeypatch, t
             LapSummaryModel(session_id="distance", lap_number=1, lap_time=72.0, valid_lap=False),
             TelemetrySampleModel(session_id="distance", timestamp="2026-01-01T00:00:00", lap_number=1, game_time=0.0, speed_kph=180),
             TelemetrySampleModel(session_id="distance", timestamp="2026-01-01T00:01:00", lap_number=1, game_time=60.0, speed_kph=180),
+            TelemetrySampleModel(session_id="distance", timestamp="2026-01-01T00:02:00", lap_number=2, game_time=120.0, speed_kph=180),
         ])
         db.commit()
 
     summary = ProfileRepository().summary()
 
-    assert summary["totals"]["total_distance_km"] == 3.0
+    assert summary["totals"]["total_distance_km"] == 6.0
+    assert summary["distance_by_class"][0]["distance_km"] == 3.0
     assert summary["totals"]["total_laps"] == 1
     assert summary["totals"]["valid_laps"] == 0
