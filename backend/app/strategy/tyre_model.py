@@ -18,7 +18,6 @@ class TyreModel:
     def _reset_stint(self, lap: int | None, avg_wear: float) -> None:
         self._last_lap = lap
         self._last_wear = avg_wear
-        self._wear_rates.clear()
 
     def update(self, snapshot: TelemetrySnapshot) -> TyreStrategyState:
         player = snapshot.player
@@ -39,7 +38,6 @@ class TyreModel:
             rate = abs(avg_wear - self._last_wear) / max(1, lap - self._last_lap)
             if 0 < rate < 0.2:
                 self._wear_rates.append(rate)
-                self._wear_rates = self._wear_rates[-5:]
             self._last_lap = lap
             self._last_wear = avg_wear
         wear_rate = sum(self._wear_rates) / len(self._wear_rates) if self._wear_rates else None

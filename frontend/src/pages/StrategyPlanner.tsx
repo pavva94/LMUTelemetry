@@ -30,6 +30,8 @@ type FormState = {
 type RaceModel = {
   raceLaps: number | null;
   fuelPerLap: number | null;
+  fuelObservedLaps: number;
+  fuelRequiredLaps: number;
   tankLiters: number | null;
   tankSource: string;
   tankLaps: number | null;
@@ -68,6 +70,8 @@ function riskBadge(risk: Risk) {
 function buildRaceModel(strategy: StrategyState | null, telemetry: TelemetrySnapshot | null | undefined, form: FormState, normalLapTime: number | null): RaceModel {
   const fuelPerLapValue = Number(strategy?.fuel.fuel_per_lap_liters);
   const fuelPerLap = Number.isFinite(fuelPerLapValue) && fuelPerLapValue > 0 ? fuelPerLapValue : null;
+  const fuelObservedLaps = Number(strategy?.fuel.valid_laps_observed || 0);
+  const fuelRequiredLaps = Number(strategy?.fuel.valid_laps_required || 3);
   const liveCapacityValue = Number(telemetry?.player?.fuel_capacity_liters);
   const apiCapacityValue = Number(strategy?.fuel.fuel_capacity_liters);
   const currentFuelValue = Number(telemetry?.player?.fuel_liters);
@@ -83,6 +87,8 @@ function buildRaceModel(strategy: StrategyState | null, telemetry: TelemetrySnap
   return {
     raceLaps,
     fuelPerLap,
+    fuelObservedLaps,
+    fuelRequiredLaps,
     tankLiters,
     tankSource,
     tankLaps,
@@ -157,6 +163,7 @@ function buildPlan(strategy: StrategyState | null, form: FormState, model: RaceM
   const stintLaps = model.raceLaps != null ? model.raceLaps / (stops + 1) : null;
   const tyreLife = strategy?.tyres.estimated_remaining_tyre_life_laps;
   const tyreRisk = strategy?.tyres.tyre_risk_level || "unknown";
+  const tyreObserved = strategy?.tyres.observed_laps ?? 0;
   const risk = riskForStopCount(strategy, model, stops);
   return {
     name: label,
@@ -165,9 +172,9 @@ function buildPlan(strategy: StrategyState | null, form: FormState, model: RaceM
     risk,
     why: [
       `Race estimate ${fmt(model.raceLaps, 1, " laps")} at ${formatRaceTime(normalLapTime)} per lap.`,
-      `One tank range ${fmt(model.tankLaps, 1, " laps")} from ${fmt(model.tankLiters, 1, " L")} (${model.tankSource}) and ${fmt(model.fuelPerLap, 3, " L/lap")}.`,
+      `One tank range ${fmt(model.tankLaps, 1, " laps")} from ${fmt(model.tankLiters, 1, " L")} (${model.tankSource}) and ${fmt(model.fuelPerLap, 3, " L/lap")} from ${model.fuelObservedLaps} valid session laps.`,
       fuelMargin != null ? `Fuel margin with ${stops} stops is ${fmt(fuelMargin, 2, " L")}.` : "Fuel margin cannot be calculated yet.",
-      stintLaps != null ? `Average stint length ${fmt(stintLaps, 1, " laps")}; tyre life ${fmt(tyreLife, 1, " laps")} (${tyreRisk}).` : `Tyre risk is ${tyreRisk}.`,
+      stintLaps != null ? `Average stint length ${fmt(stintLaps, 1, " laps")}; tyre life ${fmt(tyreLife, 1, " laps")} from ${tyreObserved} valid session laps (${tyreRisk}).` : `Tyre risk is ${tyreRisk}.`,
     ],
     action: risk === "high"
       ? "This plan is not safe on the current fuel/tyre model without major saving or neutralization."
@@ -242,7 +249,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           <div><span className="label">Race duration</span><strong>{formatRaceTime(form.race_duration_minutes * 60)}</strong></div>
           <div><span className="label">Live normal lap</span><strong>{formatRaceTime(liveLap.value)}</strong><span className="subvalue">{liveLap.source}</span></div>
           <div><span className="label">Estimated race laps</span><strong>{fmt(model.raceLaps, 1)}</strong></div>
-          <div><span className="label">Fuel per lap</span><strong>{fmt(model.fuelPerLap, 3, " L")}</strong></div>
+          <div><span className="label">Fuel per lap</span><strong>{fmt(model.fuelPerLap, 3, " L")}</strong><span className="subvalue">{model.fuelObservedLaps}/{model.fuelRequiredLaps} valid session laps</span></div>
           <div><span className="label">Tank capacity</span><strong>{fmt(model.tankLiters, 1, " L")}</strong><span className="subvalue">{model.tankSource}</span></div>
           <div><span className="label">One tank range</span><strong>{fmt(model.tankLaps, 1, " laps")}</strong></div>
           <div><span className="label">Fuel needed</span><strong>{fmt(model.requiredFuel, 1, " L")}</strong></div>

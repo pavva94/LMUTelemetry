@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from collections import deque
-
 from app.schemas.strategy import FuelState, StrategyAssumptions
 from app.schemas.telemetry import TelemetrySnapshot
 from app.telemetry.event_detector import _player_in_pits, _under_yellow
@@ -18,7 +16,7 @@ class FuelModel:
         self.assumptions = assumptions
         self._lap_start_fuel: float | None = None
         self._last_lap: int | None = None
-        self._valid_usage: deque[float] = deque(maxlen=5)
+        self._valid_usage: list[float] = []
         self._last_lap_usage: float | None = None
         self._was_in_pits = False
 
