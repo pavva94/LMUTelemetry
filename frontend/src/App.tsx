@@ -22,6 +22,7 @@ import {
 } from "./pages/RaceEngineeringPages";
 import { SessionReview } from "./pages/SessionReview";
 import { StrategyPlanner } from "./pages/StrategyPlanner";
+import { UserProfile } from "./pages/UserProfile";
 import { useStrategySocket } from "./hooks/useStrategySocket";
 import { useTelemetrySocket } from "./hooks/useTelemetrySocket";
 import type { CompetitorState } from "./types/telemetry";
@@ -41,6 +42,7 @@ export default function App() {
       <ErrorBoundary key={page}>
         {page === "live" && <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} />}
         {page === "motec" && <MotecWorkspace />}
+        {page === "profile" && <UserProfile />}
         {page === "race-info" && <RaceInfo telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "driving" && <Driving telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "circle-map" && <CircleMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}

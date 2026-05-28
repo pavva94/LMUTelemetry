@@ -69,6 +69,13 @@ def init_motec_db() -> None:
             create table if not exists motec_sessions (
                 id text primary key,
                 name text not null,
+                track_name text,
+                track_layout text,
+                car_name text,
+                car_class text,
+                session_type text,
+                finish_position integer,
+                finish_status text,
                 imported_at text not null,
                 sample_count integer not null,
                 lap_count integer not null,
@@ -103,6 +110,24 @@ def init_motec_db() -> None:
                 max_rpm real,
                 fuel_start real,
                 fuel_end real,
+                distance_km real,
+                average_speed real,
+                tyre_wear_fl real,
+                tyre_wear_fr real,
+                tyre_wear_rl real,
+                tyre_wear_rr real,
+                tyre_pressure_fl real,
+                tyre_pressure_fr real,
+                tyre_pressure_rl real,
+                tyre_pressure_rr real,
+                brake_temp_fl real,
+                brake_temp_fr real,
+                brake_temp_rl real,
+                brake_temp_rr real,
+                track_temp real,
+                ambient_temp real,
+                engine_oil_temp real,
+                engine_water_temp real,
                 primary key (session_id, lap_number)
             );
             create table if not exists motec_samples (
@@ -117,6 +142,41 @@ def init_motec_db() -> None:
             create index if not exists ix_motec_samples_lap on motec_samples(session_id, lap_number, row_index);
             """
         )
+        existing = {row["name"] for row in db.execute("pragma table_info(motec_sessions)")}
+        for name, column_type in {
+            "track_name": "text",
+            "track_layout": "text",
+            "car_name": "text",
+            "car_class": "text",
+            "session_type": "text",
+            "finish_position": "integer",
+            "finish_status": "text",
+        }.items():
+            if name not in existing:
+                db.execute(f"alter table motec_sessions add column {name} {column_type}")
+        existing_lap = {row["name"] for row in db.execute("pragma table_info(motec_laps)")}
+        for name, column_type in {
+            "distance_km": "real",
+            "average_speed": "real",
+            "tyre_wear_fl": "real",
+            "tyre_wear_fr": "real",
+            "tyre_wear_rl": "real",
+            "tyre_wear_rr": "real",
+            "tyre_pressure_fl": "real",
+            "tyre_pressure_fr": "real",
+            "tyre_pressure_rl": "real",
+            "tyre_pressure_rr": "real",
+            "brake_temp_fl": "real",
+            "brake_temp_fr": "real",
+            "brake_temp_rl": "real",
+            "brake_temp_rr": "real",
+            "track_temp": "real",
+            "ambient_temp": "real",
+            "engine_oil_temp": "real",
+            "engine_water_temp": "real",
+        }.items():
+            if name not in existing_lap:
+                db.execute(f"alter table motec_laps add column {name} {column_type}")
 
 
 def _num(value: object) -> float | None:
@@ -218,6 +278,25 @@ class LapAccumulator:
     max_rpm: float | None = None
     fuel_start: float | None = None
     fuel_end: float | None = None
+    distance_km: float = 0.0
+    previous_time: float | None = None
+    previous_speed: float | None = None
+    tyre_wear_fl: float | None = None
+    tyre_wear_fr: float | None = None
+    tyre_wear_rl: float | None = None
+    tyre_wear_rr: float | None = None
+    tyre_pressure_fl: float | None = None
+    tyre_pressure_fr: float | None = None
+    tyre_pressure_rl: float | None = None
+    tyre_pressure_rr: float | None = None
+    brake_temp_fl: float | None = None
+    brake_temp_fr: float | None = None
+    brake_temp_rl: float | None = None
+    brake_temp_rr: float | None = None
+    track_temps: list[float] | None = None
+    ambient_temps: list[float] | None = None
+    engine_oil_temp: float | None = None
+    engine_water_temp: float | None = None
 
     def add(self, sample: dict) -> None:
         time = _num(sample.get("Time")) or _num(sample.get("Session Elapsed Time"))
@@ -231,6 +310,14 @@ class LapAccumulator:
             self.end_time = time if self.end_time is None else max(self.end_time, time)
         if speed is not None:
             self.max_speed = speed if self.max_speed is None else max(self.max_speed, speed)
+        if self.previous_time is not None and time is not None and self.previous_speed is not None:
+            delta = time - self.previous_time
+            if 0 < delta <= 120:
+                self.distance_km += self.previous_speed * delta / 3600
+        if time is not None:
+            self.previous_time = time
+        if speed is not None:
+            self.previous_speed = speed
         if corner is not None:
             self.min_corner_speed = corner if self.min_corner_speed is None else min(self.min_corner_speed, corner)
         if rpm is not None:
@@ -239,10 +326,40 @@ class LapAccumulator:
             self.fuel_start = fuel
         if fuel is not None:
             self.fuel_end = fuel
+        for attr_name, channel in [
+            ("tyre_wear_fl", "Tyre Wear FL"), ("tyre_wear_fr", "Tyre Wear FR"), ("tyre_wear_rl", "Tyre Wear RL"), ("tyre_wear_rr", "Tyre Wear RR"),
+            ("tyre_pressure_fl", "Tyre Pressure FL"), ("tyre_pressure_fr", "Tyre Pressure FR"), ("tyre_pressure_rl", "Tyre Pressure RL"), ("tyre_pressure_rr", "Tyre Pressure RR"),
+        ]:
+            value = _num(sample.get(channel))
+            if value is not None:
+                setattr(self, attr_name, value)
+        for attr_name, channel in [
+            ("brake_temp_fl", "Brake Temp FL"), ("brake_temp_fr", "Brake Temp FR"), ("brake_temp_rl", "Brake Temp RL"), ("brake_temp_rr", "Brake Temp RR"),
+            ("engine_oil_temp", "Eng Oil Temp"), ("engine_water_temp", "Eng Water Temp"),
+        ]:
+            value = _num(sample.get(channel))
+            if value is not None:
+                current = getattr(self, attr_name)
+                setattr(self, attr_name, value if current is None else max(current, value))
+        for attr_name, channel in [("track_temps", "Track Temperature"), ("ambient_temps", "Ambient Temperature")]:
+            value = _num(sample.get(channel))
+            if value is not None:
+                values = getattr(self, attr_name) or []
+                values.append(value)
+                setattr(self, attr_name, values)
 
     def row(self, session_id: str) -> tuple:
         duration = self.end_time - self.start_time if self.start_time is not None and self.end_time is not None else None
-        return (session_id, self.lap_number, self.start_time, self.end_time, duration, self.sample_count, self.max_speed, self.min_corner_speed, self.max_rpm, self.fuel_start, self.fuel_end)
+        average_speed = self.distance_km / (duration / 3600) if duration and duration > 0 and self.distance_km else None
+        return (
+            session_id, self.lap_number, self.start_time, self.end_time, duration, self.sample_count,
+            self.max_speed, self.min_corner_speed, self.max_rpm, self.fuel_start, self.fuel_end,
+            self.distance_km or None, average_speed, self.tyre_wear_fl, self.tyre_wear_fr,
+            self.tyre_wear_rl, self.tyre_wear_rr, self.tyre_pressure_fl, self.tyre_pressure_fr,
+            self.tyre_pressure_rl, self.tyre_pressure_rr, self.brake_temp_fl, self.brake_temp_fr,
+            self.brake_temp_rl, self.brake_temp_rr, _avg(self.track_temps or []), _avg(self.ambient_temps or []),
+            self.engine_oil_temp, self.engine_water_temp,
+        )
 
 
 def _apply_derived(sample: dict, lap_start_time: float | None) -> None:
@@ -277,8 +394,13 @@ async def _lines(chunks: AsyncIterator[bytes]) -> AsyncIterator[str]:
         yield buffer.strip("\r\n")
 
 
-async def import_csv_stream(file_name: str, chunks: AsyncIterator[bytes]) -> dict:
+async def import_csv_stream(file_name: str, chunks: AsyncIterator[bytes], metadata: dict[str, object] | None = None) -> dict:
     init_motec_db()
+    metadata = metadata or {}
+    required = ["track_name", "car_name", "car_class", "session_name", "session_type"]
+    missing = [field for field in required if not str(metadata.get(field) or "").strip()]
+    if missing:
+        raise ValueError(f"Missing required CSV metadata: {', '.join(missing)}")
     session_id = f"{int(datetime.now(tz=timezone.utc).timestamp() * 1000)}"
     names: list[str] | None = None
     units: list[str] | None = None
@@ -343,12 +465,36 @@ async def import_csv_stream(file_name: str, chunks: AsyncIterator[bytes]) -> dic
             raise ValueError("CSV must contain channel row, unit row, and sample rows.")
         if pending:
             db.executemany("insert into motec_samples values (?, ?, ?, ?, ?, ?)", pending)
-        db.executemany("insert into motec_laps values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [lap.row(session_id) for lap in laps.values()])
+        db.executemany(
+            """
+            insert into motec_laps (
+                session_id, lap_number, start_time, end_time, duration, sample_count, max_speed,
+                min_corner_speed, max_rpm, fuel_start, fuel_end, distance_km, average_speed,
+                tyre_wear_fl, tyre_wear_fr, tyre_wear_rl, tyre_wear_rr,
+                tyre_pressure_fl, tyre_pressure_fr, tyre_pressure_rl, tyre_pressure_rr,
+                brake_temp_fl, brake_temp_fr, brake_temp_rl, brake_temp_rr,
+                track_temp, ambient_temp, engine_oil_temp, engine_water_temp
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [lap.row(session_id) for lap in laps.values()],
+        )
         db.execute(
-            "insert into motec_sessions values (?, ?, ?, ?, ?, ?, ?, ?)",
+            """
+            insert into motec_sessions (
+                id, name, track_name, track_layout, car_name, car_class, session_type, finish_position, finish_status,
+                imported_at, sample_count, lap_count, min_session_time, max_session_time, warnings_json
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
             (
                 session_id,
-                Path(file_name).stem,
+                str(metadata.get("session_name") or Path(file_name).stem),
+                str(metadata.get("track_name") or ""),
+                str(metadata.get("track_layout") or ""),
+                str(metadata.get("car_name") or ""),
+                str(metadata.get("car_class") or ""),
+                str(metadata.get("session_type") or ""),
+                int(metadata["finish_position"]) if str(metadata.get("finish_position") or "").strip().isdigit() else None,
+                str(metadata.get("finish_status") or "") or None,
                 datetime.now(tz=timezone.utc).isoformat(),
                 row_index,
                 len(laps),
@@ -365,6 +511,13 @@ def _session_row(row: sqlite3.Row) -> dict:
     return {
         "id": row["id"],
         "name": row["name"],
+        "trackName": row["track_name"] if "track_name" in row.keys() else None,
+        "trackLayout": row["track_layout"] if "track_layout" in row.keys() else None,
+        "carName": row["car_name"] if "car_name" in row.keys() else None,
+        "carClass": row["car_class"] if "car_class" in row.keys() else None,
+        "sessionType": row["session_type"] if "session_type" in row.keys() else None,
+        "finishPosition": row["finish_position"] if "finish_position" in row.keys() else None,
+        "finishStatus": row["finish_status"] if "finish_status" in row.keys() else None,
         "importedAt": row["imported_at"],
         "sampleCount": row["sample_count"],
         "lapCount": row["lap_count"],
@@ -404,7 +557,7 @@ def get_session(session_id: str) -> dict:
                 "lapNumber": lap["lap_number"], "startTime": lap["start_time"], "endTime": lap["end_time"],
                 "duration": lap["duration"], "sampleCount": lap["sample_count"], "maxSpeed": lap["max_speed"],
                 "minCornerSpeed": lap["min_corner_speed"], "maxRpm": lap["max_rpm"], "fuelStart": lap["fuel_start"],
-                "fuelEnd": lap["fuel_end"],
+                "fuelEnd": lap["fuel_end"], "distanceKm": lap["distance_km"], "averageSpeed": lap["average_speed"],
             }
             for lap in db.execute("select * from motec_laps where session_id = ? order by cast(lap_number as real)", (session_id,))
         ]

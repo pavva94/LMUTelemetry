@@ -183,6 +183,16 @@ function AnalysisCards({ samples, channels }: { samples: MotecSample[]; channels
 function ImportPage({ onImported }: { onImported: (session: MotecSession, openAnalysis?: boolean) => void }) {
   const [preview, setPreview] = useState<MotecSession | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  const [metadata, setMetadata] = useState({
+    session_name: "",
+    track_name: "",
+    track_layout: "",
+    car_name: "",
+    car_class: "",
+    session_type: "Race",
+    finish_position: "",
+    finish_status: "",
+  });
   const [imported, setImported] = useState(false);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState("");
@@ -194,14 +204,16 @@ function ImportPage({ onImported }: { onImported: (session: MotecSession, openAn
     setImported(false);
     setError("");
     setProgress(`${file.name} selected (${Math.round(file.size / 1024 / 1024)} MB). Click Import Session to stream it to the backend.`);
+    setMetadata((current) => ({ ...current, session_name: current.session_name || file.name.replace(/\.[^.]+$/, "") }));
   };
+  const requiredReady = Boolean(metadata.session_name.trim() && metadata.track_name.trim() && metadata.car_name.trim() && metadata.car_class.trim() && metadata.session_type.trim());
   const importPreview = async () => {
-    if (!file) return;
+    if (!file || !requiredReady) return;
     try {
       setBusy(true);
       setError("");
       setProgress("Uploading and importing CSV in the backend. Large files can take a while...");
-      const importedSession = await api.motecImport(file);
+      const importedSession = await api.motecImport(file, metadata);
       setPreview(importedSession);
       setImported(true);
       onImported(importedSession, false);
@@ -217,9 +229,18 @@ function ImportPage({ onImported }: { onImported: (session: MotecSession, openAn
       <section className="card span-4">
         <h2>CSV Import</h2>
         <input type="file" accept=".csv,text/csv" disabled={busy} onChange={(event) => void handleFile(event.target.files?.[0] || null)} />
+        <label>Session name<input value={metadata.session_name} onChange={(event) => setMetadata((current) => ({ ...current, session_name: event.target.value }))} /></label>
+        <label>Track<input value={metadata.track_name} onChange={(event) => setMetadata((current) => ({ ...current, track_name: event.target.value }))} /></label>
+        <label>Layout<input value={metadata.track_layout} onChange={(event) => setMetadata((current) => ({ ...current, track_layout: event.target.value }))} placeholder="Optional" /></label>
+        <label>Car<input value={metadata.car_name} onChange={(event) => setMetadata((current) => ({ ...current, car_name: event.target.value }))} /></label>
+        <label>Class<input value={metadata.car_class} onChange={(event) => setMetadata((current) => ({ ...current, car_class: event.target.value }))} placeholder="GT3, LMP2, Hypercar..." /></label>
+        <label>Session type<select value={metadata.session_type} onChange={(event) => setMetadata((current) => ({ ...current, session_type: event.target.value }))}><option value="Practice">Practice</option><option value="Qualifying">Qualifying</option><option value="Race">Race</option><option value="Test Day">Test Day</option></select></label>
+        <label>Finish position<input type="number" min="1" value={metadata.finish_position} onChange={(event) => setMetadata((current) => ({ ...current, finish_position: event.target.value }))} placeholder="Optional" /></label>
+        <label>Finish status<select value={metadata.finish_status} onChange={(event) => setMetadata((current) => ({ ...current, finish_status: event.target.value }))}><option value="">Unknown</option><option value="finished">Finished</option><option value="dnf">DNF</option><option value="dns">DNS</option><option value="dq">DQ</option></select></label>
         {progress && <p className="subvalue">{progress}</p>}
         {error && <p className="motec-warning">{error}</p>}
-        {file && <button className="primary" disabled={busy} onClick={() => void importPreview()}>Import Session</button>}
+        {file && <button className="primary" disabled={busy || !requiredReady} onClick={() => void importPreview()}>Import Session</button>}
+        {file && !requiredReady && <p className="motec-warning">Session name, track, car, class, and session type are required for User Profile history.</p>}
         {preview && imported && <button onClick={() => onImported(preview, true)}>Open Analysis</button>}
       </section>
       <section className="card span-8">
@@ -229,6 +250,10 @@ function ImportPage({ onImported }: { onImported: (session: MotecSession, openAn
             <div><span className="label">Channels</span><strong>{preview.channels.length}</strong></div>
             <div><span className="label">Samples</span><strong>{preview.samples.length}</strong></div>
             <div><span className="label">Laps</span><strong>{preview.laps.length}</strong></div>
+            <div><span className="label">Track</span><strong>{preview.trackName || "--"}</strong></div>
+            <div><span className="label">Car</span><strong>{preview.carName || "--"}</strong></div>
+            <div><span className="label">Class</span><strong>{preview.carClass || "--"}</strong></div>
+            <div><span className="label">Type</span><strong>{preview.sessionType || "--"}</strong></div>
             <div><span className="label">Session time</span><strong>{timeValue(preview.minSessionTime)} - {timeValue(preview.maxSessionTime)}</strong></div>
           </div>
         ) : <Empty message="Choose a two-header-row telemetry CSV." />}

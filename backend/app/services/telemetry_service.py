@@ -68,6 +68,7 @@ class TelemetryService:
         self.hub = WebSocketHub()
         self.session_id = str(uuid.uuid4())
         self.latest_snapshot: TelemetrySnapshot | None = None
+        self._last_session_snapshot: TelemetrySnapshot | None = None
         self._session_signature: tuple[str | None, str | None, str | None] | None = None
         self._last_game_time: float | None = None
         self._last_lap_number: int | None = None
@@ -155,9 +156,10 @@ class TelemetryService:
 
         if reason:
             logger.info("Detected new LMU session (%s): %s -> %s", reason, self._session_signature, signature)
-            self.repository.finalize_session(self.session_id)
+            self.repository.finalize_session(self.session_id, self._last_session_snapshot)
             self.session_id = str(uuid.uuid4())
             self._session_signature = signature
+            self._last_session_snapshot = None
             self.session_logger.reset()
             self._reset_live_models()
 
@@ -206,3 +208,4 @@ class TelemetryService:
         )
         snapshot.strategy = strategy
         self.session_logger.log(self.session_id, snapshot, recommendation)
+        self._last_session_snapshot = snapshot

@@ -34,6 +34,13 @@ export type MotecLap = {
 export type MotecSession = {
   id: string;
   name: string;
+  trackName?: string | null;
+  trackLayout?: string | null;
+  carName?: string | null;
+  carClass?: string | null;
+  sessionType?: string | null;
+  finishPosition?: number | null;
+  finishStatus?: string | null;
   importedAt: string;
   channels: ChannelDefinition[];
   samples: MotecSample[];

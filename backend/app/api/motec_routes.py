@@ -8,9 +8,33 @@ router = APIRouter(prefix="/api/motec", tags=["motec"])
 
 
 @router.post("/sessions/import")
-async def import_session(request: Request, filename: str = Query("telemetry.csv")):
+async def import_session(
+    request: Request,
+    filename: str = Query("telemetry.csv"),
+    session_name: str = Query(""),
+    track_name: str = Query(""),
+    track_layout: str = Query(""),
+    car_name: str = Query(""),
+    car_class: str = Query(""),
+    session_type: str = Query(""),
+    finish_position: str = Query(""),
+    finish_status: str = Query(""),
+):
     try:
-        return await motec_repository.import_csv_stream(filename, request.stream())
+        return await motec_repository.import_csv_stream(
+            filename,
+            request.stream(),
+            {
+                "session_name": session_name,
+                "track_name": track_name,
+                "track_layout": track_layout,
+                "car_name": car_name,
+                "car_class": car_class,
+                "session_type": session_type,
+                "finish_position": finish_position,
+                "finish_status": finish_status,
+            },
+        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

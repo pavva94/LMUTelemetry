@@ -46,10 +46,16 @@ class Repository:
                     id=session_id,
                     created_at=datetime.utcnow().isoformat(),
                     track_name=state.track_name if state else None,
+                    track_layout=None,
                     session_type=state.session_type if state else None,
                     vehicle_name=player.vehicle_name if player else None,
+                    vehicle_class=player.vehicle_class if player else None,
                     started_at_game_time=state.current_time if state else None,
                     ended_at_game_time=None,
+                    final_position=None,
+                    final_class_position=None,
+                    classified_status=None,
+                    total_cars=state.num_vehicles if state else None,
                 )
             )
             db.commit()
@@ -70,6 +76,8 @@ class Repository:
                     gear=player.gear if player else None,
                     rpm=player.rpm if player else None,
                     fuel_liters=player.fuel_liters if player else None,
+                    engine_oil_temp=player.engine_oil_temp if player else None,
+                    engine_water_temp=player.engine_water_temp if player else None,
                     throttle=player.throttle if player else None,
                     brake=player.brake if player else None,
                     steering=player.steering if player else None,
@@ -99,6 +107,10 @@ class Repository:
                     tyre_load_fr=tyre.load_fr if tyre else None,
                     tyre_load_rl=tyre.load_rl if tyre else None,
                     tyre_load_rr=tyre.load_rr if tyre else None,
+                    tyre_pressure_fl=tyre.pressure_fl if tyre else None,
+                    tyre_pressure_fr=tyre.pressure_fr if tyre else None,
+                    tyre_pressure_rl=tyre.pressure_rl if tyre else None,
+                    tyre_pressure_rr=tyre.pressure_rr if tyre else None,
                     tyre_temp_fl=tyre.temp_fl.center_c if tyre and tyre.temp_fl else None,
                     tyre_temp_fr=tyre.temp_fr.center_c if tyre and tyre.temp_fr else None,
                     tyre_temp_rl=tyre.temp_rl.center_c if tyre and tyre.temp_rl else None,
@@ -153,6 +165,7 @@ class Repository:
             if not session:
                 return None
             state = snapshot.session if snapshot else None
+            player = snapshot.player if snapshot else None
             latest_sample = db.scalar(
                 select(TelemetrySampleModel)
                 .where(TelemetrySampleModel.session_id == session_id)
@@ -160,6 +173,13 @@ class Repository:
                 .limit(1)
             )
             session.ended_at_game_time = state.current_time if state else (latest_sample.game_time if latest_sample else session.ended_at_game_time)
+            if player:
+                session.vehicle_class = session.vehicle_class or player.vehicle_class
+                session.final_position = player.position
+                session.final_class_position = player.class_position
+                session.classified_status = player.finish_status or session.classified_status or "unknown"
+            if state:
+                session.total_cars = state.num_vehicles or session.total_cars
             db.commit()
             db.refresh(session)
             return self._row_dict(session)

@@ -55,6 +55,8 @@ class PlayerState(BaseModel):
     rpm: float | None = None
     fuel_liters: float | None = None
     fuel_capacity_liters: float | None = None
+    engine_oil_temp: float | None = None
+    engine_water_temp: float | None = None
     throttle: float | None = None
     brake: float | None = None
     steering: float | None = None
@@ -83,6 +85,7 @@ class PlayerState(BaseModel):
     front_downforce: float | None = None
     rear_downforce: float | None = None
     drag: float | None = None
+    finish_status: str | None = None
     track_limits_steps: int | None = None
     lap_invalidated: bool | None = None
     gap_car_ahead: float | None = None

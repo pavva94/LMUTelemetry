@@ -40,11 +40,28 @@ def _ensure_sqlite_columns() -> None:
         return
 
     inspector = inspect(engine)
-    if "telemetry_samples" not in inspector.get_table_names():
+    table_names = inspector.get_table_names()
+    if "sessions" not in table_names or "telemetry_samples" not in table_names:
         return
+
+    existing = {column["name"] for column in inspector.get_columns("sessions")}
+    columns = {
+        "track_layout": "VARCHAR",
+        "vehicle_class": "VARCHAR",
+        "final_position": "INTEGER",
+        "final_class_position": "INTEGER",
+        "classified_status": "VARCHAR",
+        "total_cars": "INTEGER",
+    }
+    with engine.begin() as connection:
+        for name, column_type in columns.items():
+            if name not in existing:
+                connection.execute(text(f"ALTER TABLE sessions ADD COLUMN {name} {column_type}"))
 
     existing = {column["name"] for column in inspector.get_columns("telemetry_samples")}
     columns = {
+        "engine_oil_temp": "FLOAT",
+        "engine_water_temp": "FLOAT",
         "brake_temp_fl": "FLOAT",
         "brake_temp_fr": "FLOAT",
         "brake_temp_rl": "FLOAT",
@@ -67,6 +84,10 @@ def _ensure_sqlite_columns() -> None:
         "tyre_load_fr": "FLOAT",
         "tyre_load_rl": "FLOAT",
         "tyre_load_rr": "FLOAT",
+        "tyre_pressure_fl": "FLOAT",
+        "tyre_pressure_fr": "FLOAT",
+        "tyre_pressure_rl": "FLOAT",
+        "tyre_pressure_rr": "FLOAT",
     }
     with engine.begin() as connection:
         for name, column_type in columns.items():

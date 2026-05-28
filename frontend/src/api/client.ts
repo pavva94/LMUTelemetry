@@ -2,6 +2,7 @@ import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { SavedSession, SessionReview } from "../types/session";
 import type { MotecSession, MotecSample } from "../types/motec";
+import type { ProfileLap, ProfileLapResponse, ProfileSummary } from "../types/profile";
 
 export const API_BASE = "http://127.0.0.1:8000";
 export const WS_BASE = "ws://127.0.0.1:8000";
@@ -37,8 +38,18 @@ export const api = {
   },
   motecSessions: () => getJson<MotecSession[]>("/api/motec/sessions"),
   motecSession: (id: string) => getJson<MotecSession>(`/api/motec/sessions/${id}`),
-  motecImport: async (file: File) => {
-    const response = await fetch(`${API_BASE}/api/motec/sessions/import?filename=${encodeURIComponent(file.name)}`, {
+  profileSummary: () => getJson<ProfileSummary>("/api/profile/summary"),
+  profileBestLaps: () => getJson<ProfileLap[]>("/api/profile/best-laps"),
+  profileLaps: (params: Record<string, string | number | boolean | null | undefined>) => {
+    const search = new URLSearchParams();
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== null && value !== undefined && value !== "") search.set(key, String(value));
+    });
+    return getJson<ProfileLapResponse>(`/api/profile/laps?${search.toString()}`);
+  },
+  motecImport: async (file: File, metadata: Record<string, string>) => {
+    const params = new URLSearchParams({ filename: file.name, ...metadata });
+    const response = await fetch(`${API_BASE}/api/motec/sessions/import?${params.toString()}`, {
       method: "POST",
       headers: { "Content-Type": "text/csv" },
       body: file,

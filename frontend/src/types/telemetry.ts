@@ -40,6 +40,8 @@ export type PlayerState = {
   rpm?: number;
   max_rpm?: number;
   engine_torque?: number;
+  engine_oil_temp?: number;
+  engine_water_temp?: number;
   fuel_liters?: number;
   fuel_capacity_liters?: number;
   throttle?: number;
@@ -70,6 +72,7 @@ export type PlayerState = {
   front_downforce?: number;
   rear_downforce?: number;
   drag?: number;
+  finish_status?: string;
   track_limits_steps?: number;
   lap_invalidated?: boolean;
   gap_car_ahead?: number;

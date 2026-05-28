@@ -13,6 +13,7 @@ import {
   Settings,
   Table2,
   Timer,
+  UserRound,
   Wrench,
 } from "lucide-react";
 
@@ -40,12 +41,17 @@ const csvItems = [
   ["motec", "MoTeC Workspace", FileSpreadsheet],
 ] as const;
 
+const profileItems = [
+  ["profile", "User Profile", UserRound],
+] as const;
+
 const modes = [
   ["live", "Live Mode", "Real-time telemetry", Gauge, liveItems],
   ["csv", "CSV Analysis", "Offline MoTeC-style tools", FileSpreadsheet, csvItems],
+  ["profile", "User Profile", "History and records", UserRound, profileItems],
 ] as const;
 
-const items = [...liveItems, ...csvItems] as const;
+const items = [...liveItems, ...csvItems, ...profileItems] as const;
 
 export type PageKey = (typeof items)[number][0];
 type ModeKey = (typeof modes)[number][0];
@@ -53,6 +59,7 @@ type ModeKey = (typeof modes)[number][0];
 const firstPageByMode: Record<ModeKey, PageKey> = {
   live: "live",
   csv: "motec",
+  profile: "profile",
 };
 
 function modeForPage(page: PageKey) {

@@ -49,6 +49,15 @@ def session_type_name(value: Any) -> str:
         return str(value or "Unknown")
 
 
+def finish_status_name(value: Any) -> str | None:
+    names = {0: None, 1: "finished", 2: "dnf", 3: "dq"}
+    try:
+        numeric = int(value)
+        return names.get(numeric, str(value))
+    except Exception:
+        return None
+
+
 def attr(obj: Any, *names: str, default: Any = None) -> Any:
     for name in names:
         if hasattr(obj, name):
@@ -131,6 +140,8 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         rpm=safe_float(attr(telemetry, "mEngineRPM", default=None)),
         fuel_liters=safe_float(attr(telemetry, "mFuel", default=None)),
         fuel_capacity_liters=safe_float(attr(telemetry, "mFuelCapacity", default=None)),
+        engine_oil_temp=safe_float(attr(telemetry, "mEngineOilTemp", default=None)),
+        engine_water_temp=safe_float(attr(telemetry, "mEngineWaterTemp", default=None)),
         throttle=safe_float(attr(telemetry, "mUnfilteredThrottle", "mThrottle", default=None)),
         brake=safe_float(attr(telemetry, "mUnfilteredBrake", "mBrake", default=None)),
         steering=safe_float(attr(telemetry, "mUnfilteredSteering", "mSteering", default=None)),
@@ -157,6 +168,7 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         front_downforce=safe_float(attr(telemetry, "mFrontDownforce", default=None)),
         rear_downforce=safe_float(attr(telemetry, "mRearDownforce", default=None)),
         drag=safe_float(attr(telemetry, "mDrag", default=None)),
+        finish_status=finish_status_name(attr(telemetry, "mFinishStatus", default=None)),
         track_limits_steps=attr(vehicle, "mCutTrackWarnings", default=None),
         lap_invalidated=bool(attr(vehicle, "mLapInvalidated", default=False)),
         gap_car_ahead=safe_float(attr(vehicle, "mTimeBehindNext", default=None)),
