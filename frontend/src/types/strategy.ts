@@ -45,7 +45,20 @@ export type StrategyState = {
     overcut_targets: string[];
     explanation: string[];
   };
-  assumptions: Record<string, number | string | boolean>;
+  assumptions: {
+    race_duration_minutes?: number;
+    pit_loss_seconds?: number;
+    pit_stationary_seconds?: number;
+    tyre_change_seconds_per_tyre?: number;
+    refuel_seconds_per_5_liters?: number;
+    race_start_fuel_liters?: number;
+    safety_car_pit_loss_seconds?: number;
+    fuel_safety_margin_liters?: number;
+    fuel_safety_margin_laps?: number;
+    max_tyre_wear?: number;
+    normal_lap_time?: number;
+    [key: string]: number | string | boolean | undefined;
+  };
 };
 
 export type RecommendationPayload = {

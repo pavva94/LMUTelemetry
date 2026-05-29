@@ -270,7 +270,7 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
   return {
     session: {
       track: session?.track_name ?? null,
-      car: session?.vehicle_name ?? null,
+      car: session?.vehicle_model ?? session?.vehicle_name ?? null,
       sessionType: session?.session_type ?? null,
       dateTime: session?.created_at ?? null,
       duration: latestSessionDuration(session, samples, allLaps),

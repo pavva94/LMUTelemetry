@@ -47,11 +47,14 @@ def _ensure_sqlite_columns() -> None:
     existing = {column["name"] for column in inspector.get_columns("sessions")}
     columns = {
         "track_layout": "VARCHAR",
+        "vehicle_model": "VARCHAR",
         "vehicle_class": "VARCHAR",
         "final_position": "INTEGER",
         "final_class_position": "INTEGER",
         "classified_status": "VARCHAR",
         "total_cars": "INTEGER",
+        "is_saved": "BOOLEAN DEFAULT 1 NOT NULL",
+        "removed_at": "VARCHAR",
     }
     with engine.begin() as connection:
         for name, column_type in columns.items():

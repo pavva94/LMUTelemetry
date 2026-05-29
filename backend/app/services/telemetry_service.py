@@ -132,7 +132,7 @@ class TelemetryService:
         return (
             session.track_name if session else None,
             session.session_type if session else None,
-            player.vehicle_name if player else None,
+            (player.vehicle_model or player.vehicle_name) if player else None,
         )
 
     def _player_track_progress(self, snapshot: TelemetrySnapshot) -> tuple[int | None, float | None]:

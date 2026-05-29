@@ -38,6 +38,9 @@ class TyreState(BaseModel):
 
 class HybridState(BaseModel):
     battery_percent: float | None = None
+    virtual_energy_fraction: float | None = None
+    regen_kw: float | None = None
+    motor_state: str | None = None
     deploy_mode: str | None = None
     regen_active: bool | None = None
 
@@ -45,6 +48,7 @@ class HybridState(BaseModel):
 class PlayerState(BaseModel):
     vehicle_id: int | None = None
     vehicle_name: str | None = None
+    vehicle_model: str | None = None
     vehicle_class: str | None = None
     position: int | None = None
     class_position: int | None = None
@@ -139,6 +143,7 @@ class CompetitorState(BaseModel):
     vehicle_id: int
     driver_name: str | None = None
     vehicle_name: str | None = None
+    vehicle_model: str | None = None
     vehicle_class: str | None = None
     position: int | None = None
     class_position: int | None = None
@@ -147,12 +152,15 @@ class CompetitorState(BaseModel):
     best_lap_time: float | None = None
     last_lap_time: float | None = None
     estimated_lap_time: float | None = None
+    finish_status: str | None = None
     pitstops: int | None = None
     in_pits: bool | None = None
     pit_state: str | None = None
     time_behind_leader: float | None = None
     time_behind_next: float | None = None
     laps_behind_leader: int | None = None
+    gap_to_player: float | None = None
+    fuel_fraction: float | None = None
     is_player: bool = False
     estimated_strategy_group: str | None = None
     threat_level: str | None = None

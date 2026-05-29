@@ -43,6 +43,7 @@ const fmt = (value?: number | null, digits = 1, suffix = "") =>
   value == null || Number.isNaN(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
 const pct = (value?: number | null) => (value == null || Number.isNaN(value) ? "--" : `${Math.round(value * 100)}%`);
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
+const carName = (car?: { vehicle_model?: string | null; vehicle_name?: string | null }) => car?.vehicle_model || car?.vehicle_name || null;
 const seconds = (value?: number | null) => formatRaceGap(value);
 const tyreTemp = (value?: TyreTemps) => fmt(value?.center_c ?? value?.left_c ?? value?.right_c ?? value?.carcass_c, 1, " C");
 const lapTime = (value?: number | null) => formatRaceTime(value);
@@ -199,7 +200,7 @@ function PageHeader({ telemetry, connected }: { telemetry: TelemetrySnapshot | n
         <Metric label="Status" value={connected && telemetry?.connected ? "Connected" : "Mock/offline"} />
         <Metric label="Track" value={text(session?.track_name)} />
         <Metric label="Session" value={text(session?.session_type)} />
-        <Metric label="Car" value={text(player?.vehicle_name)} />
+        <Metric label="Car" value={text(carName(player))} />
         <Metric label="Driver" value={text((telemetry?.competitors || []).find((c) => c.is_player)?.driver_name || "Player")} />
         <Metric label="Lap" value={text(player?.lap_number ?? session?.current_lap)} />
         <Metric label="Remaining" value={formatRaceTime(session?.time_remaining)} />
@@ -271,11 +272,11 @@ function CompetitorRows({ competitors, limit = 10, filter = "all", showGap = tru
             <th>{heading("Pos", "position")}</th>
             <th>{heading("Class", "vehicle_class")}</th>
             <th>{heading("Driver", "driver_name")}</th>
-            <th>{heading("Car", "vehicle_name")}</th>
+            <th>{heading("Car", "vehicle_model")}</th>
             <th>{heading("Lap", "total_laps")}</th>
             <th>{heading("Last", "last_lap_time")}</th>
             <th>{heading("Best", "best_lap_time")}</th>
-            {showGap && <th>{heading("Gap", "time_behind_next")}</th>}
+            {showGap && <th>{heading("Gap to you", "gap_to_player")}</th>}
             <th>{heading("Pits", "pitstops")}</th>
           </tr>
         </thead>
@@ -285,11 +286,11 @@ function CompetitorRows({ competitors, limit = 10, filter = "all", showGap = tru
               <td>{text(car.position)}</td>
               <td>{text(car.vehicle_class)}</td>
               <td>{text(car.driver_name || (car.is_player ? "Player" : ""))}</td>
-              <td>{text(car.vehicle_name)}</td>
+              <td>{text(carName(car))}</td>
               <td>{text(car.total_laps ?? car.current_lap)}</td>
               <td>{lapTime(car.last_lap_time)}</td>
               <td>{lapTime(car.best_lap_time)}</td>
-              {showGap && <td>{seconds(car.time_behind_next ?? car.gap_to_player)}</td>}
+              {showGap && <td>{seconds(car.gap_to_player)}</td>}
               <td>{car.in_pits ? "Pit" : text(car.pitstops)}</td>
             </tr>
           ))}
@@ -450,6 +451,8 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
         <SectionTitle title="Fuel Strategy" help="Estimates fuel range, margin, and pit pressure. A negative margin means the current pace or consumption cannot safely reach the target." />
         <Metric label="Current fuel" value={`${fmt(player?.fuel_liters)} L`} />
         <Metric label="Fuel capacity" value={`${fmt(player?.fuel_capacity_liters)} L`} />
+        <Metric label="Virtual energy" value={pct(player?.hybrid_state?.virtual_energy_fraction)} sub={text(player?.hybrid_state?.motor_state)} />
+        <Metric label="Battery / regen" value={`${fmt(player?.hybrid_state?.battery_percent, 0, "%")} / ${fmt(player?.hybrid_state?.regen_kw, 1, " kW")}`} />
         <Metric label="Last lap used" value={`${fmt(fuel?.last_lap_fuel_used_liters, 2)} L`} />
         <Metric label="Session average" value={`${fmt(fuel?.fuel_per_lap_liters, 2)} L`} sub={fuelLapsNeeded > 0 ? `Need ${fuelLapsNeeded} more valid lap${fuelLapsNeeded === 1 ? "" : "s"}` : `${fuel?.valid_laps_observed ?? 0} valid laps, ${fuel?.confidence || "low"} confidence`} />
         <Metric label="Laps remaining" value={fmt(fuel?.fuel_laps_remaining)} />
@@ -583,7 +586,7 @@ export function TrackMap({ telemetry, competitors }: EngineeringProps) {
         {selected ? (
           <>
             <Metric label="Driver" value={text(selected.driver_name || (selected.is_player ? "Player" : ""))} />
-            <Metric label="Car" value={text(selected.vehicle_name)} />
+            <Metric label="Car" value={text(carName(selected))} />
             <Metric label="Class" value={text(selected.vehicle_class)} />
             <Metric label="Position" value={text(selected.position)} />
             <Metric label="Class position" value={text(selected.class_position)} />
@@ -614,6 +617,23 @@ export function TrackMap({ telemetry, competitors }: EngineeringProps) {
 export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps) {
   const cars = competitors.length ? competitors : telemetry?.competitors || [];
   const player = telemetry?.player;
+  const playerCar = cars.find((car) => car.is_player);
+  const playerPosition = player?.position ?? playerCar?.position;
+  const carsOnTrack = cars
+    .filter((car) => !car.in_pits)
+    .sort((a, b) => (a.position ?? Number.POSITIVE_INFINITY) - (b.position ?? Number.POSITIVE_INFINITY));
+  const gapToPlayer = (car: CompetitorState) => {
+    if (car.is_player) return null;
+    if (car.gap_to_player != null) return car.gap_to_player;
+    if (car.time_behind_leader != null && playerCar?.time_behind_leader != null) {
+      return car.time_behind_leader - playerCar.time_behind_leader;
+    }
+    if (car.position != null && playerPosition != null) {
+      if (car.position === playerPosition - 1) return player?.gap_car_ahead != null ? -player.gap_car_ahead : null;
+      if (car.position === playerPosition + 1) return player?.gap_car_behind ?? null;
+    }
+    return null;
+  };
   return (
     <div className="page grid">
       <section className="card span-8">
@@ -639,7 +659,35 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
         <Metric label="Estimated laps" value={fmt(strategy?.fuel?.fuel_laps_remaining)} />
         <Metric label="Pit status" value={text(cars.find((c) => c.is_player)?.pit_state || "Track")} />
         <Metric label="Current lap" value={text(player?.lap_number)} />
+        <Metric label="Cars on track" value={carsOnTrack.length || "--"} sub={`${cars.length - carsOnTrack.length} in pits filtered`} />
         <Metric label="Warnings" value={player?.gap_car_behind != null && player.gap_car_behind < 1 ? "Close car behind" : "Clear"} />
+      </section>
+      <section className="card span-12">
+        <SectionTitle title="Cars On Track" help="Lists cars currently circulating and filters out pit-lane cars. Gaps are relative to the player when LMU exposes enough timing data." />
+        {carsOnTrack.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Pos</th><th>Driver</th><th>Car</th><th>Class</th><th>Lap</th><th>Gap to you</th><th>Last</th><th>Best</th></tr></thead>
+              <tbody>
+                {carsOnTrack.map((car) => {
+                  const gap = gapToPlayer(car);
+                  return (
+                    <tr key={car.vehicle_id}>
+                      <td>{text(car.position)}</td>
+                      <td>{car.is_player ? "You" : text(car.driver_name)}</td>
+                      <td>{text(carName(car))}</td>
+                      <td>{text(car.vehicle_class)}</td>
+                      <td>{text(car.total_laps ?? car.current_lap)}</td>
+                      <td>{car.is_player ? "You" : gap == null ? "--" : seconds(gap)}</td>
+                      <td>{lapTime(car.last_lap_time)}</td>
+                      <td>{lapTime(car.best_lap_time)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : <EmptyState detail="No cars are currently marked as on track." />}
       </section>
       <section className="card span-6"><SectionTitle title="Cars Ahead" help="Shows immediate traffic targets. Compare last laps and gaps to decide whether to attack, save, or wait." /><CompetitorRows competitors={cars.filter((c) => !c.is_player).slice(0, 3)} /></section>
       <section className="card span-6"><SectionTitle title="Cars Behind" help="Shows pressure from behind. A faster car behind may require defensive positioning or earlier traffic planning." /><CompetitorRows competitors={cars.filter((c) => !c.is_player).slice(3, 6)} /></section>
@@ -770,7 +818,7 @@ export function FieldSpread({ telemetry, competitors }: EngineeringProps) {
           })}
         </div>
       </section>
-      <section className="card span-4"><SectionTitle title="Race State" help="Summarizes the current race picture. Use it to judge whether to attack, defend, save fuel, or react to pit traffic." /><Metric label="Leader" value={text(leader?.driver_name || leader?.vehicle_name)} /><Metric label="Player position" value={text(player?.position)} /><Metric label="Player class" value={text(player?.class_position)} /><Metric label="Gap ahead" value={seconds(telemetry?.player?.gap_car_ahead)} /><Metric label="Cars in pits" value={cars.filter((c) => c.in_pits).length} /></section>
+      <section className="card span-4"><SectionTitle title="Race State" help="Summarizes the current race picture. Use it to judge whether to attack, defend, save fuel, or react to pit traffic." /><Metric label="Leader" value={text(leader?.driver_name || carName(leader))} /><Metric label="Player position" value={text(player?.position)} /><Metric label="Player class" value={text(player?.class_position)} /><Metric label="Gap ahead" value={seconds(telemetry?.player?.gap_car_ahead)} /><Metric label="Cars in pits" value={cars.filter((c) => c.in_pits).length} /></section>
       <section className="card span-8"><SectionTitle title="Gap Table" help="Lists gaps in race order. Gaps to next car show immediate battle pressure, while leader gaps show overall race spread." /><CompetitorRows competitors={visibleCars} limit={60} /></section>
     </div>
   );
@@ -851,7 +899,7 @@ function LapTable({ rows }: { rows: Field[] }) {
 export function OpponentStats({ competitors }: EngineeringProps) {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<number | "">("");
-  const filtered = competitors.filter((c) => `${c.driver_name} ${c.vehicle_name} ${c.vehicle_class}`.toLowerCase().includes(query.toLowerCase()));
+  const filtered = competitors.filter((c) => `${c.driver_name} ${c.vehicle_model} ${c.vehicle_name} ${c.vehicle_class}`.toLowerCase().includes(query.toLowerCase()));
   const selected = filtered.find((c) => c.vehicle_id === selectedId) || filtered.find((c) => !c.is_player) || filtered[0];
   return (
     <div className="page grid">
@@ -861,11 +909,11 @@ export function OpponentStats({ competitors }: EngineeringProps) {
           <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search driver, car, or class" />
           <select value={selectedId} onChange={(event) => setSelectedId(event.target.value === "" ? "" : Number(event.target.value))}>
             <option value="">Auto-select nearest opponent</option>
-            {filtered.map((car) => <option key={car.vehicle_id} value={car.vehicle_id}>{car.position ?? "--"} - {car.driver_name || car.vehicle_name}</option>)}
+            {filtered.map((car) => <option key={car.vehicle_id} value={car.vehicle_id}>{car.position ?? "--"} - {car.driver_name || carName(car)}</option>)}
           </select>
         </div>
       </section>
-      <section className="card span-4"><h2>Opponent Overview</h2>{selected ? <><Metric label="Driver" value={text(selected.driver_name)} /><Metric label="Car" value={text(selected.vehicle_name)} /><Metric label="Class" value={text(selected.vehicle_class)} /><Metric label="Position" value={text(selected.position)} /><Metric label="Best / last" value={`${lapTime(selected.best_lap_time)} / ${lapTime(selected.last_lap_time)}`} /><Metric label="Gaps" value={`${seconds(selected.gap_to_player)} player / ${seconds(selected.time_behind_leader)} leader`} /><Metric label="Pit stops" value={text(selected.pitstops)} /></> : <EmptyState />}</section>
+      <section className="card span-4"><h2>Opponent Overview</h2>{selected ? <><Metric label="Driver" value={text(selected.driver_name)} /><Metric label="Car" value={text(carName(selected))} /><Metric label="Class" value={text(selected.vehicle_class)} /><Metric label="Position" value={text(selected.position)} /><Metric label="Best / last" value={`${lapTime(selected.best_lap_time)} / ${lapTime(selected.last_lap_time)}`} /><Metric label="Gaps" value={`${seconds(selected.gap_to_player)} player / ${seconds(selected.time_behind_leader)} leader`} /><Metric label="Pit stops" value={text(selected.pitstops)} /></> : <EmptyState />}</section>
       <section className="card span-4"><h2>Pace</h2><Metric label="Last 5 laps" value="Live history pending" /><Metric label="Average stint pace" value="--" /><Metric label="Consistency" value="--" /><Metric label="Current pace" value={lapTime(selected?.estimated_lap_time)} /></section>
       <section className="card span-4"><h2>Strategy</h2><Metric label="Fuel fraction" value={pct(selected?.fuel_fraction)} /><Metric label="Tyre wear" value="Unavailable" /><Metric label="Last pit lap" value={text(selected?.last_pit_lap)} /><Metric label="Current stint lap" value={text(selected?.current_stint_lap)} /></section>
       <section className="card span-12"><h2>Opponent Tyres And Brakes</h2><EmptyState detail="Per-wheel opponent tyre and brake channels are not available from the current data source." /></section>

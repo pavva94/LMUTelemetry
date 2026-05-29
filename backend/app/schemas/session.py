@@ -11,6 +11,7 @@ class SessionSummary(BaseModel):
     track_name: str | None = None
     session_type: str | None = None
     vehicle_name: str | None = None
+    vehicle_model: str | None = None
     started_at_game_time: float | None = None
     ended_at_game_time: float | None = None
 

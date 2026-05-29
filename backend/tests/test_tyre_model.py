@@ -17,10 +17,10 @@ def test_tyre_wear_high() -> None:
     assert state.tyre_risk_level == "high"
 
 
-def test_tyre_model_learns_when_wear_value_decreases() -> None:
+def test_tyre_model_learns_when_used_wear_increases() -> None:
     collector = MockTelemetryCollector()
     model = TyreModel(StrategyAssumptions(max_tyre_wear=0.75))
-    for lap, wear in [(1, 0.92), (2, 0.90), (3, 0.88), (4, 0.86)]:
+    for lap, wear in [(1, 0.02), (2, 0.04), (3, 0.06), (4, 0.08)]:
         snapshot = collector.poll_once()
         snapshot.player.lap_number = lap
         snapshot.player.tyre_state.average_wear = wear
@@ -34,7 +34,7 @@ def test_tyre_model_keeps_session_wear_history_after_pit_exit() -> None:
     collector = MockTelemetryCollector()
     model = TyreModel(StrategyAssumptions(max_tyre_wear=0.75))
 
-    for lap, wear in [(1, 0.96), (2, 0.94), (3, 0.92)]:
+    for lap, wear in [(1, 0.04), (2, 0.06), (3, 0.08)]:
         snapshot = collector.poll_once()
         snapshot.player.lap_number = lap
         snapshot.player.tyre_state.average_wear = wear
@@ -43,19 +43,19 @@ def test_tyre_model_keeps_session_wear_history_after_pit_exit() -> None:
 
     pit = collector.poll_once()
     pit.player.lap_number = 3
-    pit.player.tyre_state.average_wear = 0.92
+    pit.player.tyre_state.average_wear = 0.08
     _set_player_in_pits(pit, True)
     model.update(pit)
 
     exit_pit = collector.poll_once()
     exit_pit.player.lap_number = 3
-    exit_pit.player.tyre_state.average_wear = 0.99
+    exit_pit.player.tyre_state.average_wear = 0.01
     _set_player_in_pits(exit_pit, False)
     model.update(exit_pit)
 
     next_lap = collector.poll_once()
     next_lap.player.lap_number = 4
-    next_lap.player.tyre_state.average_wear = 0.97
+    next_lap.player.tyre_state.average_wear = 0.03
     _set_player_in_pits(next_lap, False)
     state = model.update(next_lap)
 

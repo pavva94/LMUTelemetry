@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 class StrategyAssumptions(BaseModel):
     pit_loss_seconds: float = 28.0
     pit_stationary_seconds: float = 12.0
+    tyre_change_seconds_per_tyre: float = 3.0
+    refuel_seconds_per_5_liters: float = 1.2
+    race_start_fuel_liters: float = 90.0
     safety_car_pit_loss_seconds: float = 16.0
     fuel_safety_margin_liters: float = 2.0
     fuel_safety_margin_laps: float = 1.0

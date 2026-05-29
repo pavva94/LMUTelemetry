@@ -20,7 +20,7 @@ export function CompetitorTable({ competitors }: { competitors: CompetitorState[
   const rows = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return [...competitors]
-      .filter((car) => !needle || `${car.driver_name} ${car.vehicle_name} ${car.vehicle_class}`.toLowerCase().includes(needle))
+      .filter((car) => !needle || `${car.driver_name} ${car.vehicle_model} ${car.vehicle_name} ${car.vehicle_class}`.toLowerCase().includes(needle))
       .sort((a, b) => {
         const av = valueFor(a, sortKey);
         const bv = valueFor(b, sortKey);
@@ -48,12 +48,12 @@ export function CompetitorTable({ competitors }: { competitors: CompetitorState[
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>{head("Pos", "position")}</th><th>{head("Driver", "driver_name")}</th><th>{head("Car", "vehicle_name")}</th><th>{head("Class", "vehicle_class")}</th><th>{head("Last", "last_lap_time")}</th><th>{head("Best", "best_lap_time")}</th><th>{head("Gap", "time_behind_next")}</th><th>{head("Stops", "pitstops")}</th><th>{head("Pits", "in_pits")}</th><th>{head("Strategy", "estimated_strategy_group")}</th><th>{head("Threat", "threat_level")}</th></tr></thead>
+          <thead><tr><th>{head("Pos", "position")}</th><th>{head("Driver", "driver_name")}</th><th>{head("Car", "vehicle_model")}</th><th>{head("Class", "vehicle_class")}</th><th>{head("Last", "last_lap_time")}</th><th>{head("Best", "best_lap_time")}</th><th>{head("Gap to you", "gap_to_player")}</th><th>{head("Stops", "pitstops")}</th><th>{head("Pits", "in_pits")}</th><th>{head("Strategy", "estimated_strategy_group")}</th><th>{head("Threat", "threat_level")}</th></tr></thead>
           <tbody>
             {rows.map((c) => (
               <tr key={c.vehicle_id}>
-                <td>{c.position}</td><td>{c.driver_name || (c.is_player ? "Player" : "--")}</td><td>{c.vehicle_name || "--"}</td><td>{c.vehicle_class || "--"}</td>
-                <td>{formatRaceTime(c.last_lap_time)}</td><td>{formatRaceTime(c.best_lap_time)}</td><td>{formatRaceGap(c.time_behind_next)}</td><td>{c.pitstops ?? "--"}</td>
+                <td>{c.position}</td><td>{c.driver_name || (c.is_player ? "Player" : "--")}</td><td>{c.vehicle_model || c.vehicle_name || "--"}</td><td>{c.vehicle_class || "--"}</td>
+                <td>{formatRaceTime(c.last_lap_time)}</td><td>{formatRaceTime(c.best_lap_time)}</td><td>{formatRaceGap(c.gap_to_player)}</td><td>{c.pitstops ?? "--"}</td>
                 <td>{c.in_pits ? "Yes" : "No"}</td><td>{c.estimated_strategy_group || "UNKNOWN"} estimated</td><td><StatusBadge value={c.threat_level} /></td>
               </tr>
             ))}

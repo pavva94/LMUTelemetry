@@ -30,6 +30,36 @@ def test_fuel_model_learns_consumption() -> None:
     assert state.fuel_capacity_liters == 90
 
 
+def test_fuel_capacity_uses_session_start_when_api_capacity_is_missing() -> None:
+    collector = MockTelemetryCollector()
+    model = FuelModel(StrategyAssumptions(normal_lap_time=100))
+    first = collector.poll_once()
+    first.player.fuel_liters = 105
+    first.player.fuel_capacity_liters = None
+    state = model.update(first)
+
+    second = collector.poll_once()
+    second.player.fuel_liters = 101
+    second.player.fuel_capacity_liters = None
+    state = model.update(second)
+
+    assert state.fuel_capacity_liters == 105
+    assert second.player.fuel_capacity_liters == 105
+
+
+def test_fuel_capacity_rejects_implausibly_large_api_capacity() -> None:
+    collector = MockTelemetryCollector()
+    model = FuelModel(StrategyAssumptions(normal_lap_time=100))
+    snapshot = collector.poll_once()
+    snapshot.player.fuel_liters = 80
+    snapshot.player.fuel_capacity_liters = 999
+
+    state = model.update(snapshot)
+
+    assert state.fuel_capacity_liters == 80
+    assert snapshot.player.fuel_capacity_liters == 80
+
+
 def test_fuel_too_low_delta() -> None:
     collector = MockTelemetryCollector()
     snapshot = collector.poll_once()

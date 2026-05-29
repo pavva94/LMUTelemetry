@@ -28,8 +28,18 @@ export type TyreState = {
   average_temp_c?: number;
 };
 
+export type HybridState = {
+  battery_percent?: number;
+  virtual_energy_fraction?: number;
+  regen_kw?: number;
+  motor_state?: string;
+  deploy_mode?: string;
+  regen_active?: boolean;
+};
+
 export type PlayerState = {
   vehicle_name?: string;
+  vehicle_model?: string;
   vehicle_class?: string;
   position?: number;
   class_position?: number;
@@ -92,6 +102,7 @@ export type PlayerState = {
   gap_place_ahead?: number;
   gap_place_behind?: number;
   tyre_state?: TyreState;
+  hybrid_state?: HybridState;
 };
 
 export type SessionState = {
@@ -120,6 +131,7 @@ export type CompetitorState = {
   vehicle_id: number;
   driver_name?: string;
   vehicle_name?: string;
+  vehicle_model?: string;
   vehicle_class?: string;
   position?: number;
   class_position?: number;
@@ -129,6 +141,7 @@ export type CompetitorState = {
   best_lap_time?: number;
   last_lap_time?: number;
   estimated_lap_time?: number;
+  finish_status?: string;
   pitstops?: number;
   pit_state?: string;
   penalties?: number;

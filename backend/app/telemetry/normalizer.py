@@ -7,6 +7,7 @@ from app.core.utils import average, decode_c_string, safe_float, utc_now
 from app.schemas.telemetry import (
     CompetitorState,
     EnvironmentState,
+    HybridState,
     PlayerState,
     SessionState,
     TelemetrySnapshot,
@@ -58,6 +59,45 @@ def finish_status_name(value: Any) -> str | None:
         return None
 
 
+def motor_state_name(value: Any) -> str | None:
+    names = {0: "unavailable", 1: "inactive", 2: "propulsion", 3: "regeneration"}
+    try:
+        return names.get(int(value), str(value))
+    except Exception:
+        return None
+
+
+def bounded_fraction(value: float | None) -> float | None:
+    if value is None:
+        return None
+    return max(0.0, min(1.0, value))
+
+
+def positive_channel(value: float | None, minimum: float = 0.0) -> float | None:
+    return value if value is not None and value > minimum else None
+
+
+def tyre_wear_used_fraction(value: Any) -> float | None:
+    remaining = safe_float(value)
+    if remaining is None:
+        return None
+    if 0 <= remaining <= 1:
+        return 1.0 - remaining
+    if 1 < remaining <= 100:
+        return 1.0 - (remaining / 100.0)
+    return None
+
+
+def completed_lap_time(value: Any) -> float | None:
+    lap_time = safe_float(value)
+    return lap_time if lap_time is not None and 20.0 <= lap_time <= 1200.0 else None
+
+
+def race_gap(value: Any) -> float | None:
+    gap = safe_float(value)
+    return gap if gap is not None and 0.0 <= gap <= 86400.0 else None
+
+
 def attr(obj: Any, *names: str, default: Any = None) -> Any:
     for name in names:
         if hasattr(obj, name):
@@ -87,8 +127,13 @@ def normalize_lmu_snapshot(raw: Any) -> TelemetrySnapshot:
     player_raw = vehicles[player_index] if 0 <= player_index < len(vehicles) else None
     telem_info = attr(telemetry_data, "telemInfo", default=None)
     player_telemetry = telem_info[player_index] if telem_info is not None and 0 <= player_index < len(telem_info) else telemetry_data
-    competitors = [_normalize_competitor(v, idx == player_index) for idx, v in enumerate(vehicles[:104])]
+    competitors = [
+        _normalize_competitor(v, telem_info[idx] if telem_info is not None and idx < len(telem_info) else None, idx == player_index)
+        for idx, v in enumerate(vehicles[:104])
+    ]
+    _apply_gap_context(competitors)
     player = _normalize_player(player_raw, player_telemetry)
+    _apply_player_gap_context(player, competitors)
     session = SessionState(
         track_name=decode_c_string(attr(scoring, "mTrackName", default="")),
         session_type=session_type_name(attr(scoring, "mSession", default="Race")),
@@ -130,17 +175,23 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
     lap_start = safe_float(attr(telemetry, "mLapStartET", default=None))
     current_lap_time = elapsed - lap_start if elapsed is not None and lap_start is not None and elapsed >= lap_start else None
 
+    battery_fraction = safe_float(attr(telemetry, "mBatteryChargeFraction", default=None))
+    state_of_charge = safe_float(attr(telemetry, "mStateOfCharge", default=None))
+    virtual_energy = bounded_fraction(safe_float(attr(telemetry, "mVirtualEnergy", default=None)))
+    regen_kw = safe_float(attr(telemetry, "mRegen", default=None))
+    motor_state = motor_state_name(attr(telemetry, "mElectricBoostMotorState", default=None))
     return PlayerState(
         vehicle_id=attr(vehicle, "mID", "mVehicleID", default=0),
         vehicle_name=decode_c_string(attr(vehicle, "mVehicleName", default="")),
+        vehicle_model=decode_c_string(attr(telemetry, "mVehicleModel", default="")),
         vehicle_class=decode_c_string(attr(vehicle, "mVehicleClass", default="")),
         position=attr(vehicle, "mPlace", default=None),
         class_position=attr(vehicle, "mClassPosition", default=None),
         lap_number=attr(vehicle, "mTotalLaps", default=None),
         current_sector=attr(telemetry, "mCurrentSector", default=attr(vehicle, "mSector", default=None)),
         current_lap_time=current_lap_time,
-        last_lap_time=safe_float(attr(vehicle, "mLastLapTime", default=None)),
-        best_lap_time=safe_float(attr(vehicle, "mBestLapTime", default=None)),
+        last_lap_time=completed_lap_time(attr(vehicle, "mLastLapTime", default=None)),
+        best_lap_time=completed_lap_time(attr(vehicle, "mBestLapTime", default=None)),
         delta_best=safe_float(attr(telemetry, "mDeltaBest", default=None)),
         speed_kph=vector_speed_kph(attr(vehicle, "mLocalVel", "mVel", default=None)),
         gear=attr(telemetry, "mGear", default=None),
@@ -190,9 +241,16 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         finish_status=finish_status_name(attr(telemetry, "mFinishStatus", default=None)),
         track_limits_steps=attr(vehicle, "mCutTrackWarnings", default=None),
         lap_invalidated=bool(attr(vehicle, "mLapInvalidated", default=False)),
-        gap_car_ahead=safe_float(attr(vehicle, "mTimeBehindNext", default=None)),
-        gap_car_behind=safe_float(attr(vehicle, "mTimeBehindPrev", default=None)),
+        gap_car_ahead=race_gap(attr(vehicle, "mTimeBehindNext", default=None)),
+        gap_car_behind=race_gap(attr(vehicle, "mTimeBehindPrev", default=None)),
         tyre_state=tyres,
+        hybrid_state=HybridState(
+            battery_percent=state_of_charge if state_of_charge is not None else (battery_fraction * 100 if battery_fraction is not None else None),
+            virtual_energy_fraction=virtual_energy,
+            regen_kw=regen_kw,
+            motor_state=motor_state,
+            regen_active=(regen_kw is not None and regen_kw > 0) or motor_state == "regeneration",
+        ),
     )
 
 
@@ -203,26 +261,36 @@ def _normalize_tyres(vehicle: Any, telemetry: Any) -> TyreState:
     wheels = list(attr(telemetry, "mWheels", default=[]) or [])
     def item(values: list, index: int) -> float | None:
         return safe_float(values[index]) if index < len(values) else None
-    def wheel_value(index: int, name: str) -> float | None:
+    def raw_wheel_value(index: int, name: str) -> float | None:
         return safe_float(attr(wheels[index], name, default=None)) if index < len(wheels) else None
-    def wheel_array(index: int, name: str) -> list[float | None]:
-        raw = attr(wheels[index], name, default=[]) if index < len(wheels) else []
+    def wheel_value(index: int, name: str, minimum: float = 0.0) -> float | None:
+        value = raw_wheel_value(index, name)
+        return positive_channel(value, minimum)
+    def wheel_array(index: int, *names: str) -> list[float | None]:
+        raw = []
+        if index < len(wheels):
+            for name in names:
+                raw = attr(wheels[index], name, default=[])
+                if raw:
+                    break
         return [kelvin_to_celsius(safe_float(value)) for value in list(raw or [])[:3]]
     def wear_value(index: int) -> float | None:
-        return item(wear, index) if wear else wheel_value(index, "mWear")
+        value = item(wear, index) if wear else raw_wheel_value(index, "mWear")
+        return tyre_wear_used_fraction(value)
     def pressure_value(index: int) -> float | None:
-        return item(pressures, index) if pressures else wheel_value(index, "mPressure")
+        value = item(pressures, index) if pressures else wheel_value(index, "mPressure")
+        return positive_channel(value, 0.01)
     def temp_value(index: int) -> TyreTemps:
         if temps:
-            return TyreTemps(center_c=kelvin_to_celsius(item(temps, index)))
-        inner = wheel_array(index, "mTireInnerLayerTemperature")
-        carcass = kelvin_to_celsius(wheel_value(index, "mTireCarcassTemperature"))
+            return TyreTemps(center_c=positive_channel(kelvin_to_celsius(item(temps, index)), 0.01))
+        inner = [positive_channel(value, 0.01) for value in wheel_array(index, "mTireInnerLayerTemperature", "mTemperature")]
+        carcass = positive_channel(kelvin_to_celsius(wheel_value(index, "mTireCarcassTemperature")), 0.01)
         return TyreTemps(left_c=inner[0] if len(inner) > 0 else None, center_c=inner[1] if len(inner) > 1 else None, right_c=inner[2] if len(inner) > 2 else None, carcass_c=carcass)
     temp_states = [temp_value(i) for i in range(4)]
     temp_values = [state.center_c if state.center_c is not None else state.carcass_c for state in temp_states]
     return TyreState(
-        compound_front=decode_c_string(attr(vehicle, "mFrontTireCompoundName", default="")),
-        compound_rear=decode_c_string(attr(vehicle, "mRearTireCompoundName", default="")),
+        compound_front=decode_c_string(attr(telemetry, "mFrontTireCompoundName", default="")),
+        compound_rear=decode_c_string(attr(telemetry, "mRearTireCompoundName", default="")),
         wear_fl=wear_value(0),
         wear_fr=wear_value(1),
         wear_rl=wear_value(2),
@@ -231,10 +299,10 @@ def _normalize_tyres(vehicle: Any, telemetry: Any) -> TyreState:
         pressure_fr=pressure_value(1),
         pressure_rl=pressure_value(2),
         pressure_rr=pressure_value(3),
-        load_fl=wheel_value(0, "mTireLoad"),
-        load_fr=wheel_value(1, "mTireLoad"),
-        load_rl=wheel_value(2, "mTireLoad"),
-        load_rr=wheel_value(3, "mTireLoad"),
+        load_fl=wheel_value(0, "mTireLoad", 0.01),
+        load_fr=wheel_value(1, "mTireLoad", 0.01),
+        load_rl=wheel_value(2, "mTireLoad", 0.01),
+        load_rr=wheel_value(3, "mTireLoad", 0.01),
         temp_fl=temp_states[0],
         temp_fr=temp_states[1],
         temp_rl=temp_states[2],
@@ -244,24 +312,60 @@ def _normalize_tyres(vehicle: Any, telemetry: Any) -> TyreState:
     )
 
 
-def _normalize_competitor(vehicle: Any, is_player: bool) -> CompetitorState:
+def _normalize_competitor(vehicle: Any, telemetry: Any, is_player: bool) -> CompetitorState:
     return CompetitorState(
         vehicle_id=int(attr(vehicle, "mID", "mVehicleID", default=0) or 0),
         driver_name=decode_c_string(attr(vehicle, "mDriverName", default="")),
         vehicle_name=decode_c_string(attr(vehicle, "mVehicleName", default="")),
+        vehicle_model=decode_c_string(attr(telemetry, "mVehicleModel", default="")) if telemetry is not None else None,
         vehicle_class=decode_c_string(attr(vehicle, "mVehicleClass", default="")),
         position=attr(vehicle, "mPlace", default=None),
         class_position=attr(vehicle, "mClassPosition", default=None),
         total_laps=attr(vehicle, "mTotalLaps", default=None),
         lap_distance=safe_float(attr(vehicle, "mLapDist", default=None)),
-        best_lap_time=safe_float(attr(vehicle, "mBestLapTime", default=None)),
-        last_lap_time=safe_float(attr(vehicle, "mLastLapTime", default=None)),
-        estimated_lap_time=safe_float(attr(vehicle, "mBestLapTime", default=None)),
+        best_lap_time=completed_lap_time(attr(vehicle, "mBestLapTime", default=None)),
+        last_lap_time=completed_lap_time(attr(vehicle, "mLastLapTime", default=None)),
+        estimated_lap_time=completed_lap_time(attr(vehicle, "mEstimatedLapTime", default=None)),
+        finish_status=finish_status_name(attr(vehicle, "mFinishStatus", default=None)),
         pitstops=attr(vehicle, "mNumPitstops", default=None),
         in_pits=bool(attr(vehicle, "mInPits", default=False)),
         pit_state=str(attr(vehicle, "mPitState", default="unknown")),
-        time_behind_leader=safe_float(attr(vehicle, "mTimeBehindLeader", default=None)),
-        time_behind_next=safe_float(attr(vehicle, "mTimeBehindNext", default=None)),
+        time_behind_leader=race_gap(attr(vehicle, "mTimeBehindLeader", default=None)),
+        time_behind_next=race_gap(attr(vehicle, "mTimeBehindNext", default=None)),
         laps_behind_leader=attr(vehicle, "mLapsBehindLeader", default=None),
+        fuel_fraction=bounded_fraction((safe_float(attr(vehicle, "mFuelFraction", default=None)) or 0) / 255) if attr(vehicle, "mFuelFraction", default=None) is not None else None,
         is_player=is_player,
     )
+
+
+def _apply_gap_context(competitors: list[CompetitorState]) -> None:
+    player = next((car for car in competitors if car.is_player), None)
+    if player is None:
+        return
+    player_leader_gap = player.time_behind_leader or 0.0
+    player_position = player.position
+    for car in competitors:
+        if car.is_player:
+            car.gap_to_player = 0.0
+        elif car.time_behind_leader is not None and player.time_behind_leader is not None:
+            car.gap_to_player = car.time_behind_leader - player_leader_gap
+        elif player_position is not None and car.position is not None:
+            if car.position == player_position - 1:
+                car.gap_to_player = -player.time_behind_next if player.time_behind_next is not None else None
+            elif car.position == player_position + 1:
+                car.gap_to_player = car.time_behind_next
+
+
+def _apply_player_gap_context(player: PlayerState | None, competitors: list[CompetitorState]) -> None:
+    if player is None:
+        return
+    player_car = next((car for car in competitors if car.is_player), None)
+    player_position = player_car.position if player_car else player.position
+    if player_position is None:
+        return
+    ahead = next((car for car in competitors if car.position == player_position - 1), None)
+    behind = next((car for car in competitors if car.position == player_position + 1), None)
+    if ahead and ahead.gap_to_player is not None:
+        player.gap_car_ahead = abs(ahead.gap_to_player)
+    if behind and behind.gap_to_player is not None:
+        player.gap_car_behind = abs(behind.gap_to_player)

@@ -35,7 +35,7 @@ class TyreModel:
             self._last_lap = lap
             self._last_wear = avg_wear
         elif lap is not None and self._last_lap is not None and lap > self._last_lap and self._last_wear is not None:
-            rate = abs(avg_wear - self._last_wear) / max(1, lap - self._last_lap)
+            rate = (avg_wear - self._last_wear) / max(1, lap - self._last_lap)
             if 0 < rate < 0.2:
                 self._wear_rates.append(rate)
             self._last_lap = lap

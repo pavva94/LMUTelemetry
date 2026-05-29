@@ -8,6 +8,9 @@ event:
 strategy:
   pit_loss_seconds: 28.0
   pit_stationary_seconds: 12.0
+  tyre_change_seconds_per_tyre: 3.0
+  refuel_seconds_per_5_liters: 1.2
+  race_start_fuel_liters: 90.0
   safety_car_pit_loss_seconds: 16.0
   fuel_safety_margin_liters: 2.0
   fuel_safety_margin_laps: 1.0

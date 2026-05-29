@@ -4,13 +4,17 @@ import json
 import math
 from datetime import datetime
 
-from sqlalchemy import desc, func, select
+from sqlalchemy import delete, desc, func, select
 
 from app.db.database import SessionLocal
-from app.db.models import LapSummaryModel, RecommendationModel, SessionModel, TelemetrySampleModel
+from app.db.models import LapSummaryModel, RecommendationModel, SessionAggregateModel, SessionModel, TelemetrySampleModel, UserLifetimeStatsModel
 from app.schemas.recommendations import RecommendationPayload, StrategyRecommendation
 from app.schemas.strategy import FuelState, PitWindowState, StrategyAssumptions, StrategyState, StintState, TyreStrategyState
 from app.schemas.telemetry import CompetitorState, EnvironmentState, PlayerState, SessionState, TelemetrySnapshot, TyreState
+
+
+MIN_SAVED_SESSION_LAPS = 2
+MIN_SAVED_VALID_LAPS = 1
 
 
 class Repository:
@@ -38,6 +42,40 @@ class Repository:
             data["session_type"] = self._session_type_name(data["session_type"])
         return data
 
+    def _rows_json(self, rows: list[dict]) -> str:
+        return json.dumps(rows, default=str)
+
+    def _json_rows(self, payload: str | None) -> list[dict]:
+        if not payload:
+            return []
+        try:
+            value = json.loads(payload)
+            return value if isinstance(value, list) else []
+        except json.JSONDecodeError:
+            return []
+
+    def _average_fields(self, samples: list[TelemetrySampleModel], fields: list[str]) -> float | None:
+        values = []
+        for sample in samples:
+            wheel_values = [getattr(sample, field) for field in fields]
+            finite = [value for value in wheel_values if value is not None and math.isfinite(value)]
+            if finite:
+                values.append(sum(finite) / len(finite))
+        return sum(values) / len(values) if values else None
+
+    def _integrated_distance(self, samples: list[TelemetrySampleModel]) -> float | None:
+        distance = 0.0
+        usable = 0
+        for previous, current in zip(samples, samples[1:]):
+            if previous.game_time is None or current.game_time is None or previous.speed_kph is None:
+                continue
+            delta = current.game_time - previous.game_time
+            if delta <= 0 or delta > 120:
+                continue
+            distance += previous.speed_kph * delta / 3600
+            usable += 1
+        return distance if usable else None
+
     def ensure_session(self, session_id: str, snapshot: TelemetrySnapshot | None) -> None:
         with SessionLocal() as db:
             exists = db.get(SessionModel, session_id)
@@ -53,6 +91,7 @@ class Repository:
                     track_layout=None,
                     session_type=state.session_type if state else None,
                     vehicle_name=player.vehicle_name if player else None,
+                    vehicle_model=player.vehicle_model if player else None,
                     vehicle_class=player.vehicle_class if player else None,
                     started_at_game_time=state.current_time if state else None,
                     ended_at_game_time=None,
@@ -165,12 +204,26 @@ class Repository:
 
     def list_sessions(self) -> list[dict]:
         with SessionLocal() as db:
-            sessions = db.scalars(select(SessionModel).order_by(desc(SessionModel.created_at)).limit(50)).all()
+            sessions = db.scalars(
+                select(SessionModel)
+                .where(SessionModel.is_saved.is_(True))
+                .order_by(desc(SessionModel.created_at))
+                .limit(50)
+            ).all()
             session_ids = [session.id for session in sessions]
             sample_stats = {}
             latest_ids = []
             latest_samples = {}
             if session_ids:
+                aggregate_rows = db.scalars(
+                    select(SessionAggregateModel).where(SessionAggregateModel.session_id.in_(session_ids))
+                ).all()
+                for aggregate in aggregate_rows:
+                    sample_stats[aggregate.session_id] = {
+                        "sample_count": aggregate.sample_count,
+                        "latest_lap_number": aggregate.latest_lap_number,
+                        "latest_game_time": aggregate.duration_seconds,
+                    }
                 stats_rows = db.execute(
                     select(
                         TelemetrySampleModel.session_id,
@@ -200,7 +253,7 @@ class Repository:
                 latest_sample = latest_samples.get(stats.get("latest_id"))
                 row = self._row_dict(session)
                 row["sample_count"] = stats.get("sample_count", 0)
-                row["latest_lap_number"] = latest_sample.lap_number if latest_sample else None
+                row["latest_lap_number"] = latest_sample.lap_number if latest_sample else stats.get("latest_lap_number")
                 row["latest_game_time"] = latest_sample.game_time if latest_sample else stats.get("latest_game_time")
                 rows.append(row)
             return rows
@@ -221,7 +274,7 @@ class Repository:
                 if (
                     session.track_name == session_state.track_name
                     and session.session_type == session_state.session_type
-                    and session.vehicle_name == player.vehicle_name
+                    and (session.vehicle_model or session.vehicle_name) == (player.vehicle_model or player.vehicle_name)
                 ):
                     return self._row_dict(session)
         return None
@@ -242,9 +295,14 @@ class Repository:
             session.ended_at_game_time = state.current_time if state else (latest_sample.game_time if latest_sample else session.ended_at_game_time)
             if player:
                 session.vehicle_class = session.vehicle_class or player.vehicle_class
+                session.vehicle_model = session.vehicle_model or player.vehicle_model
                 session.final_position = player.position
                 session.final_class_position = player.class_position
                 session.classified_status = player.finish_status or session.classified_status or "unknown"
+            elif latest_sample:
+                session.final_position = latest_sample.position
+                session.final_class_position = latest_sample.class_position
+                session.classified_status = session.classified_status or "unknown"
             if state:
                 session.total_cars = state.num_vehicles or session.total_cars
             samples = db.scalars(
@@ -252,10 +310,93 @@ class Repository:
                 .where(TelemetrySampleModel.session_id == session_id)
                 .order_by(TelemetrySampleModel.id.asc())
             ).all()
-            self._store_lap_summaries(db, session_id, self._build_laps(samples))
+            laps = self._build_laps(samples)
+            pit_events = self._build_pit_events(samples)
+            recommendations = db.scalars(
+                select(RecommendationModel)
+                .where(RecommendationModel.session_id == session_id)
+                .order_by(RecommendationModel.id.asc())
+                .limit(100)
+            ).all()
+            if not self._should_save_completed_session(laps):
+                self._discard_session(db, session_id)
+                self._review_cache = {}
+                db.commit()
+                return None
+            self._store_lap_summaries(db, session_id, laps)
+            had_aggregate = db.get(SessionAggregateModel, session_id) is not None
+            aggregate = self._store_session_aggregate(db, session_id, session, samples, laps, pit_events, recommendations)
+            if not had_aggregate:
+                self._add_lifetime_stats(db, aggregate)
+            db.execute(delete(TelemetrySampleModel).where(TelemetrySampleModel.session_id == session_id))
+            db.execute(delete(RecommendationModel).where(RecommendationModel.session_id == session_id))
             db.commit()
             db.refresh(session)
             return self._row_dict(session)
+
+    def _should_save_completed_session(self, laps: list[dict]) -> bool:
+        valid_laps = self._valid_laps(laps)
+        return len(laps) >= MIN_SAVED_SESSION_LAPS and len(valid_laps) >= MIN_SAVED_VALID_LAPS
+
+    def _discard_session(self, db, session_id: str) -> None:
+        db.execute(delete(TelemetrySampleModel).where(TelemetrySampleModel.session_id == session_id))
+        db.execute(delete(RecommendationModel).where(RecommendationModel.session_id == session_id))
+        db.execute(delete(LapSummaryModel).where(LapSummaryModel.session_id == session_id))
+        db.execute(delete(SessionAggregateModel).where(SessionAggregateModel.session_id == session_id))
+        db.execute(delete(SessionModel).where(SessionModel.id == session_id))
+
+    def _store_session_aggregate(
+        self,
+        db,
+        session_id: str,
+        session: SessionModel,
+        samples: list[TelemetrySampleModel],
+        laps: list[dict],
+        pit_events: list[dict],
+        recommendations: list[RecommendationModel],
+    ) -> SessionAggregateModel:
+        latest = samples[-1] if samples else None
+        lap_times = [float(lap["lap_time"]) for lap in self._valid_laps(laps)]
+        distance = self._integrated_distance(samples)
+        fuel_values = [float(lap["fuel_used"]) for lap in laps if lap.get("fuel_used") is not None and float(lap["fuel_used"]) >= 0]
+        speed_values = [sample.speed_kph for sample in samples if sample.speed_kph is not None]
+        duration = None
+        if session.ended_at_game_time is not None and session.started_at_game_time is not None:
+            duration = max(0, session.ended_at_game_time - session.started_at_game_time)
+        elif samples:
+            start = samples[0].game_time
+            end = samples[-1].game_time
+            duration = end - start if start is not None and end is not None and end >= start else None
+        aggregate = db.get(SessionAggregateModel, session_id) or SessionAggregateModel(session_id=session_id)
+        db.add(aggregate)
+        aggregate.completed_at = datetime.utcnow().isoformat()
+        aggregate.duration_seconds = duration
+        aggregate.lap_count = len(laps)
+        aggregate.total_distance_km = distance
+        aggregate.best_lap = min(lap_times) if lap_times else None
+        aggregate.average_lap = sum(lap_times) / len(lap_times) if lap_times else None
+        aggregate.total_fuel_used = sum(fuel_values) if fuel_values else None
+        aggregate.average_tyre_wear = self._average_fields(samples, ["tyre_wear_fl", "tyre_wear_fr", "tyre_wear_rl", "tyre_wear_rr"])
+        aggregate.average_tyre_temp = self._average_fields(samples, ["tyre_temp_fl", "tyre_temp_fr", "tyre_temp_rl", "tyre_temp_rr"])
+        aggregate.average_tyre_pressure = self._average_fields(samples, ["tyre_pressure_fl", "tyre_pressure_fr", "tyre_pressure_rl", "tyre_pressure_rr"])
+        aggregate.average_brake_temp = self._average_fields(samples, ["brake_temp_fl", "brake_temp_fr", "brake_temp_rl", "brake_temp_rr"])
+        aggregate.top_speed = max(speed_values) if speed_values else None
+        aggregate.latest_lap_number = latest.lap_number if latest else None
+        aggregate.sample_count = len(samples)
+        aggregate.latest_sample_json = self._rows_json(self._row_dict(latest)) if latest else None
+        aggregate.laps_json = self._rows_json(laps)
+        aggregate.pit_events_json = self._rows_json(pit_events)
+        aggregate.recommendations_json = self._rows_json([self._row_dict(row) for row in recommendations])
+        return aggregate
+
+    def _add_lifetime_stats(self, db, aggregate: SessionAggregateModel) -> None:
+        stats = db.get(UserLifetimeStatsModel, 1) or UserLifetimeStatsModel(id=1)
+        db.add(stats)
+        stats.total_distance_km = (stats.total_distance_km or 0) + (aggregate.total_distance_km or 0)
+        stats.total_laps = (stats.total_laps or 0) + (aggregate.lap_count or 0)
+        stats.total_driving_time = (stats.total_driving_time or 0) + (aggregate.duration_seconds or 0)
+        stats.total_sessions = (stats.total_sessions or 0) + 1
+        stats.updated_at = datetime.utcnow().isoformat()
 
     def _store_lap_summaries(self, db, session_id: str, laps: list[dict]) -> None:
         existing = {
@@ -331,6 +472,8 @@ class Repository:
                     "tyre_wear_start": wear_start,
                     "tyre_wear_end": wear_end,
                     "tyre_wear_delta": wear_end - wear_start if wear_start is not None and wear_end is not None else None,
+                    "position": last.position,
+                    "class_position": last.class_position,
                     "top_speed": max(speed_values) if speed_values else None,
                     "max_rpm": max(rpm_values) if rpm_values else None,
                     "sample_count": len(rows),
@@ -419,8 +562,8 @@ class Repository:
         average_wear = self._average_wear(latest)
         valid = self._valid_laps(laps)
         deltas = [
-            abs(float(lap["tyre_wear_delta"])) for lap in valid
-            if lap.get("tyre_wear_delta") is not None and abs(float(lap["tyre_wear_delta"])) > 0
+            float(lap["tyre_wear_delta"]) for lap in valid
+            if lap.get("tyre_wear_delta") is not None and 0 < float(lap["tyre_wear_delta"]) < 0.2
         ]
         wear_rate = sum(deltas[-5:]) / len(deltas[-5:]) if deltas else None
         remaining = (assumptions.max_tyre_wear - average_wear) / wear_rate if average_wear is not None and wear_rate else None
@@ -453,6 +596,7 @@ class Repository:
         )
         player = PlayerState(
             vehicle_name=session.vehicle_name if session else None,
+            vehicle_model=session.vehicle_model if session else None,
             vehicle_class=session.vehicle_class if session else None,
             position=sample.position,
             class_position=sample.class_position,
@@ -509,6 +653,7 @@ class Repository:
             vehicle_id=0,
             driver_name="Player",
             vehicle_name=session.vehicle_name if session else None,
+            vehicle_model=session.vehicle_model if session else None,
             vehicle_class=session.vehicle_class if session else None,
             position=sample.position,
             class_position=sample.class_position,
@@ -538,6 +683,7 @@ class Repository:
         latest = self._latest_sample(session_id)
         with SessionLocal() as db:
             session = db.get(SessionModel, session_id)
+            aggregate = db.get(SessionAggregateModel, session_id)
         if latest is None:
             return {"session": review["session"], "telemetry": None, "strategy": StrategyState(assumptions=assumptions), "recommendation": RecommendationPayload(current=StrategyRecommendation()), "review": review}
         snapshot = self._snapshot_from_sample(session, latest)
@@ -555,6 +701,9 @@ class Repository:
     def review(self, session_id: str, sample_limit: int = 5000) -> dict:
         with SessionLocal() as db:
             session = db.get(SessionModel, session_id)
+            if not session or not session.is_saved:
+                return {"session": None, "telemetry_samples": [], "recommendations": [], "laps": [], "pit_events": [], "summary": None}
+            aggregate = db.get(SessionAggregateModel, session_id)
             latest_sample_id = db.scalar(
                 select(func.max(TelemetrySampleModel.id)).where(TelemetrySampleModel.session_id == session_id)
             )
@@ -569,6 +718,17 @@ class Repository:
                 select(TelemetrySampleModel).where(TelemetrySampleModel.session_id == session_id).order_by(TelemetrySampleModel.id.asc())
             ).all()
             recs = db.scalars(select(RecommendationModel).where(RecommendationModel.session_id == session_id).order_by(RecommendationModel.id.asc()).limit(100)).all()
+            if not all_samples and aggregate:
+                result = {
+                    "session": self._row_dict(session),
+                    "telemetry_samples": [],
+                    "recommendations": self._json_rows(aggregate.recommendations_json),
+                    "laps": self._json_rows(aggregate.laps_json),
+                    "pit_events": self._json_rows(aggregate.pit_events_json),
+                    "summary": self._row_dict(aggregate),
+                }
+                self._review_cache = {cache_key: result}
+                return result
 
             if sample_limit <= 0:
                 samples = []
@@ -584,6 +744,21 @@ class Repository:
                 "recommendations": [self._row_dict(r) for r in recs],
                 "laps": laps,
                 "pit_events": self._build_pit_events(all_samples),
+                "summary": self._row_dict(aggregate) if aggregate else None,
             }
             self._review_cache = {cache_key: result}
             return result
+
+    def remove_session(self, session_id: str) -> dict | None:
+        with SessionLocal() as db:
+            session = db.get(SessionModel, session_id)
+            if not session:
+                return None
+            session.is_saved = False
+            session.removed_at = datetime.utcnow().isoformat()
+            db.execute(delete(TelemetrySampleModel).where(TelemetrySampleModel.session_id == session_id))
+            db.execute(delete(RecommendationModel).where(RecommendationModel.session_id == session_id))
+            self._review_cache = {}
+            db.commit()
+            db.refresh(session)
+            return self._row_dict(session)

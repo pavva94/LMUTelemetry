@@ -16,6 +16,7 @@ class SessionModel(Base):
     track_layout: Mapped[Optional[str]] = mapped_column(String)
     session_type: Mapped[Optional[str]] = mapped_column(String)
     vehicle_name: Mapped[Optional[str]] = mapped_column(String)
+    vehicle_model: Mapped[Optional[str]] = mapped_column(String)
     vehicle_class: Mapped[Optional[str]] = mapped_column(String)
     started_at_game_time: Mapped[Optional[float]] = mapped_column(Float)
     ended_at_game_time: Mapped[Optional[float]] = mapped_column(Float)
@@ -23,6 +24,41 @@ class SessionModel(Base):
     final_class_position: Mapped[Optional[int]] = mapped_column(Integer)
     classified_status: Mapped[Optional[str]] = mapped_column(String)
     total_cars: Mapped[Optional[int]] = mapped_column(Integer)
+    is_saved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    removed_at: Mapped[Optional[str]] = mapped_column(String)
+
+
+class SessionAggregateModel(Base):
+    __tablename__ = "session_aggregates"
+    session_id: Mapped[str] = mapped_column(String, primary_key=True)
+    completed_at: Mapped[str] = mapped_column(String, nullable=False)
+    duration_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    lap_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_distance_km: Mapped[Optional[float]] = mapped_column(Float)
+    best_lap: Mapped[Optional[float]] = mapped_column(Float)
+    average_lap: Mapped[Optional[float]] = mapped_column(Float)
+    total_fuel_used: Mapped[Optional[float]] = mapped_column(Float)
+    average_tyre_wear: Mapped[Optional[float]] = mapped_column(Float)
+    average_tyre_temp: Mapped[Optional[float]] = mapped_column(Float)
+    average_tyre_pressure: Mapped[Optional[float]] = mapped_column(Float)
+    average_brake_temp: Mapped[Optional[float]] = mapped_column(Float)
+    top_speed: Mapped[Optional[float]] = mapped_column(Float)
+    latest_lap_number: Mapped[Optional[int]] = mapped_column(Integer)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    latest_sample_json: Mapped[Optional[str]] = mapped_column(Text)
+    laps_json: Mapped[Optional[str]] = mapped_column(Text)
+    pit_events_json: Mapped[Optional[str]] = mapped_column(Text)
+    recommendations_json: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class UserLifetimeStatsModel(Base):
+    __tablename__ = "user_lifetime_stats"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    total_distance_km: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    total_laps: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_driving_time: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    total_sessions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[Optional[str]] = mapped_column(String)
 
 
 class TelemetrySampleModel(Base):

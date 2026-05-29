@@ -35,7 +35,7 @@ export default function App() {
   return (
     <Layout page={page} setPage={setPage} connected={telemetryConnected || strategyConnected}>
       <ErrorBoundary key={page}>
-        {page === "live" && <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} />}
+        {page === "live" && <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} competitors={currentCompetitors} />}
         {page === "motec" && <MotecWorkspace />}
         {page === "profile" && <UserProfile />}
         {page === "race-info" && <RaceInfo telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}

@@ -25,6 +25,7 @@ button, input, select { font: inherit; }
 .topbar { min-height: 64px; display: flex; align-items: center; justify-content: space-between; padding: 12px 22px; border-bottom: 1px solid #222a32; background: #10151a; }
 .topbar > div { display: grid; gap: 3px; }
 .topbar-mode { color: #8b98a5; font-size: 12px; font-weight: 700; text-transform: uppercase; }
+.topbar-description { display: block; max-width: 980px; color: #aeb8c2; font-size: 13px; line-height: 1.35; }
 .page { padding: 18px 22px 28px; }
 .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 14px; }
 .card { background: #141a20; border: 1px solid #27313a; border-radius: 8px; padding: 14px; min-width: 0; }
@@ -75,6 +76,30 @@ select { width: 100%; border: 1px solid #33414d; background: #0f1419; color: #ff
 .empty-state strong { color: #d9e3ea; }
 .error-box { white-space: pre-wrap; overflow-wrap: anywhere; background: #0f1419; border: 1px solid #461b1b; color: #ffaaa5; border-radius: 6px; padding: 12px; }
 .driving-display { display: grid; gap: 10px; }
+.compact-driving .metric { margin: 4px 0; }
+.compact-driving .speed-gear > div { min-height: 82px; }
+.compact-driving .speed-gear span { font-size: clamp(32px, 5vw, 52px); }
+.compact-panel { padding: 12px; }
+.compact-panel .metric { margin: 5px 0; }
+.compact-panel .value { font-size: 16px; }
+.compact-panel .header-grid { gap: 7px; }
+.compact-corners { gap: 6px; }
+.compact-corners .corner-cell { padding: 7px; font-size: 11px; }
+.section-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.section-toolbar .section-title { margin-bottom: 0; }
+.class-filter { min-width: 170px; max-width: 220px; }
+.class-filter span { color: #84909b; font-size: 12px; }
+.live-opponents table { font-size: 14px; }
+.live-opponents th, .live-opponents td { padding: 8px 9px; }
+.live-opponents tr.pace-gained td { background: rgba(18, 58, 44, .72); color: #d8ffe9; }
+.live-opponents tr.pace-lost-3 td { background: rgba(68, 49, 18, .78); color: #ffe8b3; }
+.live-opponents tr.pace-out td { background: rgba(70, 27, 27, .78); color: #ffd8d5; }
+.live-opponents tr.pace-player td { background: rgba(21, 45, 69, .82); color: #e5f3ff; font-weight: 800; }
+.live-opponents td.best-lap-cell { background: #e6b450 !important; color: #16120b !important; font-weight: 900; }
+.recommendation-callout { border-color: #3a5367; background: #111b23; }
+.recommendation-main { display: grid; grid-template-columns: auto minmax(170px, .7fr) 1fr; gap: 12px; align-items: center; }
+.recommendation-main strong { font-size: 24px; line-height: 1.1; color: #fff; overflow-wrap: anywhere; }
+.recommendation-main span:last-child { color: #d9e3ea; font-size: 15px; line-height: 1.35; }
 .speed-gear { display: grid; grid-template-columns: 1.4fr .8fr; gap: 12px; }
 .speed-gear > div { background: #0f1419; border: 1px solid #27313a; border-radius: 8px; min-height: 118px; display: grid; place-items: center; align-content: center; }
 .speed-gear span { font-size: clamp(42px, 8vw, 76px); font-weight: 900; line-height: .9; }
@@ -103,6 +128,21 @@ select { width: 100%; border: 1px solid #33414d; background: #0f1419; color: #ff
 .motec-warning { background: #443112; border: 1px solid #6b4a14; color: #ffd37a; border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
 .motec-value-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .motec-value-grid > div { display: grid; gap: 3px; background: #0f1419; border: 1px solid #27313a; border-radius: 6px; padding: 10px; }
+.strategy-input-grid label { align-content: start; }
+.strategy-card { display: grid; gap: 11px; }
+.strategy-card h2 { font-size: 16px; margin-bottom: 0; }
+.strategy-card-main { display: grid; gap: 3px; padding: 12px; border: 1px solid #27313a; border-radius: 6px; background: #0f1419; }
+.strategy-card-main strong { font-size: 26px; line-height: 1; }
+.strategy-timeline { display: grid; gap: 14px; padding: 8px 0 4px; }
+.strategy-track { position: relative; display: flex; min-height: 132px; padding: 34px 0 44px; border-bottom: 2px solid #33414d; }
+.strategy-stint { display: grid; place-items: center; min-width: 70px; border-right: 1px solid #33414d; background: linear-gradient(180deg, rgba(109,214,255,.12), rgba(230,180,80,.08)); color: #d9e3ea; font-size: 12px; font-weight: 800; }
+.strategy-stint:first-child { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+.strategy-stint:last-of-type { border-right: 0; border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+.strategy-marker { position: absolute; bottom: 4px; transform: translateX(-50%); min-width: 128px; display: grid; gap: 2px; padding: 7px 8px; border: 1px solid #e6b450; border-radius: 6px; background: #16120b; color: #fff1c7; text-align: center; box-shadow: 0 8px 22px rgba(0,0,0,.25); }
+.strategy-marker::before { content: ""; position: absolute; left: 50%; bottom: 100%; width: 2px; height: 64px; background: #e6b450; }
+.strategy-marker small { color: #f2d28a; font-size: 11px; }
+.strategy-summary-line { display: flex; flex-wrap: wrap; gap: 8px; }
+.strategy-summary-line span { padding: 7px 9px; border: 1px solid #27313a; border-radius: 6px; background: #0f1419; color: #aeb8c2; font-size: 12px; font-weight: 700; }
 .motec-map { width: 100%; min-height: 420px; display: block; background: #0f1419; border-radius: 8px; }
 .circle-map { position: relative; min-height: 430px; aspect-ratio: 1 / 1; max-width: 520px; margin: 0 auto; border: 2px solid #33414d; border-radius: 50%; background: radial-gradient(circle, #141a20 0 40%, transparent 41%); }
 .car-dot { position: absolute; width: 28px; height: 28px; transform: translate(-50%, -50%); border-radius: 50%; color: #0c0f12; font-size: 11px; font-weight: 900; display: grid; place-items: center; border: 2px solid #0c0f12; }

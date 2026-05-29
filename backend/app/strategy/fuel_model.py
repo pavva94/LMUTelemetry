@@ -19,6 +19,20 @@ class FuelModel:
         self._valid_usage: list[float] = []
         self._last_lap_usage: float | None = None
         self._was_in_pits = False
+        self._inferred_capacity_liters: float | None = None
+
+    def _update_capacity(self, fuel_liters: float, api_capacity: float | None) -> float | None:
+        if fuel_liters > 0:
+            self._inferred_capacity_liters = max(self._inferred_capacity_liters or 0, fuel_liters)
+        inferred = self._inferred_capacity_liters
+        api_valid = api_capacity if api_capacity is not None and api_capacity >= fuel_liters and api_capacity > 0 else None
+        if inferred is None:
+            return api_valid
+        if api_valid is None:
+            return inferred
+        if api_valid > inferred * 1.25 and inferred > 0:
+            return inferred
+        return max(api_valid, inferred)
 
     def _reset_stint(self, lap: int, fuel_liters: float) -> None:
         self._last_lap = lap
@@ -28,7 +42,9 @@ class FuelModel:
         player = snapshot.player
         if not player or player.fuel_liters is None:
             return FuelState(valid_laps_required=self.VALID_LAPS_REQUIRED, confidence="low")
-        fuel_capacity = player.fuel_capacity_liters if player.fuel_capacity_liters and player.fuel_capacity_liters > 0 else None
+        api_capacity = player.fuel_capacity_liters if player.fuel_capacity_liters and player.fuel_capacity_liters > 0 else None
+        fuel_capacity = self._update_capacity(player.fuel_liters, api_capacity)
+        player.fuel_capacity_liters = fuel_capacity
         lap = player.lap_number or 0
         in_pits = _player_in_pits(snapshot)
         if self._was_in_pits and not in_pits:

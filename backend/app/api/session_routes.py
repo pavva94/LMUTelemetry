@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
+from fastapi import HTTPException
 
 router = APIRouter(prefix="/api", tags=["session"])
 
@@ -45,3 +46,12 @@ def sessions(request: Request):
 def finalize_current_session(request: Request):
     service = request.app.state.telemetry_service
     return service.repository.finalize_session(service.session_id, service.latest_snapshot)
+
+
+@router.delete("/sessions/{session_id}")
+def remove_session(session_id: str, request: Request):
+    service = request.app.state.telemetry_service
+    removed = service.repository.remove_session(session_id)
+    if removed is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return removed

@@ -115,7 +115,7 @@ export function RacePrepReport({ strategy }: Props) {
             <option value="current">Current live session</option>
             {sessions.map((session) => (
               <option key={session.id} value={session.id}>
-                {session.session_type || "Session"} - {session.track_name || "Unknown track"} - {session.vehicle_name || "Unknown car"} - {session.created_at || session.id}
+                {session.session_type || "Session"} - {session.track_name || "Unknown track"} - {session.vehicle_model || session.vehicle_name || "Unknown car"} - {session.created_at || session.id}
               </option>
             ))}
           </select>

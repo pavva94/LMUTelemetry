@@ -29,6 +29,11 @@ export const api = {
     if (!response.ok) throw new Error("session finalize failed");
     return response.json() as Promise<SavedSession>;
   },
+  removeSession: async (id: string) => {
+    const response = await fetch(`${API_BASE}/api/sessions/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (!response.ok) throw new Error("session remove failed");
+    return response.json() as Promise<SavedSession>;
+  },
   updateAssumptions: async (body: Record<string, number>) => {
     const response = await fetch(`${API_BASE}/api/strategy/assumptions`, {
       method: "POST",
