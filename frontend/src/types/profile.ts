@@ -67,3 +67,8 @@ export type ProfileLapResponse = {
   laps: ProfileLap[];
   filter_options?: ProfileFilterOptions;
 };
+
+export type ProfileOverview = {
+  summary: ProfileSummary;
+  best_laps: ProfileLap[];
+};

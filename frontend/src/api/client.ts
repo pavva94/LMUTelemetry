@@ -2,7 +2,7 @@ import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { SavedSession, SessionDashboard, SessionReview } from "../types/session";
 import type { MotecSession, MotecSample } from "../types/motec";
-import type { ProfileLap, ProfileLapResponse, ProfileSummary } from "../types/profile";
+import type { ProfileLap, ProfileLapResponse, ProfileOverview, ProfileSummary } from "../types/profile";
 
 export const API_BASE = "";
 export const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
@@ -34,7 +34,7 @@ export const api = {
     if (!response.ok) throw new Error("session remove failed");
     return response.json() as Promise<SavedSession>;
   },
-  updateAssumptions: async (body: Record<string, number>) => {
+  updateAssumptions: async (body: Record<string, number | boolean>) => {
     const response = await fetch(`${API_BASE}/api/strategy/assumptions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -45,6 +45,7 @@ export const api = {
   },
   motecSessions: () => getJson<MotecSession[]>("/api/motec/sessions"),
   motecSession: (id: string) => getJson<MotecSession>(`/api/motec/sessions/${id}`),
+  profileOverview: () => getJson<ProfileOverview>("/api/profile/overview"),
   profileSummary: () => getJson<ProfileSummary>("/api/profile/summary"),
   profileBestLaps: () => getJson<ProfileLap[]>("/api/profile/best-laps"),
   profileLaps: (params: Record<string, string | number | boolean | null | undefined>) => {

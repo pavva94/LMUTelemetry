@@ -14,6 +14,7 @@ type FormState = {
   race_duration_minutes: number;
   normal_lap_time: number;
   race_start_fuel_liters: number;
+  race_start_new_tyres: boolean;
   tank_capacity_liters: number;
   fuel_safety_margin_liters: number;
   pit_loss_seconds: number;
@@ -25,6 +26,7 @@ type FormState = {
   fuel_safety_margin_laps: number;
 };
 
+type NumericFormKey = Exclude<keyof FormState, "race_start_new_tyres">;
 type ModelSource = "live" | "session";
 
 type PlannerModel = {
@@ -77,6 +79,13 @@ function numberFrom(value: unknown, fallback: number) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
+function booleanFrom(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") return value.toLowerCase() === "true" || value === "1";
+  return fallback;
+}
+
 function parseRaceTimeInput(value: string): number | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
@@ -122,6 +131,7 @@ function seededForm(strategy: StrategyState | null, telemetry?: TelemetrySnapsho
     race_duration_minutes: liveRaceDurationMinutes(telemetry) ?? numberFrom(assumptions.race_duration_minutes, current?.race_duration_minutes ?? 120),
     normal_lap_time: numberFrom(assumptions.normal_lap_time, current?.normal_lap_time ?? 214),
     race_start_fuel_liters: numberFrom(assumptions.race_start_fuel_liters, tank),
+    race_start_new_tyres: booleanFrom(assumptions.race_start_new_tyres, current?.race_start_new_tyres ?? true),
     tank_capacity_liters: tank,
     fuel_safety_margin_liters: numberFrom(assumptions.fuel_safety_margin_liters, current?.fuel_safety_margin_liters ?? 2),
     pit_loss_seconds: numberFrom(assumptions.pit_loss_seconds, current?.pit_loss_seconds ?? 28),
@@ -208,6 +218,7 @@ function PlanCard({ plan, index, selected, onSelect }: { plan: StrategyCandidate
         <div><span className="label">Stint</span><strong>{fmt(plan.stintLaps, 1, " laps")}</strong></div>
         <div><span className="label">Fuel margin</span><strong>{fmt(plan.fuelMarginLiters, 1, " L")}</strong></div>
         <div><span className="label">Finish fuel</span><strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")}</strong></div>
+        <div><span className="label">Start fuel needed</span><strong>{fmt(plan.recommendedStartFuelLiters, 1, " L")}</strong><span className="subvalue">{plan.startFuelIsFullTank ? "full tank" : `${fmt(plan.firstStintFuelNeedLiters, 1, " L")} stint + margin`}</span></div>
         <div><span className="label">Lift/coast</span><strong>{fmt(plan.liftCoastSavePercent, 1, "%")}</strong></div>
         <div><span className="label">Max tyre wear</span><strong>{pct(plan.projectedTyreWear)}</strong></div>
         <div><span className="label">Lowest remaining</span><strong>{fmt(plan.lowestRemainingTyreWear == null ? null : plan.lowestRemainingTyreWear * 100, 0, "%")}</strong></div>
@@ -261,6 +272,7 @@ function StrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
       </div>
       <div className="strategy-summary-line">
         <span>Race {fmt(plan.raceLaps, 1, " laps")}</span>
+        <span>Start fuel {fmt(plan.recommendedStartFuelLiters, 1, " L")} {plan.startFuelIsFullTank ? "(full tank)" : "(less than full)"}</span>
         <span>Finish fuel {fmt(plan.finishFuelRemainingLiters, 1, " L")}</span>
         <span>{plan.liftCoastSavePercent > 0 ? `Lift/coast ${fmt(plan.liftCoastSaveLitersPerLap, 3, " L/lap")}` : "No fuel save required"}</span>
         <span>Final wear {tyreWearText(plan.projectedTyreWearByWheel)}</span>
@@ -333,10 +345,14 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     };
   }, [selectedSessionId]);
 
-  const update = (key: keyof FormState, value: string) => {
+  const update = (key: NumericFormKey, value: string) => {
     const numeric = Number(value);
     setDirtyFields((current) => new Set(current).add(key));
     setForm((current) => ({ ...current, [key]: Number.isFinite(numeric) ? numeric : current[key] }));
+  };
+  const updateBoolean = (key: keyof FormState, value: boolean) => {
+    setDirtyFields((current) => new Set(current).add(key));
+    setForm((current) => ({ ...current, [key]: value }));
   };
   const updateLapTime = (value: string) => {
     setManualLapText(value);
@@ -383,6 +399,9 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const currentWear = activeModel.currentTyreWear;
   const wearRate = activeModel.tyreWearRatePerLap;
   const tyreWearByWheel = activeModel.currentTyreWearByWheel;
+  const raceStartWear = form.race_start_new_tyres
+    ? { fl: 0, fr: 0, rl: 0, rr: 0 }
+    : { fl: tyreWearByWheel.fl, fr: tyreWearByWheel.fr, rl: tyreWearByWheel.rl, rr: tyreWearByWheel.rr };
   const plans = useMemo(() => simulateStrategies({
     raceDurationMinutes: form.race_duration_minutes,
     normalLapTime: form.normal_lap_time,
@@ -391,24 +410,20 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     fuelRequiredLaps: activeModel.fuelRequiredLaps,
     tankCapacityLiters: form.tank_capacity_liters > 0 ? form.tank_capacity_liters : null,
     raceStartFuelLiters: form.race_start_fuel_liters > 0 ? Math.min(form.race_start_fuel_liters, form.tank_capacity_liters) : null,
+    raceStartNewTyres: form.race_start_new_tyres,
     fuelSafetyMarginLiters: form.fuel_safety_margin_liters,
     pitLaneLossSeconds: form.pit_loss_seconds,
     tyreChangeSecondsPerTyre: form.tyre_change_seconds_per_tyre,
     refuelSecondsPer5Liters: form.refuel_seconds_per_5_liters,
-    currentTyreWear: Number.isFinite(currentWear) ? currentWear : null,
-    currentTyreWearByWheel: {
-      fl: tyreWearByWheel.fl,
-      fr: tyreWearByWheel.fr,
-      rl: tyreWearByWheel.rl,
-      rr: tyreWearByWheel.rr,
-    },
+    currentTyreWear: form.race_start_new_tyres ? 0 : Number.isFinite(currentWear) ? currentWear : null,
+    currentTyreWearByWheel: raceStartWear,
     tyreWearRatePerLap: wearRate != null && Number.isFinite(wearRate) && wearRate > 0 ? wearRate : null,
     maxTyreWear: form.max_tyre_wear,
-  }), [activeModel.fuelObservedLaps, activeModel.fuelRequiredLaps, currentWear, form, fuelPerLap, tyreWearByWheel.fl, tyreWearByWheel.fr, tyreWearByWheel.rl, tyreWearByWheel.rr, wearRate]);
+  }), [activeModel.fuelObservedLaps, activeModel.fuelRequiredLaps, currentWear, form, fuelPerLap, raceStartWear.fl, raceStartWear.fr, raceStartWear.rl, raceStartWear.rr, wearRate]);
   const bestPlan = plans[0];
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? bestPlan;
   const activePlanId = selectedPlan?.id ?? null;
-  const inputFields: Array<[keyof FormState, string, string, number]> = [
+  const inputFields: Array<[NumericFormKey, string, string, number]> = [
     ["race_duration_minutes", "Race duration", "min", 1],
     ["race_start_fuel_liters", "Race start fuel", "L", 0.1],
     ["tank_capacity_liters", "Tank capacity", "L", 0.1],
@@ -449,6 +464,14 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
             </label>
           ))}
           <label>
+            <span className="label">Start tyre set</span>
+            <span className="toggle-line">
+              <input type="checkbox" checked={form.race_start_new_tyres} onChange={(event) => updateBoolean("race_start_new_tyres", event.target.checked)} />
+              <span>New tyres</span>
+            </span>
+            <span className="subvalue">race start assumption</span>
+          </label>
+          <label>
             <span className="label">Active normal lap</span>
             <input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? "saved session/manual" : activeModel.label})`} readOnly />
             <span className="subvalue">used by strategy model</span>
@@ -461,6 +484,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           race_duration_minutes: form.race_duration_minutes,
           normal_lap_time: form.normal_lap_time,
           race_start_fuel_liters: form.race_start_fuel_liters,
+          race_start_new_tyres: form.race_start_new_tyres,
           pit_loss_seconds: form.pit_loss_seconds,
           pit_stationary_seconds: form.pit_stationary_seconds,
           tyre_change_seconds_per_tyre: form.tyre_change_seconds_per_tyre,
@@ -480,6 +504,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           <div><span className="label">Fuel use</span><strong>{fmt(Number.isFinite(fuelPerLap ?? NaN) ? fuelPerLap : null, 3, " L/lap")}</strong><span className="subvalue">{activeModel.fuelObservedLaps}/{activeModel.fuelRequiredLaps} valid laps</span></div>
           <div><span className="label">Tyre wear</span><strong>{pct(Number.isFinite(currentWear) ? currentWear : null)}</strong><span className="subvalue">{fmt(wearRate != null && Number.isFinite(wearRate) ? wearRate * 100 : null, 2, "% / lap")}</span></div>
           <div><span className="label">Race start fuel</span><strong>{fmt(Math.min(form.race_start_fuel_liters, form.tank_capacity_liters), 1, " L")}</strong><span className="subvalue">editable, capped by tank</span></div>
+          <div><span className="label">Race start tyres</span><strong>{form.race_start_new_tyres ? "New set" : "Observed wear"}</strong><span className="subvalue">{form.race_start_new_tyres ? "starts projection at 0%" : "uses model wear"}</span></div>
           <div><span className="label">Service model</span><strong>{fmt(form.pit_loss_seconds, 1, " s")}</strong><span className="subvalue">+ tyres + fuel</span></div>
         </div>
       </section>

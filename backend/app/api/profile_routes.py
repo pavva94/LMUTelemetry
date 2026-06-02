@@ -12,6 +12,11 @@ def profile_summary():
     return ProfileRepository().summary()
 
 
+@router.get("/overview")
+def profile_overview():
+    return ProfileRepository().overview()
+
+
 @router.get("/best-laps")
 def profile_best_laps():
     return ProfileRepository().best_laps()

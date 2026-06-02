@@ -133,76 +133,110 @@ class ProfileRepository:
         motec_mtime = MOTEC_DB_PATH.stat().st_mtime if MOTEC_DB_PATH.exists() else None
         return latest_live_sample_id, int(live_session_count), latest_session_created, latest_session_end, int(latest_aggregate_count), latest_removed, motec_mtime
 
+    def _live_lap_base(self, session: SessionModel, repository: Repository, lap_number: Any) -> dict:
+        return {
+            "id": f"live:{session.id}:{lap_number}",
+            "source": "live",
+            "session_id": session.id,
+            "session_name": session.session_type or "Live session",
+            "source_file": None,
+            "date": session.created_at,
+            "track": session.track_name or "Unknown track",
+            "layout": session.track_layout or "",
+            "car": session.vehicle_model or session.vehicle_name or "Unknown car",
+            "car_class": session.vehicle_class or "Unknown class",
+            "session_type": repository._session_type_name(session.session_type),
+            "lap_number": lap_number,
+            "finish_position": session.final_position,
+            "finish_status": session.classified_status,
+        }
+
+    def _aggregate_lap_row(self, session: SessionModel, aggregate: SessionAggregateModel, lap: dict, repository: Repository) -> dict:
+        lap_distance = aggregate.total_distance_km / aggregate.lap_count if aggregate.total_distance_km is not None and aggregate.lap_count else None
+        row = self._live_lap_base(session, repository, lap.get("lap_number"))
+        row.update(
+            {
+                "session_name": session.session_type or "Saved session",
+                "lap_time": lap.get("lap_time"),
+                "valid_lap": lap.get("valid_lap"),
+                "in_pit": lap.get("in_pit"),
+                "distance_km": lap_distance,
+                "fuel_start": lap.get("fuel_start"),
+                "fuel_end": lap.get("fuel_end"),
+                "fuel_used": lap.get("fuel_used"),
+                "fuel_added": lap.get("fuel_added"),
+                "tyre_compound": None,
+                "tyre_wear_fl": lap.get("tyre_wear_end_fl") or lap.get("tyre_wear_end"),
+                "tyre_wear_fr": lap.get("tyre_wear_end_fr") or lap.get("tyre_wear_end"),
+                "tyre_wear_rl": lap.get("tyre_wear_end_rl") or lap.get("tyre_wear_end"),
+                "tyre_wear_rr": lap.get("tyre_wear_end_rr") or lap.get("tyre_wear_end"),
+                "tyre_pressure_fl": lap.get("tyre_pressure_fl") or aggregate.average_tyre_pressure,
+                "tyre_pressure_fr": lap.get("tyre_pressure_fr") or aggregate.average_tyre_pressure,
+                "tyre_pressure_rl": lap.get("tyre_pressure_rl") or aggregate.average_tyre_pressure,
+                "tyre_pressure_rr": lap.get("tyre_pressure_rr") or aggregate.average_tyre_pressure,
+                "brake_temp_fl": lap.get("brake_temp_fl") or aggregate.average_brake_temp,
+                "brake_temp_fr": lap.get("brake_temp_fr") or aggregate.average_brake_temp,
+                "brake_temp_rl": lap.get("brake_temp_rl") or aggregate.average_brake_temp,
+                "brake_temp_rr": lap.get("brake_temp_rr") or aggregate.average_brake_temp,
+                "track_temp": lap.get("track_temp"),
+                "ambient_temp": lap.get("ambient_temp"),
+                "engine_oil_temp": lap.get("engine_oil_temp"),
+                "engine_water_temp": lap.get("engine_water_temp"),
+                "max_speed": lap.get("top_speed") or aggregate.top_speed,
+                "average_speed": lap.get("speed_kph"),
+            }
+        )
+        return row
+
     def _live_laps(self) -> list[dict]:
         repository = Repository()
         with SessionLocal() as db:
             sessions = db.scalars(select(SessionModel).where(SessionModel.is_saved.is_(True)).order_by(SessionModel.created_at.asc())).all()
-            rows: list[dict] = []
-            for session in sessions:
-                aggregate = db.get(SessionAggregateModel, session.id)
-                if aggregate and not db.scalar(select(func.count(TelemetrySampleModel.id)).where(TelemetrySampleModel.session_id == session.id)):
-                    lap_distance = aggregate.total_distance_km / aggregate.lap_count if aggregate.total_distance_km is not None and aggregate.lap_count else None
-                    for lap in Repository()._json_rows(aggregate.laps_json):
-                        rows.append(
-                            {
-                                "id": f"live:{session.id}:{lap.get('lap_number')}",
-                                "source": "live",
-                                "session_id": session.id,
-                                "session_name": session.session_type or "Saved session",
-                                "source_file": None,
-                                "date": session.created_at,
-                                "track": session.track_name or "Unknown track",
-                                "layout": session.track_layout or "",
-                                "car": session.vehicle_model or session.vehicle_name or "Unknown car",
-                                "car_class": session.vehicle_class or "Unknown class",
-                                "session_type": Repository()._session_type_name(session.session_type),
-                                "lap_number": lap.get("lap_number"),
-                                "lap_time": lap.get("lap_time"),
-                                "valid_lap": lap.get("valid_lap"),
-                                "in_pit": lap.get("in_pit"),
-                                "distance_km": lap_distance,
-                                "fuel_start": lap.get("fuel_start"),
-                                "fuel_end": lap.get("fuel_end"),
-                                "fuel_used": lap.get("fuel_used"),
-                                "fuel_added": lap.get("fuel_added"),
-                                "tyre_compound": None,
-                                "tyre_wear_fl": lap.get("tyre_wear_end"),
-                                "tyre_wear_fr": lap.get("tyre_wear_end"),
-                                "tyre_wear_rl": lap.get("tyre_wear_end"),
-                                "tyre_wear_rr": lap.get("tyre_wear_end"),
-                                "tyre_pressure_fl": aggregate.average_tyre_pressure,
-                                "tyre_pressure_fr": aggregate.average_tyre_pressure,
-                                "tyre_pressure_rl": aggregate.average_tyre_pressure,
-                                "tyre_pressure_rr": aggregate.average_tyre_pressure,
-                                "brake_temp_fl": aggregate.average_brake_temp,
-                                "brake_temp_fr": aggregate.average_brake_temp,
-                                "brake_temp_rl": aggregate.average_brake_temp,
-                                "brake_temp_rr": aggregate.average_brake_temp,
-                                "track_temp": None,
-                                "ambient_temp": None,
-                                "engine_oil_temp": None,
-                                "engine_water_temp": None,
-                                "max_speed": lap.get("top_speed") or aggregate.top_speed,
-                                "average_speed": None,
-                                "finish_position": session.final_position,
-                                "finish_status": session.classified_status,
-                            }
-                        )
-                    continue
+            session_ids = [session.id for session in sessions]
+            if not session_ids:
+                return []
+            aggregates = {
+                aggregate.session_id: aggregate
+                for aggregate in db.scalars(select(SessionAggregateModel).where(SessionAggregateModel.session_id.in_(session_ids))).all()
+            }
+            sample_counts = {
+                session_id: int(count or 0)
+                for session_id, count in db.execute(
+                    select(TelemetrySampleModel.session_id, func.count(TelemetrySampleModel.id))
+                    .where(TelemetrySampleModel.session_id.in_(session_ids))
+                    .group_by(TelemetrySampleModel.session_id)
+                ).all()
+            }
+            raw_session_ids = [session.id for session in sessions if not (aggregates.get(session.id) and sample_counts.get(session.id, 0) == 0)]
+            samples_by_session: dict[str, list[TelemetrySampleModel]] = defaultdict(list)
+            laps_by_session: dict[str, list[LapSummaryModel]] = defaultdict(list)
+            if raw_session_ids:
                 samples = db.scalars(
                     select(TelemetrySampleModel)
-                    .where(TelemetrySampleModel.session_id == session.id)
-                    .order_by(TelemetrySampleModel.id.asc())
+                    .where(TelemetrySampleModel.session_id.in_(raw_session_ids))
+                    .order_by(TelemetrySampleModel.session_id.asc(), TelemetrySampleModel.id.asc())
                 ).all()
+                for sample in samples:
+                    samples_by_session[sample.session_id].append(sample)
+                stored_laps = db.scalars(
+                    select(LapSummaryModel)
+                    .where(LapSummaryModel.session_id.in_(raw_session_ids))
+                    .order_by(LapSummaryModel.session_id.asc(), LapSummaryModel.lap_number.asc())
+                ).all()
+                for lap in stored_laps:
+                    laps_by_session[lap.session_id].append(lap)
+            rows: list[dict] = []
+            for session in sessions:
+                aggregate = aggregates.get(session.id)
+                if aggregate and sample_counts.get(session.id, 0) == 0:
+                    rows.extend(self._aggregate_lap_row(session, aggregate, lap, repository) for lap in repository._json_rows(aggregate.laps_json))
+                    continue
+                samples = samples_by_session.get(session.id, [])
                 grouped: dict[int, list[TelemetrySampleModel]] = defaultdict(list)
                 for sample in samples:
                     if sample.lap_number is not None:
                         grouped[int(sample.lap_number)].append(sample)
-                stored_laps = db.scalars(
-                    select(LapSummaryModel)
-                    .where(LapSummaryModel.session_id == session.id)
-                    .order_by(LapSummaryModel.lap_number.asc())
-                ).all()
+                stored_laps = laps_by_session.get(session.id, [])
                 if stored_laps:
                     for lap in stored_laps:
                         lap_samples = grouped.get(int(lap.lap_number), [])
@@ -210,19 +244,9 @@ class ProfileRepository:
                         distance = _integrate_distance(dict_samples, "game_time", "speed_kph")
                         speed_values = [sample.speed_kph for sample in lap_samples if sample.speed_kph is not None]
                         last = lap_samples[-1] if lap_samples else None
-                        rows.append(
+                        row = self._live_lap_base(session, repository, lap.lap_number)
+                        row.update(
                             {
-                                "id": f"live:{session.id}:{lap.lap_number}",
-                                "source": "live",
-                                "session_id": session.id,
-                                "session_name": session.session_type or "Live session",
-                                "source_file": None,
-                                "date": session.created_at,
-                                "track": session.track_name or "Unknown track",
-                                "layout": session.track_layout or "",
-                                "car": session.vehicle_model or session.vehicle_name or "Unknown car",
-                                "car_class": session.vehicle_class or "Unknown class",
-                                "session_type": repository._session_type_name(session.session_type),
                                 "lap_number": lap.lap_number,
                                 "lap_time": lap.lap_time,
                                 "valid_lap": lap.valid_lap,
@@ -251,10 +275,9 @@ class ProfileRepository:
                                 "engine_water_temp": _max([sample.engine_water_temp for sample in lap_samples]),
                                 "max_speed": max(speed_values) if speed_values else None,
                                 "average_speed": distance / (lap.lap_time / 3600) if distance is not None and lap.lap_time and lap.lap_time > 0 else _avg(speed_values),
-                                "finish_position": session.final_position,
-                                "finish_status": session.classified_status,
                             }
                         )
+                        rows.append(row)
                     continue
                 built_laps = repository._build_laps(samples)
                 for lap in built_laps:
@@ -267,19 +290,9 @@ class ProfileRepository:
                     last = lap_samples[-1]
                     distance = _integrate_distance(dict_samples, "game_time", "speed_kph")
                     speed_values = [sample.speed_kph for sample in lap_samples if sample.speed_kph is not None]
-                    rows.append(
+                    row = self._live_lap_base(session, repository, lap_number)
+                    row.update(
                         {
-                            "id": f"live:{session.id}:{lap_number}",
-                            "source": "live",
-                            "session_id": session.id,
-                            "session_name": session.session_type or "Live session",
-                            "source_file": None,
-                            "date": session.created_at,
-                            "track": session.track_name or "Unknown track",
-                            "layout": session.track_layout or "",
-                            "car": session.vehicle_model or session.vehicle_name or "Unknown car",
-                            "car_class": session.vehicle_class or "Unknown class",
-                            "session_type": repository._session_type_name(session.session_type),
                             "lap_number": lap_number,
                             "lap_time": lap.get("lap_time"),
                             "valid_lap": lap.get("valid_lap"),
@@ -308,10 +321,9 @@ class ProfileRepository:
                             "engine_water_temp": _max([sample.engine_water_temp for sample in lap_samples]),
                             "max_speed": lap.get("top_speed") or (max(speed_values) if speed_values else None),
                             "average_speed": distance / (lap["lap_time"] / 3600) if distance is not None and lap.get("lap_time") and lap["lap_time"] > 0 else _avg(speed_values),
-                            "finish_position": session.final_position,
-                            "finish_status": session.classified_status,
                         }
                     )
+                    rows.append(row)
             return rows
 
     def _motec_laps(self) -> list[dict]:
@@ -461,19 +473,33 @@ class ProfileRepository:
     def _live_session_distances(self) -> dict[str, float]:
         with SessionLocal() as db:
             sessions = db.scalars(select(SessionModel).where(SessionModel.is_saved.is_(True)).order_by(SessionModel.created_at.asc())).all()
+            session_ids = [session.id for session in sessions]
+            if not session_ids:
+                return {}
+            aggregates = {
+                aggregate.session_id: aggregate
+                for aggregate in db.scalars(select(SessionAggregateModel).where(SessionAggregateModel.session_id.in_(session_ids))).all()
+            }
             distances: dict[str, float] = {}
+            sessions_needing_samples: list[str] = []
             for session in sessions:
-                aggregate = db.get(SessionAggregateModel, session.id)
+                aggregate = aggregates.get(session.id)
                 if aggregate and aggregate.total_distance_km is not None:
                     distances[f"live:{session.id}"] = aggregate.total_distance_km
                     continue
+                sessions_needing_samples.append(session.id)
+            if sessions_needing_samples:
+                samples_by_session: dict[str, list[TelemetrySampleModel]] = defaultdict(list)
                 samples = db.scalars(
                     select(TelemetrySampleModel)
-                    .where(TelemetrySampleModel.session_id == session.id)
-                    .order_by(TelemetrySampleModel.id.asc())
+                    .where(TelemetrySampleModel.session_id.in_(sessions_needing_samples))
+                    .order_by(TelemetrySampleModel.session_id.asc(), TelemetrySampleModel.id.asc())
                 ).all()
-                distance = _integrate_distance([_sample_dict(sample) for sample in samples], "game_time", "speed_kph")
-                distances[f"live:{session.id}"] = distance or 0.0
+                for sample in samples:
+                    samples_by_session[sample.session_id].append(sample)
+                for session_id in sessions_needing_samples:
+                    distance = _integrate_distance([_sample_dict(sample) for sample in samples_by_session.get(session_id, [])], "game_time", "speed_kph")
+                    distances[f"live:{session_id}"] = distance or 0.0
             return distances
 
     def _motec_session_distances(self) -> dict[str, float]:
@@ -500,8 +526,9 @@ class ProfileRepository:
             "total_driving_time": stats.total_driving_time,
         }
 
-    def summary(self) -> dict:
-        laps = self.all_laps()
+    def summary(self, laps: list[dict] | None = None, best_laps: list[dict] | None = None) -> dict:
+        laps = laps if laps is not None else self.all_laps()
+        best_laps = best_laps if best_laps is not None else self._best_laps_from_laps(laps)
         sessions = self._sessions_from_laps(laps)
         persisted_sessions = self._persisted_session_counts()
         session_distances = self._career_session_distances()
@@ -553,13 +580,18 @@ class ProfileRepository:
                 "race_sessions": len(race_sessions),
                 "live_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "live"}), persisted_sessions["live"]),
                 "csv_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "csv"}), persisted_sessions["csv"]),
-                "best_lap_count": len(self.best_laps()),
+                "best_lap_count": len(best_laps),
             },
             "distance_by_class": by_class,
             "top_cars": self._top_cars(laps),
             "top_tracks": self._top_tracks(laps),
             "filter_options": self.filter_options(laps),
         }
+
+    def overview(self) -> dict:
+        laps = self.all_laps()
+        best_laps = self._best_laps_from_laps(laps)
+        return {"summary": self.summary(laps, best_laps), "best_laps": best_laps}
 
     def filter_options(self, laps: list[dict] | None = None) -> dict:
         laps = laps if laps is not None else self.all_laps()
@@ -618,9 +650,9 @@ class ProfileRepository:
             )
         return sorted(rows, key=lambda row: row["distance_km"], reverse=True)[:5]
 
-    def best_laps(self) -> list[dict]:
+    def _best_laps_from_laps(self, laps: list[dict]) -> list[dict]:
         best: dict[tuple, dict] = {}
-        for lap in self.all_laps():
+        for lap in laps:
             lap_time = _num(lap.get("lap_time"))
             if lap_time is None or lap_time <= 0 or not lap.get("valid_lap"):
                 continue
@@ -628,6 +660,9 @@ class ProfileRepository:
             if key not in best or lap_time < (best[key].get("lap_time") or math.inf):
                 best[key] = lap
         return sorted(best.values(), key=lambda lap: (str(lap.get("track")), str(lap.get("car")), lap.get("lap_time") or math.inf))
+
+    def best_laps(self) -> list[dict]:
+        return self._best_laps_from_laps(self.all_laps())
 
     def filtered_laps(self, filters: ProfileFilters) -> dict:
         laps = self.all_laps()

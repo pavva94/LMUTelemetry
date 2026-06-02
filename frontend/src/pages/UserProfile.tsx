@@ -28,14 +28,10 @@ export function UserProfile() {
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api.profileSummary()
-      .then((summaryData) => {
-        setSummary(summaryData);
-        setError("");
-        return api.profileBestLaps();
-      })
-      .then((bestData) => {
-        setBestLaps(bestData);
+    api.profileOverview()
+      .then((overview) => {
+        setSummary(overview.summary);
+        setBestLaps(overview.best_laps);
         setError("");
       })
       .catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));

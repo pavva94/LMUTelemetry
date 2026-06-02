@@ -19,6 +19,7 @@ export type StrategySimulationInput = {
   fuelRequiredLaps: number;
   tankCapacityLiters: number | null;
   raceStartFuelLiters: number | null;
+  raceStartNewTyres?: boolean;
   fuelSafetyMarginLiters: number;
   pitLaneLossSeconds: number;
   tyreChangeSecondsPerTyre: number;
@@ -55,6 +56,9 @@ export type StrategyCandidate = {
   liftCoastSaveLitersPerLap: number;
   fuelMarginLiters: number;
   finishFuelRemainingLiters: number;
+  firstStintFuelNeedLiters: number;
+  recommendedStartFuelLiters: number;
+  startFuelIsFullTank: boolean;
   projectedTyreWear: number | null;
   projectedTyreWearByWheel: Record<Wheel, number> | null;
   lowestRemainingTyreWear: number | null;
@@ -93,6 +97,9 @@ function riskRank(risk: StrategyRisk) {
 }
 
 function currentTyreWearByWheel(input: StrategySimulationInput): Record<Wheel, number> | null {
+  if (input.raceStartNewTyres) {
+    return { fl: 0, fr: 0, rl: 0, rr: 0 };
+  }
   const fallback = input.currentTyreWear;
   if (fallback == null || input.tyreWearRatePerLap == null) return null;
   return Object.fromEntries(wheels.map((wheel) => {
@@ -210,6 +217,7 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
       if (effectiveFuelPerLap <= 0) continue;
       const firstStintFuelNeed = stintLaps * effectiveFuelPerLap;
       if (firstStintFuelNeed > raceStartFuelLiters + 0.01) continue;
+      const recommendedStartFuel = Math.min(input.tankCapacityLiters, firstStintFuelNeed + input.fuelSafetyMarginLiters);
       const requiredAfterStart = Math.max(0, raceLaps * effectiveFuelPerLap + input.fuelSafetyMarginLiters - raceStartFuelLiters);
       const fuelAddedPerStop = stops > 0 ? requiredAfterStart / stops : 0;
       if (fuelAddedPerStop > input.tankCapacityLiters + 0.01) continue;
@@ -262,6 +270,8 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
         `${round(stintLaps, 1)} lap average stint`,
         `finish with ${round(finishFuelRemainingLiters, 1)} L fuel remaining`,
         stops > 0 ? `${round(fuelAddedPerStop, 1)} L fuel added per stop` : "no scheduled fuel stop",
+        `${round(recommendedStartFuel, 1)} L start fuel needed for stint 1`,
+        input.raceStartNewTyres ? "race start assumes a new tyre set" : "race start uses observed tyre wear",
         tyreWear == null ? "tyre projection needs more wear data" : `max projected tyre wear ${round(tyreWear * 100, 0)}%`,
         stops > 0 ? `tyre service: ${stopsDetail.map((stop) => `lap ${stop.lap} ${tyreListText(stop.tyresToChange)}`).join(", ")}` : "no scheduled tyre service",
         liftSavePercent > 0 ? `${round(liftSavePercent, 1)}% lift-and-coast fuel save required` : `${round(fuelMarginLiters, 1)} L fuel margin`,
@@ -281,6 +291,9 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
         liftCoastSaveLitersPerLap: round(liftSavePerLap, 3),
         fuelMarginLiters: round(fuelMarginLiters, 2),
         finishFuelRemainingLiters: round(finishFuelRemainingLiters, 2),
+        firstStintFuelNeedLiters: round(firstStintFuelNeed, 2),
+        recommendedStartFuelLiters: round(recommendedStartFuel, 2),
+        startFuelIsFullTank: recommendedStartFuel >= input.tankCapacityLiters - 0.01,
         projectedTyreWear: tyreWear == null ? null : round(tyreWear, 3),
         projectedTyreWearByWheel: tyrePlan?.projectedTyreWearByWheel ?? null,
         lowestRemainingTyreWear: tyrePlan?.lowestRemainingTyreWear ?? null,

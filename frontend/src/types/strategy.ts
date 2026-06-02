@@ -52,6 +52,7 @@ export type StrategyState = {
     tyre_change_seconds_per_tyre?: number;
     refuel_seconds_per_5_liters?: number;
     race_start_fuel_liters?: number;
+    race_start_new_tyres?: boolean;
     safety_car_pit_loss_seconds?: number;
     fuel_safety_margin_liters?: number;
     fuel_safety_margin_laps?: number;

@@ -60,6 +60,7 @@ def _ensure_sqlite_columns() -> None:
         for name, column_type in columns.items():
             if name not in existing:
                 connection.execute(text(f"ALTER TABLE sessions ADD COLUMN {name} {column_type}"))
+        connection.execute(text("CREATE INDEX IF NOT EXISTS ix_sessions_saved_created_at ON sessions (is_saved, created_at)"))
 
     existing = {column["name"] for column in inspector.get_columns("telemetry_samples")}
     columns = {
@@ -124,6 +125,10 @@ def _ensure_sqlite_columns() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_telemetry_samples_session_id_id ON telemetry_samples (session_id, id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_telemetry_samples_session_id_lap ON telemetry_samples (session_id, lap_number)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_recommendations_session_id_id ON recommendations (session_id, id)"))
+
+    if "lap_summaries" in table_names:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lap_summaries_session_id_lap ON lap_summaries (session_id, lap_number)"))
 
     if "session_aggregates" in table_names:
         existing = {column["name"] for column in inspector.get_columns("session_aggregates")}

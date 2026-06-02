@@ -43,6 +43,15 @@ describe("strategy simulation", () => {
     expect(oneStop?.finishFuelRemainingLiters).toBeCloseTo((oneStop?.fuelMarginLiters ?? 0) + baseInput.fuelSafetyMarginLiters, 2);
   });
 
+  it("reports the fuel needed for the first stint including start margin", () => {
+    const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: 60, maxStops: 1 });
+    const oneStop = plans.find((plan) => plan.stops === 1);
+
+    expect(oneStop?.firstStintFuelNeedLiters).toBeCloseTo(45, 1);
+    expect(oneStop?.recommendedStartFuelLiters).toBeCloseTo(47, 1);
+    expect(oneStop?.startFuelIsFullTank).toBe(false);
+  });
+
   it("returns the top three plans sorted by total time", () => {
     const plans = simulateStrategies(baseInput);
     expect(plans).toHaveLength(3);
@@ -58,6 +67,21 @@ describe("strategy simulation", () => {
   it("marks overlong tyre stints as high risk", () => {
     const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: 12, currentTyreWear: 0.65, tyreWearRatePerLap: 0.02, maxStops: 0 });
     expect(plans.some((plan) => plan.risk === "high" && (plan.projectedTyreWear || 0) > baseInput.maxTyreWear)).toBe(true);
+  });
+
+  it("starts tyre projection from zero when race start uses new tyres", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 12,
+      raceStartNewTyres: true,
+      currentTyreWear: 0.65,
+      currentTyreWearByWheel: { fl: 0.65, fr: 0.65, rl: 0.65, rr: 0.65 },
+      tyreWearRatePerLap: 0.02,
+      maxStops: 0,
+    });
+
+    expect(plans[0]?.stintWear[0].startWear.fl).toBe(0);
+    expect(plans[0]?.risk).not.toBe("high");
   });
 
   it("suggests specific tyres to change when the next stint would cross the wear threshold", () => {
