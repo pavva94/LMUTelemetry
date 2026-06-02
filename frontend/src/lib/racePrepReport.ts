@@ -22,6 +22,9 @@ export type RacePrepReport = {
     validLaps: number;
     ambientTemp: number | null;
     trackTemp: number | null;
+    topSpeed: number | null;
+    totalDistanceKm: number | null;
+    pitLaps: number;
   };
   pace: {
     bestLap: number | null;
@@ -138,13 +141,54 @@ function latestSessionDuration(session: SavedSession | null | undefined, samples
 }
 
 function statFor(samples: Row[], key: string): StatSummary {
-  const values = samples.map((sample) => num(sample[key])).filter((value): value is number => value != null);
+  const values = samples.map((sample) => num(sample[key])).filter((value): value is number => validTyreChannelValue(key, value));
   return { average: avg(values), min: min(values), max: max(values), trend: trend(values, key.includes("pressure") ? 0.03 : 1.0) };
 }
 
-function firstLastWithValue(samples: Row[], key: string): [number | null, number | null] {
-  const values = samples.map((sample) => num(sample[key])).filter((value): value is number => value != null);
+function statForRows(rows: Row[], key: string, aggregateAverage?: number | null): StatSummary {
+  const values = rows.map((row) => num(row[key])).filter((value): value is number => validTyreChannelValue(key, value));
+  if (values.length) {
+    return { average: avg(values), min: min(values), max: max(values), trend: trend(values, key.includes("pressure") ? 0.03 : 1.0) };
+  }
+  return { average: aggregateAverage ?? null, min: aggregateAverage ?? null, max: aggregateAverage ?? null, trend: "unavailable" };
+}
+
+function firstLastWithValue(samples: Row[], key: string, lapRows: Row[] = []): [number | null, number | null] {
+  const values = samples
+    .filter((sample) => isUsableTyreSample(sample, key))
+    .map((sample) => num(sample[key]))
+    .filter((value): value is number => validTyreChannelValue(key, value));
+  if (!values.length && key.includes("tyre_wear_")) {
+    const wheel = key.replace("tyre_wear_", "");
+    const starts = lapRows
+      .map((lap) => num(lap[`tyre_wear_start_${wheel}`]) ?? num(lap.tyre_wear_start))
+      .filter((value): value is number => validTyreChannelValue(key, value));
+    const ends = lapRows
+      .map((lap) => num(lap[`tyre_wear_end_${wheel}`]) ?? num(lap.tyre_wear_end))
+      .filter((value): value is number => validTyreChannelValue(key, value));
+    if (starts.length || ends.length) return [starts[0] ?? null, ends[ends.length - 1] ?? null];
+  }
   return [values[0] ?? null, values[values.length - 1] ?? null];
+}
+
+function validTyreChannelValue(key: string, value: number | null): value is number {
+  if (value == null) return false;
+  if (key.includes("pressure") || key.includes("temp")) return value > 0;
+  if (key.includes("wear")) return value >= 0 && value <= 1;
+  return true;
+}
+
+function isUsableTyreSample(sample: Row, key: string): boolean {
+  if (!key.includes("wear")) return true;
+  const wearValues = wheels.map((wheel) => num(sample[`tyre_wear_${wheel}`]));
+  const hasNonZeroWear = wearValues.some((value) => value != null && value > 0);
+  if (hasNonZeroWear) return true;
+  const hasSupportingTyreData = wheels.some((wheel) => {
+    const pressure = num(sample[`tyre_pressure_${wheel}`]);
+    const temp = num(sample[`tyre_temp_${wheel}`]);
+    return (pressure != null && pressure > 0) || (temp != null && temp > 0);
+  });
+  return hasSupportingTyreData;
 }
 
 function bestWheel(values: Record<Wheel, number | null>, chooser: typeof Math.max | typeof Math.min): Wheel | null {
@@ -156,6 +200,10 @@ function bestWheel(values: Record<Wheel, number | null>, chooser: typeof Math.ma
 
 function capacityFromSamples(samples: Row[]): number | null {
   return max(samples.map((sample) => num(sample.fuel_capacity_liters)).filter((value) => value != null && value > 0));
+}
+
+function averageFromRows(rows: Row[], key: string, fallback?: number | null): number | null {
+  return avg(rows.map((row) => num(row[key]))) ?? fallback ?? null;
 }
 
 function raceLapsFromOptions(options: RacePrepOptions, medianLap: number | null): { laps: number | null; source: string } {
@@ -216,8 +264,9 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
     .filter((lap): lap is { lap: number | null; lapTime: number; delta: number } => lap.lapTime != null && lap.delta != null);
 
   const session = review.session;
-  const ambientTemp = avg(samples.map((sample) => num(sample.ambient_temp)));
-  const trackTemp = avg(samples.map((sample) => num(sample.track_temp)));
+  const summary = review.summary;
+  const ambientTemp = averageFromRows(samples, "ambient_temp") ?? averageFromRows(allLaps, "ambient_temp");
+  const trackTemp = averageFromRows(samples, "track_temp") ?? averageFromRows(allLaps, "track_temp");
 
   const fuelValues = cleanLaps.map((lap) => num(lap.fuel_used)).filter((value): value is number => value != null && value > 0);
   const sampleFuelValues = samples.map((sample) => num(sample.fuel_liters)).filter((value): value is number => value != null);
@@ -235,8 +284,11 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
 
   const wear: RacePrepReport["tyres"]["wear"] = { fl: emptyWear(), fr: emptyWear(), rl: emptyWear(), rr: emptyWear() };
   for (const wheel of wheels) {
-    const [start, end] = firstLastWithValue(samples, `tyre_wear_${wheel}`);
-    const delta = start != null && end != null ? Math.abs(end - start) : null;
+    const [start, end] = firstLastWithValue(samples, `tyre_wear_${wheel}`, allLaps);
+    const lapDeltas = allLaps
+      .map((lap) => num(lap[`tyre_wear_delta_${wheel}`]) ?? num(lap.tyre_wear_delta))
+      .filter((value): value is number => value != null && value >= 0);
+    const delta = lapDeltas.length ? lapDeltas.reduce((sum, value) => sum + Math.abs(value), 0) : start != null && end != null ? Math.abs(end - start) : null;
     wear[wheel] = { start, end, delta, perLap: delta != null && cleanLaps.length ? delta / cleanLaps.length : null };
   }
   const wearDeltas = Object.fromEntries(wheels.map((wheel) => [wheel, wear[wheel].delta])) as Record<Wheel, number | null>;
@@ -248,8 +300,8 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
   const frontRearBalance = frontWear != null && rearWear != null ? rearWear - frontWear : null;
   const leftRightBalance = leftWear != null && rightWear != null ? rightWear - leftWear : null;
 
-  const temperature = Object.fromEntries(wheels.map((wheel) => [wheel, statFor(samples, `tyre_temp_${wheel}`)])) as Record<Wheel, StatSummary>;
-  const pressure = Object.fromEntries(wheels.map((wheel) => [wheel, statFor(samples, `tyre_pressure_${wheel}`)])) as Record<Wheel, StatSummary>;
+  const temperature = Object.fromEntries(wheels.map((wheel) => [wheel, samples.length ? statFor(samples, `tyre_temp_${wheel}`) : statForRows(allLaps, `tyre_temp_${wheel}`, num(summary?.average_tyre_temp))])) as Record<Wheel, StatSummary>;
+  const pressure = Object.fromEntries(wheels.map((wheel) => [wheel, samples.length ? statFor(samples, `tyre_pressure_${wheel}`) : statForRows(allLaps, `tyre_pressure_${wheel}`, num(summary?.average_tyre_pressure))])) as Record<Wheel, StatSummary>;
   const tempAverages = Object.fromEntries(wheels.map((wheel) => [wheel, temperature[wheel].average])) as Record<Wheel, number | null>;
   const pressureAverages = Object.fromEntries(wheels.map((wheel) => [wheel, pressure[wheel].average])) as Record<Wheel, number | null>;
 
@@ -278,6 +330,9 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
       validLaps: cleanLaps.length,
       ambientTemp,
       trackTemp,
+      topSpeed: max([...samples.map((sample) => num(sample.speed_kph)), ...allLaps.map((lap) => num(lap.top_speed)), num(summary?.top_speed)]),
+      totalDistanceKm: num(summary?.total_distance_km),
+      pitLaps: allLaps.filter((lap) => lap.in_pit === true).length,
     },
     pace: {
       bestLap,

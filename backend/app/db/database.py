@@ -97,6 +97,10 @@ def _ensure_sqlite_columns() -> None:
         "suspension_deflection_fr": "FLOAT",
         "suspension_deflection_rl": "FLOAT",
         "suspension_deflection_rr": "FLOAT",
+        "tyre_wear_fl": "FLOAT",
+        "tyre_wear_fr": "FLOAT",
+        "tyre_wear_rl": "FLOAT",
+        "tyre_wear_rr": "FLOAT",
         "tyre_load_fl": "FLOAT",
         "tyre_load_fr": "FLOAT",
         "tyre_load_rl": "FLOAT",
@@ -105,6 +109,10 @@ def _ensure_sqlite_columns() -> None:
         "tyre_pressure_fr": "FLOAT",
         "tyre_pressure_rl": "FLOAT",
         "tyre_pressure_rr": "FLOAT",
+        "tyre_temp_fl": "FLOAT",
+        "tyre_temp_fr": "FLOAT",
+        "tyre_temp_rl": "FLOAT",
+        "tyre_temp_rr": "FLOAT",
         "pitstops": "INTEGER",
         "in_pits": "BOOLEAN",
         "pit_state": "VARCHAR",
@@ -116,3 +124,13 @@ def _ensure_sqlite_columns() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_telemetry_samples_session_id_id ON telemetry_samples (session_id, id)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_telemetry_samples_session_id_lap ON telemetry_samples (session_id, lap_number)"))
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_recommendations_session_id_id ON recommendations (session_id, id)"))
+
+    if "session_aggregates" in table_names:
+        existing = {column["name"] for column in inspector.get_columns("session_aggregates")}
+        columns = {
+            "sample_trace_json": "TEXT",
+        }
+        with engine.begin() as connection:
+            for name, column_type in columns.items():
+                if name not in existing:
+                    connection.execute(text(f"ALTER TABLE session_aggregates ADD COLUMN {name} {column_type}"))

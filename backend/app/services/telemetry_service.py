@@ -181,6 +181,8 @@ class TelemetryService:
     def _pause_live_feed(self, snapshot: TelemetrySnapshot, reason: str) -> None:
         self.feed_paused = True
         self.pause_reason = reason
+        if (not snapshot.connected or not snapshot.player) and self.latest_snapshot is not None:
+            snapshot = self.latest_snapshot
         snapshot.feed_paused = True
         snapshot.pause_reason = reason
         snapshot.strategy = self.strategy_state
@@ -262,12 +264,10 @@ class TelemetryService:
 
     def _process(self, snapshot: TelemetrySnapshot) -> None:
         if not snapshot.connected or not snapshot.player:
-            self._finish_active_session("telemetry unavailable")
             self._pause_live_feed(snapshot, "telemetry unavailable")
             return
         on_track, reason = self._is_on_track(snapshot)
         if not on_track:
-            self._finish_active_session(reason or "not on track")
             self._pause_live_feed(snapshot, reason or "not on track")
             return
         self._resume_live_feed()

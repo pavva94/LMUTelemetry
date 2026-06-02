@@ -25,7 +25,7 @@ const lapTimeText = (value?: number | null) => validLapTime(value) ? formatRaceT
 const carName = (car?: { vehicle_model?: string | null; vehicle_name?: string | null }) => car?.vehicle_model || car?.vehicle_name || null;
 const outStatuses = new Set(["dnf", "dns", "dq", "retired", "disqualified"]);
 
-type LapHistory = Record<number, { lastLap?: number; lastLapTime?: number; laps: number[] }>;
+type LapHistory = Record<number, { lastRecordedLap?: number; lastLapTime?: number; currentLap?: number; dirtyLaps: Set<number>; lastPitstops?: number; laps: number[] }>;
 
 function useOpponentLapHistory(competitors: CompetitorState[]) {
   const history = useRef<LapHistory>({});
@@ -33,14 +33,25 @@ function useOpponentLapHistory(competitors: CompetitorState[]) {
     competitors.forEach((car) => {
       const lap = car.total_laps ?? car.current_lap;
       const lapTime = car.last_lap_time;
-      if (lap == null || !validLapTime(lapTime)) return;
-      const row = history.current[car.vehicle_id] || { laps: [] };
-      if (row.lastLap !== lap || row.lastLapTime !== lapTime) {
-        row.laps = [...row.laps, lapTime as number].slice(-12);
-        row.lastLap = lap;
-        row.lastLapTime = lapTime;
-        history.current[car.vehicle_id] = row;
+      if (lap == null) return;
+      const row = history.current[car.vehicle_id] || { dirtyLaps: new Set<number>(), laps: [] };
+      const pitstops = car.pitstops;
+      const completedLap = lap > 0 ? lap - 1 : null;
+      if (car.in_pits) row.dirtyLaps.add(lap);
+      if (pitstops != null && row.lastPitstops != null && pitstops > row.lastPitstops) {
+        row.dirtyLaps.add(lap);
+        if (completedLap != null) row.dirtyLaps.add(completedLap);
       }
+      if (completedLap != null && validLapTime(lapTime) && row.lastRecordedLap !== completedLap) {
+        if (!row.dirtyLaps.has(completedLap)) {
+          row.laps = [...row.laps, lapTime as number].slice(-12);
+        }
+        row.lastRecordedLap = completedLap;
+        row.lastLapTime = lapTime;
+      }
+      row.currentLap = lap;
+      row.lastPitstops = pitstops;
+      history.current[car.vehicle_id] = row;
     });
   }, [competitors]);
   return history.current;
@@ -49,6 +60,7 @@ function useOpponentLapHistory(competitors: CompetitorState[]) {
 function lastAverage(history: LapHistory, car: CompetitorState | undefined, count: number) {
   if (!car) return null;
   const laps = history[car.vehicle_id]?.laps || [];
+  if (laps.length < count) return null;
   return avg(laps.slice(-count));
 }
 
@@ -56,6 +68,25 @@ function trendLabel(delta: number | null, laps: number) {
   if (delta == null) return "--";
   const amount = Math.abs(delta) * laps;
   return `${delta < 0 ? "Gained" : "Lost"} ${formatRaceGap(amount)}`;
+}
+
+function playerTrendLabel(delta: number | null) {
+  return delta == null ? "--" : "Reference";
+}
+
+function isRaceSession(sessionType?: string | null) {
+  return String(sessionType || "").toLowerCase().includes("race");
+}
+
+function fuelColumnText(car: CompetitorState, telemetry: TelemetrySnapshot | null) {
+  if (car.is_player) {
+    const fuel = telemetry?.player?.fuel_liters;
+    const capacity = telemetry?.player?.fuel_capacity_liters;
+    if (fuel != null && capacity != null && Number.isFinite(fuel) && Number.isFinite(capacity) && capacity > 0) {
+      return pct(Math.max(0, Math.min(1, fuel / capacity)));
+    }
+  }
+  return isRaceSession(telemetry?.session?.session_type) ? pct(car.fuel_fraction) : "--";
 }
 
 function InputBar({ label, value, color = "#e6b450" }: { label: string; value?: number; color?: string }) {
@@ -188,9 +219,9 @@ function OpponentPaceTable({ telemetry, competitors: fallbackCompetitors = [] }:
                   <td>{lapTimeText(car.last_lap_time)}</td>
                   <td>{lapTimeText(avg3)}</td>
                   <td>{lapTimeText(avg7)}</td>
-                  <td>{car.is_player ? "Reference" : trendLabel(delta3, 3)}</td>
-                  <td>{car.is_player ? "Reference" : trendLabel(delta7, 7)}</td>
-                  <td>{pct(car.fuel_fraction)}</td>
+                  <td>{car.is_player ? playerTrendLabel(playerAvg3) : trendLabel(delta3, 3)}</td>
+                  <td>{car.is_player ? playerTrendLabel(playerAvg7) : trendLabel(delta7, 7)}</td>
+                  <td>{fuelColumnText(car, telemetry)}</td>
                 </tr>
               );
             })}

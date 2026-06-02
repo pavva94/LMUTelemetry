@@ -47,6 +47,23 @@ function Chart({ data, xKey = "game_time", lines, height = 240 }: { data: Row[];
   );
 }
 
+function hasLineData(rows: Row[], lines: Array<[string, string]>) {
+  return rows.some((row) => lines.some(([key]) => Number.isFinite(Number(row[key]))));
+}
+
+function lapFallbackRow(lap: Row): Row {
+  return {
+    ...lap,
+    game_time: lap.end_time ?? lap.start_time ?? lap.lap_number,
+    speed_kph: lap.speed_kph ?? lap.top_speed,
+    rpm: lap.rpm ?? lap.max_rpm,
+    tyre_wear_fl: lap.tyre_wear_end_fl ?? lap.tyre_wear_end,
+    tyre_wear_fr: lap.tyre_wear_end_fr ?? lap.tyre_wear_end,
+    tyre_wear_rl: lap.tyre_wear_end_rl ?? lap.tyre_wear_end,
+    tyre_wear_rr: lap.tyre_wear_end_rr ?? lap.tyre_wear_end,
+  };
+}
+
 function PositionChart({ data }: { data: Row[] }) {
   const rows = data.filter((row) => Number.isFinite(Number(row.position)) || Number.isFinite(Number(row.class_position)));
   if (!rows.length) return <EmptyState detail="Position history is available for new saved race sessions after this update." />;
@@ -106,6 +123,7 @@ export function SessionReview() {
 
   const samples = (review?.telemetry_samples || []) as Row[];
   const laps = (review?.laps || []) as Row[];
+  const lapFallbackRows = useMemo(() => laps.map(lapFallbackRow), [laps]);
   const pitEvents = (review?.pit_events || []) as Row[];
   const sessionTypes = useMemo(() => Array.from(new Set(sessions.map((session) => session.session_type).filter(Boolean) as string[])).sort(), [sessions]);
   const filteredSessions = useMemo(
@@ -140,6 +158,24 @@ export function SessionReview() {
       brakeTemp: aggregate?.average_brake_temp,
     };
   }, [laps, samples, review?.summary, selectedSession?.sample_count]);
+
+  const chartRows = (lines: Array<[string, string]>) => {
+    if (hasLineData(samples, lines)) return { data: samples, xKey: "game_time" };
+    if (hasLineData(lapFallbackRows, lines)) return { data: lapFallbackRows, xKey: "lap_number" };
+    return { data: [], xKey: "game_time" };
+  };
+  const speedLines: Array<[string, string]> = [["speed_kph", "#e6b450"], ["rpm", "#6dd6ff"]];
+  const inputLines: Array<[string, string]> = [["throttle", "#69d28f"], ["brake", "#ff6961"], ["steering", "#c7a8ff"]];
+  const tyreWearLines: Array<[string, string]> = [["tyre_wear_fl", "#6dd6ff"], ["tyre_wear_fr", "#ff8c69"], ["tyre_wear_rl", "#91e48f"], ["tyre_wear_rr", "#c7a8ff"]];
+  const tyreTempLines: Array<[string, string]> = [["tyre_temp_fl", "#6dd6ff"], ["tyre_temp_fr", "#ff8c69"], ["tyre_temp_rl", "#91e48f"], ["tyre_temp_rr", "#c7a8ff"]];
+  const brakeTempLines: Array<[string, string]> = [["brake_temp_fl", "#6dd6ff"], ["brake_temp_fr", "#ff8c69"], ["brake_temp_rl", "#91e48f"], ["brake_temp_rr", "#c7a8ff"]];
+  const rideHeightLines: Array<[string, string]> = [["ride_height_fl", "#6dd6ff"], ["ride_height_fr", "#ff8c69"], ["ride_height_rl", "#91e48f"], ["ride_height_rr", "#c7a8ff"]];
+  const speedChart = chartRows(speedLines);
+  const inputChart = chartRows(inputLines);
+  const tyreWearChart = chartRows(tyreWearLines);
+  const tyreTempChart = chartRows(tyreTempLines);
+  const brakeTempChart = chartRows(brakeTempLines);
+  const rideHeightChart = chartRows(rideHeightLines);
 
   const storeCurrent = async () => {
     setStatus("Storing current session");
@@ -234,12 +270,12 @@ export function SessionReview() {
       <section className="card span-6"><SectionTitle title="Lap Times" help="Shows saved lap pace across the segment. Separate fuel effects, tyre degradation, and traffic before judging driver consistency." /><Chart data={laps} xKey="lap_number" lines={[["lap_time", "#6dd6ff"]]} /></section>
       <section className="card span-6"><SectionTitle title="Lap Fuel" help="Shows fuel used and added per lap. Spikes or jumps usually indicate refuel events, pit sequences, or unusual running." /><Chart data={laps} xKey="lap_number" lines={[["fuel_used", "#e6b450"], ["fuel_added", "#69d28f"]]} /></section>
       {isRaceSession && <section className="card span-12"><SectionTitle title="Race Position Over Time" help="Shows how the selected race result evolved lap by lap. Lower positions are better, so the chart axis is reversed." /><PositionChart data={laps} /></section>}
-      <section className="card span-6"><SectionTitle title="Speed And RPM" help="Shows powertrain and speed history. Falling speed peaks with similar RPM can point to traffic, drag, or corner-exit loss." /><Chart data={samples} lines={[["speed_kph", "#e6b450"], ["rpm", "#6dd6ff"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Driver Inputs" help="Shows throttle, brake, and steering samples. Clean separation and smooth steering usually improve tyre life and lap repeatability." /><Chart data={samples} lines={[["throttle", "#69d28f"], ["brake", "#ff6961"], ["steering", "#c7a8ff"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Tyre Wear" help="Tracks tyre wear by corner. Front/rear or left/right imbalance is a useful setup and driving-style clue." /><Chart data={samples} lines={[["tyre_wear_fl", "#6dd6ff"], ["tyre_wear_fr", "#ff8c69"], ["tyre_wear_rl", "#91e48f"], ["tyre_wear_rr", "#c7a8ff"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Tyre Temperatures" help="Shows tyre heat by corner when available. Persistent overheating suggests pressure, camber, balance, or sliding issues." /><Chart data={samples} lines={[["tyre_temp_fl", "#6dd6ff"], ["tyre_temp_fr", "#ff8c69"], ["tyre_temp_rl", "#91e48f"], ["tyre_temp_rr", "#c7a8ff"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Brake Temperatures" help="Shows brake heat by corner. Front/rear or side imbalance can indicate bias, cooling, or locked-wheel behavior." /><Chart data={samples} lines={[["brake_temp_fl", "#6dd6ff"], ["brake_temp_fr", "#ff8c69"], ["brake_temp_rl", "#91e48f"], ["brake_temp_rr", "#c7a8ff"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Ride Heights" help="Shows platform movement when available. Low ride height under braking or high speed can indicate bottoming or aero instability." /><Chart data={samples} lines={[["ride_height_fl", "#6dd6ff"], ["ride_height_fr", "#ff8c69"], ["ride_height_rl", "#91e48f"], ["ride_height_rr", "#c7a8ff"]]} /></section>
+      <section className="card span-6"><SectionTitle title="Speed And RPM" help="Shows powertrain and speed history. Falling speed peaks with similar RPM can point to traffic, drag, or corner-exit loss." /><Chart data={speedChart.data} xKey={speedChart.xKey} lines={speedLines} /></section>
+      <section className="card span-6"><SectionTitle title="Driver Inputs" help="Shows throttle, brake, and steering samples. Clean separation and smooth steering usually improve tyre life and lap repeatability." /><Chart data={inputChart.data} xKey={inputChart.xKey} lines={inputLines} /></section>
+      <section className="card span-6"><SectionTitle title="Tyre Wear" help="Tracks tyre wear by corner. Front/rear or left/right imbalance is a useful setup and driving-style clue." /><Chart data={tyreWearChart.data} xKey={tyreWearChart.xKey} lines={tyreWearLines} /></section>
+      <section className="card span-6"><SectionTitle title="Tyre Temperatures" help="Shows tyre heat by corner when available. Persistent overheating suggests pressure, camber, balance, or sliding issues." /><Chart data={tyreTempChart.data} xKey={tyreTempChart.xKey} lines={tyreTempLines} /></section>
+      <section className="card span-6"><SectionTitle title="Brake Temperatures" help="Shows brake heat by corner. Front/rear or side imbalance can indicate bias, cooling, or locked-wheel behavior." /><Chart data={brakeTempChart.data} xKey={brakeTempChart.xKey} lines={brakeTempLines} /></section>
+      <section className="card span-6"><SectionTitle title="Ride Heights" help="Shows platform movement when available. Low ride height under braking or high speed can indicate bottoming or aero instability." /><Chart data={rideHeightChart.data} xKey={rideHeightChart.xKey} lines={rideHeightLines} /></section>
 
       <section className="card span-12">
         <SectionTitle title="Lap Table" help="Lists each saved lap with fuel and speed context. Use it to identify representative laps before deeper analysis." />

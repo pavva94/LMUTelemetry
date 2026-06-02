@@ -29,8 +29,14 @@ class Repository:
             "3": "Practice 3",
             "4": "Practice 4",
             "5": "Qualifying",
-            "6": "Warmup",
-            "7": "Race",
+            "6": "Qualifying 2",
+            "7": "Qualifying 3",
+            "8": "Qualifying 4",
+            "9": "Warmup",
+            "10": "Race",
+            "11": "Race 2",
+            "12": "Race 3",
+            "13": "Race 4",
         }
         if value is None:
             return None
@@ -53,6 +59,14 @@ class Repository:
             return value if isinstance(value, list) else []
         except json.JSONDecodeError:
             return []
+
+    def _sample_trace_rows(self, samples: list[TelemetrySampleModel], limit: int = 2000) -> list[dict]:
+        if len(samples) <= limit:
+            selected = samples
+        else:
+            step = math.ceil(len(samples) / limit)
+            selected = samples[::step]
+        return [self._row_dict(sample) for sample in selected]
 
     def _average_fields(self, samples: list[TelemetrySampleModel], fields: list[str]) -> float | None:
         values = []
@@ -384,6 +398,7 @@ class Repository:
         aggregate.latest_lap_number = latest.lap_number if latest else None
         aggregate.sample_count = len(samples)
         aggregate.latest_sample_json = self._rows_json(self._row_dict(latest)) if latest else None
+        aggregate.sample_trace_json = self._rows_json(self._sample_trace_rows(samples))
         aggregate.laps_json = self._rows_json(laps)
         aggregate.pit_events_json = self._rows_json(pit_events)
         aggregate.recommendations_json = self._rows_json([self._row_dict(row) for row in recommendations])
@@ -424,6 +439,26 @@ class Repository:
         finite = [value for value in values if value is not None and math.isfinite(value)]
         return sum(finite) / len(finite) if finite else None
 
+    def _average_sample_field(self, samples: list[TelemetrySampleModel], field: str) -> float | None:
+        values = [getattr(sample, field) for sample in samples]
+        finite = [value for value in values if value is not None and math.isfinite(value)]
+        return sum(finite) / len(finite) if finite else None
+
+    def _lap_start_time(self, rows: list[TelemetrySampleModel]) -> float | None:
+        starts = []
+        for row in rows:
+            if row.game_time is None or row.current_lap_time is None:
+                continue
+            if not math.isfinite(row.game_time) or not math.isfinite(row.current_lap_time):
+                continue
+            if row.current_lap_time < 0 or row.current_lap_time > 1200:
+                continue
+            starts.append(row.game_time - row.current_lap_time)
+        if not starts:
+            return None
+        starts.sort()
+        return starts[len(starts) // 2]
+
     def _build_laps(self, samples: list[TelemetrySampleModel]) -> list[dict]:
         grouped: dict[int, list[TelemetrySampleModel]] = {}
         for sample in samples:
@@ -432,24 +467,40 @@ class Repository:
             grouped.setdefault(int(sample.lap_number), []).append(sample)
 
         official_lap_times: dict[int, float] = {}
-        previous_official_last_lap: float | None = None
         for lap_number in sorted(grouped):
-            for row in grouped[lap_number]:
-                if row.last_lap_time is not None and row.last_lap_time != previous_official_last_lap:
-                    official_lap_times[lap_number - 1] = row.last_lap_time
-                    previous_official_last_lap = row.last_lap_time
-                    break
+            values = [
+                row.last_lap_time for row in grouped[lap_number]
+                if row.last_lap_time is not None and math.isfinite(row.last_lap_time)
+            ]
+            if values:
+                official_lap_times[lap_number - 1] = values[-1]
+
+        lap_numbers = sorted(grouped)
+        lap_start_times = {lap_number: self._lap_start_time(grouped[lap_number]) for lap_number in lap_numbers}
+        boundary_lap_times: dict[int, float] = {}
+        for previous_lap, next_lap in zip(lap_numbers, lap_numbers[1:]):
+            previous_start = lap_start_times.get(previous_lap)
+            next_start = lap_start_times.get(next_lap)
+            if previous_start is None or next_start is None or next_start < previous_start:
+                continue
+            boundary_lap_times[previous_lap] = next_start - previous_start
 
         laps: list[dict] = []
         previous_fuel_end: float | None = None
-        for lap_number in sorted(grouped):
+        for index, lap_number in enumerate(lap_numbers):
             rows = grouped[lap_number]
             first = rows[0]
             last = rows[-1]
-            start_time = first.game_time
-            end_time = last.game_time
+            next_lap_number = lap_numbers[index + 1] if index + 1 < len(lap_numbers) else None
+            start_time = lap_start_times.get(lap_number) if lap_start_times.get(lap_number) is not None else first.game_time
+            end_time = lap_start_times.get(next_lap_number) if next_lap_number is not None and lap_start_times.get(next_lap_number) is not None else last.game_time
             duration_from_samples = end_time - start_time if start_time is not None and end_time is not None and end_time >= start_time else None
-            duration = official_lap_times.get(lap_number) or duration_from_samples
+            official_duration = official_lap_times.get(lap_number)
+            boundary_duration = boundary_lap_times.get(lap_number)
+            if official_duration is not None and (boundary_duration is None or abs(official_duration - boundary_duration) <= 2.0):
+                duration = official_duration
+            else:
+                duration = boundary_duration or duration_from_samples
             speed_values = [row.speed_kph for row in rows if row.speed_kph is not None]
             rpm_values = [row.rpm for row in rows if row.rpm is not None]
             fuel_start = first.fuel_liters
@@ -459,29 +510,45 @@ class Repository:
             in_pit = any(bool(row.in_pits) for row in rows)
             wear_start = self._average_wear(first)
             wear_end = self._average_wear(last)
-            laps.append(
-                {
-                    "lap_number": lap_number,
-                    "start_time": start_time,
-                    "end_time": end_time,
-                    "lap_time": duration,
-                    "fuel_start": fuel_start,
-                    "fuel_end": fuel_end,
-                    "fuel_used": fuel_used,
-                    "fuel_added": fuel_added,
-                    "tyre_wear_start": wear_start,
-                    "tyre_wear_end": wear_end,
-                    "tyre_wear_delta": wear_end - wear_start if wear_start is not None and wear_end is not None else None,
-                    "position": last.position,
-                    "class_position": last.class_position,
-                    "top_speed": max(speed_values) if speed_values else None,
-                    "max_rpm": max(rpm_values) if rpm_values else None,
-                    "sample_count": len(rows),
-                    "valid_lap": True,
-                    "in_pit": in_pit,
-                    "under_yellow": False,
-                }
-            )
+            lap = {
+                "lap_number": lap_number,
+                "start_time": start_time,
+                "end_time": end_time,
+                "lap_time": duration,
+                "fuel_start": fuel_start,
+                "fuel_end": fuel_end,
+                "fuel_used": fuel_used,
+                "fuel_added": fuel_added,
+                "tyre_wear_start": wear_start,
+                "tyre_wear_end": wear_end,
+                "tyre_wear_delta": wear_end - wear_start if wear_start is not None and wear_end is not None else None,
+                "position": last.position,
+                "class_position": last.class_position,
+                "top_speed": max(speed_values) if speed_values else None,
+                "speed_kph": self._average_sample_field(rows, "speed_kph"),
+                "max_rpm": max(rpm_values) if rpm_values else None,
+                "rpm": self._average_sample_field(rows, "rpm"),
+                "throttle": self._average_sample_field(rows, "throttle"),
+                "brake": self._average_sample_field(rows, "brake"),
+                "steering": self._average_sample_field(rows, "steering"),
+                "track_temp": self._average_sample_field(rows, "track_temp"),
+                "ambient_temp": self._average_sample_field(rows, "ambient_temp"),
+                "sample_count": len(rows),
+                "valid_lap": True,
+                "in_pit": in_pit,
+                "under_yellow": False,
+            }
+            for wheel in ("fl", "fr", "rl", "rr"):
+                start_wear = getattr(first, f"tyre_wear_{wheel}")
+                end_wear = getattr(last, f"tyre_wear_{wheel}")
+                lap[f"tyre_wear_start_{wheel}"] = start_wear
+                lap[f"tyre_wear_end_{wheel}"] = end_wear
+                lap[f"tyre_wear_delta_{wheel}"] = end_wear - start_wear if start_wear is not None and end_wear is not None else None
+                lap[f"tyre_temp_{wheel}"] = self._average_sample_field(rows, f"tyre_temp_{wheel}")
+                lap[f"tyre_pressure_{wheel}"] = self._average_sample_field(rows, f"tyre_pressure_{wheel}")
+                lap[f"brake_temp_{wheel}"] = self._average_sample_field(rows, f"brake_temp_{wheel}")
+                lap[f"ride_height_{wheel}"] = self._average_sample_field(rows, f"ride_height_{wheel}")
+            laps.append(lap)
             if fuel_end is not None:
                 previous_fuel_end = fuel_end
         return laps
@@ -721,7 +788,7 @@ class Repository:
             if not all_samples and aggregate:
                 result = {
                     "session": self._row_dict(session),
-                    "telemetry_samples": [],
+                    "telemetry_samples": self._json_rows(aggregate.sample_trace_json),
                     "recommendations": self._json_rows(aggregate.recommendations_json),
                     "laps": self._json_rows(aggregate.laps_json),
                     "pit_events": self._json_rows(aggregate.pit_events_json),

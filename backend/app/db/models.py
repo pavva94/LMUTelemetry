@@ -46,6 +46,7 @@ class SessionAggregateModel(Base):
     latest_lap_number: Mapped[Optional[int]] = mapped_column(Integer)
     sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     latest_sample_json: Mapped[Optional[str]] = mapped_column(Text)
+    sample_trace_json: Mapped[Optional[str]] = mapped_column(Text)
     laps_json: Mapped[Optional[str]] = mapped_column(Text)
     pit_events_json: Mapped[Optional[str]] = mapped_column(Text)
     recommendations_json: Mapped[Optional[str]] = mapped_column(Text)

@@ -109,7 +109,7 @@ export function RacePrepReport({ strategy }: Props) {
   return (
     <div className="page grid">
       <section className="card span-12">
-        <SectionTitle title="Race Preparation Report" help="Turns live session telemetry into a race-prep summary. Select the current practice run for live updates or a completed saved session for review." />
+        <SectionTitle title="Session Report" help="Reviews a selected live or saved session with pace, fuel, tyre, environment, and preparation statistics." />
         <div className="input-grid">
           <select value={selected} onChange={(event) => setSelected(event.target.value)}>
             <option value="current">Current live session</option>
@@ -158,6 +158,9 @@ function SessionOverview({ report }: { report: RacePrepReportModel }) {
         <Metric label="Average lap" value={formatRaceTime(report.pace.averageLap)} />
         <Metric label="Median lap" value={formatRaceTime(report.pace.medianLap)} />
         <Metric label="Duration" value={formatRaceTime(report.session.duration)} />
+        <Metric label="Distance" value={fmt(report.session.totalDistanceKm, 2, " km")} />
+        <Metric label="Top speed" value={fmt(report.session.topSpeed, 0, " km/h")} />
+        <Metric label="Pit laps" value={report.session.pitLaps} />
         <Metric label="Track temp" value={fmt(report.session.trackTemp, 1, " C")} />
         <Metric label="Ambient temp" value={fmt(report.session.ambientTemp, 1, " C")} />
       </div>
@@ -196,11 +199,11 @@ function BestAndSector({ report }: { report: RacePrepReportModel }) {
         {!report.sectors.available && <p className="muted">{report.sectors.message}</p>}
       </section>
       <section className="card span-6">
-        <SectionTitle title="Sector Analysis" help="Identifies the largest sector-level loss when live sector splits are stored." />
+        <SectionTitle title="Sector Analysis" help="Identifies the largest sector-level loss when sector splits are available in the stored session." />
         <Metric label="Sector 1 best" value={formatRaceTime(report.sectors.bestSectors.sector1)} />
         <Metric label="Sector 2 best" value={formatRaceTime(report.sectors.bestSectors.sector2)} />
         <Metric label="Sector 3 best" value={formatRaceTime(report.sectors.bestSectors.sector3)} />
-        {!report.sectors.available && <p className="muted">Sector analysis is waiting for persisted sector split data.</p>}
+        {!report.sectors.available && <p className="muted">Sector split channels are not stored for this session yet, so sector analysis cannot be calculated from this recording.</p>}
       </section>
     </>
   );
@@ -288,7 +291,7 @@ function RaceExecution({ report }: { report: RacePrepReportModel }) {
   const needsStop = (report.execution.fuelStops ?? 0) > 0;
   return (
     <section className="card span-12">
-      <SectionTitle title="Race Execution Suggestions" help="Turns practice data into race-running options for pace, fuel, tyres, and lift-and-coast." />
+      <SectionTitle title="Preparation Notes" help="Turns the selected session into next-run preparation notes for pace, fuel, tyres, and stint planning." />
       <div className="header-grid">
         <Metric label="Suggested race pace" value={`${formatRaceTime(report.execution.paceTargetLow)} - ${formatRaceTime(report.execution.paceTargetHigh)}`} />
         <Metric label="Fuel stops" value={report.execution.fuelStops ?? "--"} sub={report.execution.totalStints != null ? `${report.execution.totalStints} stints` : undefined} />
@@ -325,7 +328,7 @@ function RaceExecution({ report }: { report: RacePrepReportModel }) {
           </div>
         </>
       )}
-      <p className="muted"><strong>Recommended race approach:</strong> {report.execution.finalRecommendation}</p>
+      <p className="muted"><strong>Next-session preparation:</strong> {report.execution.finalRecommendation}</p>
     </section>
   );
 }

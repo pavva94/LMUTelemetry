@@ -130,9 +130,12 @@ select { width: 100%; border: 1px solid #33414d; background: #0f1419; color: #ff
 .motec-value-grid > div { display: grid; gap: 3px; background: #0f1419; border: 1px solid #27313a; border-radius: 6px; padding: 10px; }
 .strategy-input-grid label { align-content: start; }
 .strategy-card { display: grid; gap: 11px; }
+.strategy-card.selected { border-color: #e6b450; background: #171c20; box-shadow: inset 0 0 0 1px rgba(230,180,80,.32); }
 .strategy-card h2 { font-size: 16px; margin-bottom: 0; }
 .strategy-card-main { display: grid; gap: 3px; padding: 12px; border: 1px solid #27313a; border-radius: 6px; background: #0f1419; }
 .strategy-card-main strong { font-size: 26px; line-height: 1; }
+.strategy-select { justify-self: start; }
+.strategy-select.active-control { border-color: #e6b450; color: #e6b450; }
 .strategy-timeline { display: grid; gap: 14px; padding: 8px 0 4px; }
 .strategy-track { position: relative; display: flex; min-height: 132px; padding: 34px 0 44px; border-bottom: 2px solid #33414d; }
 .strategy-stint { display: grid; place-items: center; min-width: 70px; border-right: 1px solid #33414d; background: linear-gradient(180deg, rgba(109,214,255,.12), rgba(230,180,80,.08)); color: #d9e3ea; font-size: 12px; font-weight: 800; }

@@ -24,7 +24,7 @@ const liveItems = [
   ["race-history", "Race History", History],
   ["xy-plotter", "X-Y Plotter", LineChart],
   ["planner", "Strategy Planner", Activity],
-  ["race-prep", "Race Prep Report", FileText],
+  ["race-prep", "Session Report", FileText],
   ["pit", "Pit Window", Flag],
   ["settings", "Settings", Settings],
 ] as const;
@@ -58,7 +58,7 @@ const pageDescriptions: Record<PageKey, string> = {
   "race-history": "Current-session lap, stint, event, and recommendation history built from temporary live telemetry summaries.",
   "xy-plotter": "Custom plots for live and current-session channels while detailed telemetry is still available.",
   planner: "Strategy assumptions and planning tools that combine live telemetry with configurable race targets.",
-  "race-prep": "Saved-session report builder that uses aggregated session summaries for review and preparation.",
+  "race-prep": "Selected-session report builder for reviewing pace, fuel, tyres, environment, and preparation notes.",
   pit: "Pit-window guidance based on current strategy assumptions and live session state.",
   settings: "Configuration for connection, display, recording behavior, and strategy assumptions.",
   motec: "Offline CSV analysis workspace for imported MoTeC-style files and their persisted summaries.",

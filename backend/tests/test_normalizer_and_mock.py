@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.telemetry.mock_collector import MockTelemetryCollector
-from app.telemetry.normalizer import _normalize_competitor, _normalize_tyres, completed_lap_time, kelvin_to_celsius, normalize_lmu_snapshot, tyre_wear_used_fraction, vector_speed_kph
+from app.telemetry.normalizer import _normalize_competitor, _normalize_tyres, completed_lap_time, kelvin_to_celsius, normalize_lmu_snapshot, session_type_name, tyre_wear_used_fraction, vector_speed_kph
 
 
 def test_mock_collector_emits_valid_snapshot() -> None:
@@ -20,6 +20,14 @@ def test_normalizer_helpers() -> None:
     assert completed_lap_time(95.2) == 95.2
     assert round(tyre_wear_used_fraction(0.98) or 0, 3) == 0.02
     assert round(tyre_wear_used_fraction(92) or 0, 3) == 0.08
+
+
+def test_session_type_name_maps_lmu_session_ranges() -> None:
+    assert session_type_name(5) == "Qualifying"
+    assert session_type_name(8) == "Qualifying 4"
+    assert session_type_name(9) == "Warmup"
+    assert session_type_name(10) == "Race"
+    assert session_type_name(13) == "Race 4"
 
 
 def test_tyre_normalizer_ignores_zero_channels_and_reads_temperature_fallback() -> None:

@@ -36,6 +36,42 @@ def test_lap_summary_uses_official_last_lap_time_for_completed_lap() -> None:
     assert laps[0]["lap_time"] == 91.234
 
 
+def test_repository_session_type_name_maps_lmu_race_range() -> None:
+    repository = Repository()
+
+    assert repository._session_type_name("8") == "Qualifying 4"
+    assert repository._session_type_name("9") == "Warmup"
+    assert repository._session_type_name("10") == "Race"
+    assert repository._session_type_name("13") == "Race 4"
+
+
+def test_lap_summary_handles_repeated_identical_official_lap_times() -> None:
+    rows = [
+        sample(1, 0.0),
+        sample(2, 90.0, 90.0),
+        sample(3, 180.0, 90.0),
+    ]
+
+    laps = Repository()._build_laps(rows)
+
+    assert laps[0]["lap_time"] == 90.0
+    assert laps[1]["lap_time"] == 90.0
+
+
+def test_lap_summary_uses_lap_start_boundaries_when_official_value_is_stale() -> None:
+    rows = [
+        TelemetrySampleModel(session_id="test", timestamp="2026-01-01T00:00:00", lap_number=1, game_time=0.0, current_lap_time=0.0),
+        TelemetrySampleModel(session_id="test", timestamp="2026-01-01T00:01:20", lap_number=1, game_time=80.0, current_lap_time=80.0),
+        TelemetrySampleModel(session_id="test", timestamp="2026-01-01T00:01:31", lap_number=2, game_time=91.234, current_lap_time=0.0, last_lap_time=84.0),
+        TelemetrySampleModel(session_id="test", timestamp="2026-01-01T00:02:00", lap_number=2, game_time=120.0, current_lap_time=28.766, last_lap_time=91.234),
+    ]
+
+    laps = Repository()._build_laps(rows)
+
+    assert laps[0]["lap_time"] == 91.234
+    assert abs(laps[0]["end_time"] - 91.234) < 0.001
+
+
 def test_lap_summary_captures_position_at_lap_end() -> None:
     rows = [
         TelemetrySampleModel(session_id="test", timestamp="2026-01-01T00:00:00", lap_number=1, game_time=0.0, position=6, class_position=3),
@@ -46,6 +82,58 @@ def test_lap_summary_captures_position_at_lap_end() -> None:
 
     assert laps[0]["position"] == 4
     assert laps[0]["class_position"] == 2
+
+
+def test_lap_summary_persists_environment_and_tyre_details() -> None:
+    rows = [
+        TelemetrySampleModel(
+            session_id="test",
+            timestamp="2026-01-01T00:00:00",
+            lap_number=1,
+            game_time=0.0,
+            tyre_wear_fl=0.01,
+            tyre_temp_fl=80,
+            tyre_pressure_fl=180,
+            brake_temp_fl=500,
+            ride_height_fl=0.04,
+            throttle=0.5,
+            brake=0.1,
+            steering=0.2,
+            track_temp=30,
+            ambient_temp=20,
+        ),
+        TelemetrySampleModel(
+            session_id="test",
+            timestamp="2026-01-01T00:01:30",
+            lap_number=1,
+            game_time=90.0,
+            tyre_wear_fl=0.03,
+            tyre_temp_fl=90,
+            tyre_pressure_fl=190,
+            brake_temp_fl=520,
+            ride_height_fl=0.05,
+            throttle=0.7,
+            brake=0.2,
+            steering=0.4,
+            track_temp=32,
+            ambient_temp=22,
+        ),
+    ]
+
+    laps = Repository()._build_laps(rows)
+
+    assert laps[0]["track_temp"] == 31
+    assert laps[0]["ambient_temp"] == 21
+    assert laps[0]["tyre_wear_start_fl"] == 0.01
+    assert laps[0]["tyre_wear_end_fl"] == 0.03
+    assert abs(laps[0]["tyre_wear_delta_fl"] - 0.02) < 0.001
+    assert laps[0]["tyre_temp_fl"] == 85
+    assert laps[0]["tyre_pressure_fl"] == 185
+    assert laps[0]["brake_temp_fl"] == 510
+    assert laps[0]["ride_height_fl"] == 0.045
+    assert laps[0]["throttle"] == 0.6
+    assert abs(laps[0]["brake"] - 0.15) < 0.001
+    assert abs(laps[0]["steering"] - 0.3) < 0.001
 
 
 def test_lap_summary_does_not_treat_fuel_jump_as_pit_without_pit_signal() -> None:
@@ -172,6 +260,8 @@ def test_finalize_stores_result_from_latest_sample_without_snapshot(monkeypatch)
     review = Repository().review("race-result", sample_limit=0)
     assert review["laps"][0]["position"] == 8
     assert review["laps"][1]["position"] == 6
+    assert review["telemetry_samples"]
+    assert review["telemetry_samples"][0]["speed_kph"] == 180
 
 
 def test_profile_live_laps_use_persisted_official_lap_times(monkeypatch, tmp_path) -> None:

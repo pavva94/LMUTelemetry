@@ -47,7 +47,7 @@ export default function App() {
         {page === "settings" && <SettingsPage telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "planner" && <StrategyPlanner strategy={strategy} telemetry={telemetry} />}
         {page === "race-prep" && <RacePrepReport strategy={strategy} />}
-        {page === "pit" && <PitWindow strategy={strategy} />}
+        {page === "pit" && <PitWindow strategy={strategy} telemetry={telemetry} />}
         {page === "review" && <SessionReview />}
       </ErrorBoundary>
     </Layout>

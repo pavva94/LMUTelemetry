@@ -40,8 +40,14 @@ def session_type_name(value: Any) -> str:
         3: "Practice 3",
         4: "Practice 4",
         5: "Qualifying",
-        6: "Warmup",
-        7: "Race",
+        6: "Qualifying 2",
+        7: "Qualifying 3",
+        8: "Qualifying 4",
+        9: "Warmup",
+        10: "Race",
+        11: "Race 2",
+        12: "Race 3",
+        13: "Race 4",
     }
     try:
         numeric = int(value)
