@@ -36,6 +36,12 @@ def saved_session_dashboard(session_id: str, request: Request):
     return service.repository.dashboard_snapshot(session_id, service.assumptions)
 
 
+@router.get("/live-lap-analysis")
+def live_lap_analysis(request: Request, selected_lap: int | None = None, reference_lap: int | None = None):
+    service = request.app.state.telemetry_service
+    return service.live_lap_analysis(selected_lap=selected_lap, reference_lap=reference_lap)
+
+
 @router.get("/sessions")
 def sessions(request: Request):
     service = request.app.state.telemetry_service

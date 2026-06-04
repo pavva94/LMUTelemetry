@@ -59,6 +59,9 @@ class PlayerState(BaseModel):
     best_lap_time: float | None = None
     delta_best: float | None = None
     speed_kph: float | None = None
+    g_force_lat: float | None = None
+    g_force_long: float | None = None
+    g_force_vert: float | None = None
     gear: int | None = None
     rpm: float | None = None
     max_rpm: float | None = None
@@ -88,6 +91,14 @@ class PlayerState(BaseModel):
     brake_pressure_fr: float | None = None
     brake_pressure_rl: float | None = None
     brake_pressure_rr: float | None = None
+    wheel_rot_speed_fl: float | None = None
+    wheel_rot_speed_fr: float | None = None
+    wheel_rot_speed_rl: float | None = None
+    wheel_rot_speed_rr: float | None = None
+    wheel_ground_speed_fl: float | None = None
+    wheel_ground_speed_fr: float | None = None
+    wheel_ground_speed_rl: float | None = None
+    wheel_ground_speed_rr: float | None = None
     ride_height_fl: float | None = None
     ride_height_fr: float | None = None
     ride_height_rl: float | None = None

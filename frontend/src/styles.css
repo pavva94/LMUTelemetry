@@ -160,6 +160,31 @@ select { width: 100%; border: 1px solid #33414d; background: #0f1419; color: #ff
 .strategy-summary-line { display: flex; flex-wrap: wrap; gap: 8px; }
 .strategy-summary-line span { padding: 7px 9px; border: 1px solid #27313a; border-radius: 6px; background: #0f1419; color: #aeb8c2; font-size: 12px; font-weight: 700; }
 .motec-map { width: 100%; min-height: 420px; display: block; background: #0f1419; border-radius: 8px; }
+.lap-analysis-page { align-items: start; }
+.lap-analysis-sticky { position: sticky; top: 0; z-index: 2; box-shadow: 0 10px 28px rgba(0,0,0,.18); }
+.lap-context-grid { display: grid; grid-template-columns: minmax(180px, 1.5fr) repeat(2, minmax(130px, .8fr)) repeat(3, minmax(110px, .6fr)); gap: 10px; align-items: end; }
+.lap-metric { display: grid; gap: 4px; min-height: 56px; padding: 8px 10px; border: 1px solid #27313a; border-radius: 6px; background: #0f1419; }
+.lap-metric strong { font-size: 18px; overflow-wrap: anywhere; }
+.lap-sector-table { margin-top: 10px; }
+.lap-sector-table table { font-size: 12px; }
+.lap-sector-table th, .lap-sector-table td { padding: 6px 8px; }
+.lap-analysis-notepad-card { min-height: 210px; }
+.lap-insight-list { display: grid; gap: 8px; }
+.lap-insight-row { width: 100%; display: grid; grid-template-columns: 28px 1fr; gap: 8px; align-items: start; text-align: left; border: 1px solid #27313a; border-radius: 6px; background: #0f1419; color: #d9e3ea; padding: 9px; cursor: pointer; }
+.lap-insight-row:hover, .lap-insight-row.active { border-color: #e6b450; background: #1a2027; }
+.lap-insight-row.critical .lap-insight-icon { color: #ffaaa5; }
+.lap-insight-row.warning .lap-insight-icon { color: #ffd37a; }
+.lap-insight-row.success .lap-insight-icon { color: #8ff3bd; }
+.lap-insight-row strong { display: block; font-size: 13px; line-height: 1.3; overflow-wrap: anywhere; }
+.lap-insight-row small { display: block; margin-top: 3px; color: #8b98a5; font-size: 12px; line-height: 1.25; }
+.lap-insight-icon { display: grid; place-items: center; padding-top: 2px; }
+.lap-chart-card { min-height: 380px; }
+.tire-matrix { display: grid; grid-template-columns: repeat(2, minmax(0, 180px)); justify-content: center; gap: 18px 34px; padding: 10px 0 4px; }
+.tire-block { display: grid; gap: 8px; padding: 12px; border: 1px solid #27313a; border-radius: 8px; background: #0f1419; min-height: 128px; }
+.tire-block strong { color: #e6edf3; }
+.tire-block small { color: #aeb8c2; font-weight: 800; }
+.tire-zones { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; min-height: 58px; }
+.tire-zones span { display: grid; place-items: center; border-radius: 5px; color: #071015; font-size: 12px; font-weight: 900; text-shadow: 0 1px 0 rgba(255,255,255,.18); }
 .circle-map { position: relative; min-height: 430px; aspect-ratio: 1 / 1; max-width: 520px; margin: 0 auto; border: 2px solid #33414d; border-radius: 50%; background: radial-gradient(circle, #141a20 0 40%, transparent 41%); }
 .car-dot { position: absolute; width: 28px; height: 28px; transform: translate(-50%, -50%); border-radius: 50%; color: #0c0f12; font-size: 11px; font-weight: 900; display: grid; place-items: center; border: 2px solid #0c0f12; }
 .car-dot.player { width: 34px; height: 34px; border-color: #e6edf3; }
@@ -177,10 +202,16 @@ label input[type="checkbox"] { width: auto; margin-right: 8px; }
   .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .span-3, .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: span 12; }
   .input-grid { grid-template-columns: 1fr 1fr; }
+  .lap-context-grid { grid-template-columns: 1fr 1fr; }
   .duckdb-workspace { grid-template-columns: 1fr; }
   .duckdb-browser { max-height: 420px; border-right: 0; border-bottom: 1px solid #222a32; }
   .duckdb-path-grid { grid-template-columns: 1fr; }
   .speed-gear { grid-template-columns: 1fr 1fr; }
   .motec-workspace { grid-template-columns: 1fr; }
   .motec-worksheets { max-height: 260px; border-right: 0; border-bottom: 1px solid #222a32; }
+}
+
+@media (max-width: 640px) {
+  .lap-context-grid { grid-template-columns: 1fr; }
+  .tire-matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 }

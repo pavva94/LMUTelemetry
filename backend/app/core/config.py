@@ -19,6 +19,12 @@ class Settings(BaseModel):
     poll_hz: int = 10
     broadcast_hz: int = 5
     log_hz: int = 1
+    live_analysis_retained_laps: int = 10
+    tyre_radius_m: float = 0.32
+    vehicle_mass_kg: float = 1030.0
+    roll_center_height_m: float = 0.08
+    track_width_m: float = 1.9
+    wheelbase_m: float = 3.0
     database_url: str = f"sqlite:///{ROOT_DIR / 'data' / 'sessions' / 'lmu_strategy.sqlite3'}"
     assumptions: StrategyAssumptions = StrategyAssumptions()
 

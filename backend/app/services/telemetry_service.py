@@ -7,6 +7,7 @@ from typing import Any
 
 from fastapi import WebSocket
 
+from app.analysis.live_lap_engine import LiveLapBuffer, VehicleAnalysisConfig, analysis_payload
 from app.ai.assistant import StrategyAssistant
 from app.core.config import Settings
 from app.db.repository import Repository
@@ -65,6 +66,16 @@ class TelemetryService:
         self.event_detector = EventDetector()
         self.assistant = StrategyAssistant()
         self.repository = Repository()
+        self.live_analysis_config = VehicleAnalysisConfig(
+            poll_hz=settings.poll_hz,
+            retained_laps=settings.live_analysis_retained_laps,
+            tyre_radius_m=settings.tyre_radius_m,
+            mass_kg=settings.vehicle_mass_kg,
+            roll_center_height_m=settings.roll_center_height_m,
+            track_width_m=settings.track_width_m,
+            wheelbase_m=settings.wheelbase_m,
+        )
+        self.live_lap_buffer = LiveLapBuffer(self.live_analysis_config)
         self.session_logger = SessionLogger(self.repository, settings.log_hz)
         self.hub = WebSocketHub()
         self.session_id = str(uuid.uuid4())
@@ -125,6 +136,7 @@ class TelemetryService:
         self.recommendation_payload = RecommendationPayload(current=self.recommendation)
         self._idle_since_game_time = None
         self._last_player_progress = None
+        self.live_lap_buffer.reset()
 
     def _snapshot_signature(self, snapshot: TelemetrySnapshot) -> tuple[str | None, str | None, str | None]:
         session = snapshot.session
@@ -203,7 +215,19 @@ class TelemetryService:
         self._last_game_time = None
         self._last_lap_number = None
         self.session_logger.reset()
+        self.live_lap_buffer.reset()
         self._reset_live_models()
+
+    def live_lap_analysis(self, selected_lap: int | None = None, reference_lap: int | None = None) -> dict:
+        player = self.latest_snapshot.player if self.latest_snapshot and self.latest_snapshot.player else None
+        session_state = self.latest_snapshot.session if self.latest_snapshot and self.latest_snapshot.session else None
+        session = {
+            "track_name": session_state.track_name if session_state else None,
+            "session_type": session_state.session_type if session_state else None,
+            "vehicle_name": player.vehicle_name if player else None,
+            "vehicle_model": player.vehicle_model if player else None,
+        }
+        return analysis_payload(self.live_lap_buffer, self.live_analysis_config, selected_lap, reference_lap, session)
 
     def _maybe_rotate_session(self, snapshot: TelemetrySnapshot) -> None:
         session = snapshot.session
@@ -293,5 +317,6 @@ class TelemetryService:
             metadata={"session_id": self.session_id},
         )
         snapshot.strategy = strategy
+        self.live_lap_buffer.add_snapshot(snapshot)
         self.session_logger.log(self.session_id, snapshot, recommendation)
         self._last_session_snapshot = snapshot

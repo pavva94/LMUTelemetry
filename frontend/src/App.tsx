@@ -3,6 +3,7 @@ import { api } from "./api/client";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Layout, type PageKey } from "./components/Layout";
 import { LiveDashboard } from "./pages/LiveDashboard";
+import { LiveLapAnalysis } from "./pages/LiveLapAnalysis";
 import { LmuDuckdbReview } from "./pages/LmuDuckdbReview";
 import { MotecWorkspace } from "./pages/MotecWorkspace";
 import { PitWindow } from "./pages/PitWindow";
@@ -47,6 +48,7 @@ export default function App() {
         {page === "settings" && <SettingsPage telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "planner" && <StrategyPlanner strategy={strategy} telemetry={telemetry} />}
         {page === "race-prep" && <RacePrepReport strategy={strategy} />}
+        {page === "lap-analysis" && <LiveLapAnalysis />}
         {page === "pit" && <PitWindow strategy={strategy} telemetry={telemetry} />}
         {page === "review" && <LmuDuckdbReview />}
       </ErrorBoundary>

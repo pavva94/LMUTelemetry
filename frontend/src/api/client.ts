@@ -2,6 +2,7 @@ import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { SavedSession, SessionDashboard, SessionReview } from "../types/session";
 import type { LmuDuckdbScanResponse, LmuDuckdbSettings } from "../types/lmuDuckdb";
+import type { LiveLapAnalysis } from "../types/liveLapAnalysis";
 import type { MotecSession, MotecSample } from "../types/motec";
 import type { ProfileLap, ProfileLapResponse, ProfileOverview, ProfileSummary } from "../types/profile";
 
@@ -35,6 +36,13 @@ export const api = {
   review: (limit = REVIEW_SAMPLE_LIMIT) => getJson<SessionReview>(`/api/session/review?limit=${limit}`),
   reviewSession: (id: string, limit = REVIEW_SAMPLE_LIMIT) => getJson<SessionReview>(`/api/session/review/${encodeURIComponent(id)}?limit=${limit}`),
   sessionDashboard: (id: string) => getJson<SessionDashboard>(`/api/session/review/${encodeURIComponent(id)}/dashboard`),
+  liveLapAnalysis: (selectedLap?: number | null, referenceLap?: number | null) => {
+    const params = new URLSearchParams();
+    if (selectedLap != null) params.set("selected_lap", String(selectedLap));
+    if (referenceLap != null) params.set("reference_lap", String(referenceLap));
+    const suffix = params.toString() ? `?${params}` : "";
+    return getJson<LiveLapAnalysis>(`/api/live-lap-analysis${suffix}`);
+  },
   finalizeCurrentSession: async () => {
     const response = await fetch(`${API_BASE}/api/session/current/finalize`, { method: "POST" });
     if (!response.ok) throw new Error("session finalize failed");

@@ -50,6 +50,9 @@ export type PlayerState = {
   best_lap_time?: number;
   delta_best?: number;
   speed_kph?: number;
+  g_force_lat?: number;
+  g_force_long?: number;
+  g_force_vert?: number;
   gear?: number;
   rpm?: number;
   max_rpm?: number;
@@ -79,6 +82,14 @@ export type PlayerState = {
   brake_pressure_fr?: number;
   brake_pressure_rl?: number;
   brake_pressure_rr?: number;
+  wheel_rot_speed_fl?: number;
+  wheel_rot_speed_fr?: number;
+  wheel_rot_speed_rl?: number;
+  wheel_rot_speed_rr?: number;
+  wheel_ground_speed_fl?: number;
+  wheel_ground_speed_fr?: number;
+  wheel_ground_speed_rl?: number;
+  wheel_ground_speed_rr?: number;
   ride_height_fl?: number;
   ride_height_fr?: number;
   ride_height_rl?: number;

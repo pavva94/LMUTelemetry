@@ -177,6 +177,9 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
     wheels = list(attr(telemetry, "mWheels", default=[]) or [])
     def wheel_value(index: int, name: str) -> float | None:
         return safe_float(attr(wheels[index], name, default=None)) if index < len(wheels) else None
+    def accel_g(axis: str) -> float | None:
+        value = safe_float(attr(attr(telemetry, "mLocalAccel", default=None), axis, default=None))
+        return value / 9.80665 if value is not None else None
     elapsed = safe_float(attr(telemetry, "mElapsedTime", default=None))
     lap_start = safe_float(attr(telemetry, "mLapStartET", default=None))
     current_lap_time = elapsed - lap_start if elapsed is not None and lap_start is not None and elapsed >= lap_start else None
@@ -200,6 +203,9 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         best_lap_time=completed_lap_time(attr(vehicle, "mBestLapTime", default=None)),
         delta_best=safe_float(attr(telemetry, "mDeltaBest", default=None)),
         speed_kph=vector_speed_kph(attr(vehicle, "mLocalVel", "mVel", default=None)),
+        g_force_lat=accel_g("x"),
+        g_force_long=accel_g("z"),
+        g_force_vert=accel_g("y"),
         gear=attr(telemetry, "mGear", default=None),
         rpm=safe_float(attr(telemetry, "mEngineRPM", default=None)),
         max_rpm=safe_float(attr(telemetry, "mEngineMaxRPM", default=None)),
@@ -229,6 +235,14 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         brake_pressure_fr=wheel_value(1, "mBrakePressure"),
         brake_pressure_rl=wheel_value(2, "mBrakePressure"),
         brake_pressure_rr=wheel_value(3, "mBrakePressure"),
+        wheel_rot_speed_fl=wheel_value(0, "mRotation"),
+        wheel_rot_speed_fr=wheel_value(1, "mRotation"),
+        wheel_rot_speed_rl=wheel_value(2, "mRotation"),
+        wheel_rot_speed_rr=wheel_value(3, "mRotation"),
+        wheel_ground_speed_fl=wheel_value(0, "mLongitudinalGroundVel"),
+        wheel_ground_speed_fr=wheel_value(1, "mLongitudinalGroundVel"),
+        wheel_ground_speed_rl=wheel_value(2, "mLongitudinalGroundVel"),
+        wheel_ground_speed_rr=wheel_value(3, "mLongitudinalGroundVel"),
         ride_height_fl=wheel_value(0, "mRideHeight"),
         ride_height_fr=wheel_value(1, "mRideHeight"),
         ride_height_rl=wheel_value(2, "mRideHeight"),
