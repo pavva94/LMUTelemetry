@@ -1,15 +1,28 @@
 # LMU Telemetry
 
-Local-first telemetry and race-engineering tool for Le Mans Ultimate.
+Local-first telemetry and race-engineering app for Le Mans Ultimate.
 
-The app has two main modes:
+LMU Telemetry currently runs as a FastAPI backend plus a React/Vite frontend. The backend owns live telemetry collection, session logging, native LMU DuckDB scanning, and API/WebSocket state. The frontend is the local UI for live dashboards, DuckDB-backed profile/review pages, strategy tools, and CSV/MoTeC analysis.
 
-- **Live Mode**: reads LMU shared memory, streams live telemetry, records sessions to SQLite, and provides live race-engineering pages.
-- **CSV Analysis**: imports large MoTeC-style CSV exports and opens an offline workbook for lap comparison, engineering plots, fuel strategy, and race-engineer hints.
+## Product Modes
 
-Mock telemetry is enabled by default, so the app can run without LMU.
+- **Live Mode**: reads LMU shared memory, streams live telemetry, records sessions to SQLite, and provides race-engineering pages.
+- **User Profile**: summarizes the configured LMU DuckDB telemetry folder into career overview, distance by class, most used cars, most driven tracks, and best laps.
+- **Session Review**: opens native LMU DuckDB sessions read-only, including lap summaries, fuel usage, tyres, brakes, ride heights, inputs, events, channel availability, and detailed telemetry charts.
+- **Strategy Planner / Session Report**: can work from live data or load cached DuckDB sessions from the configured telemetry folder.
+- **CSV / MoTeC Analysis**: imports large MoTeC-style CSV exports for offline lap comparison, engineering plots, fuel strategy, and rule-based Race Engineer hints.
 
-## Requirements
+## Runtime Model
+
+Development runtime:
+
+- Backend: `http://127.0.0.1:8000`
+- Frontend dev server: `http://127.0.0.1:5173`
+- Vite proxies `/api` and `/ws` to the backend
+
+The frontend does not need to be open for live logging. Logging happens in the backend telemetry loop.
+
+## Requirements For Development
 
 - Python 3.11+
 - Node.js 18+
@@ -28,53 +41,11 @@ pip install -r requirements.txt
 python run_backend.py
 ```
 
-Backend runs on:
+The backend runs on:
 
 ```text
 http://127.0.0.1:8000
 ```
-
-## Live LMU Shared Memory
-
-Install `pyLMUSharedMemory` inside the backend folder:
-
-```cmd
-cd backend
-git clone https://github.com/TinyPedal/pyLMUSharedMemory.git pyLMUSharedMemory
-```
-
-Then run the backend with real LMU telemetry instead of mock data.
-
-In **CMD**:
-
-```cmd
-cd backend
-.venv\Scripts\activate
-set USE_MOCK_TELEMETRY=false
-python run_backend.py
-```
-
-If you cloned `pyLMUSharedMemory` somewhere else, add its parent folder to `PYTHONPATH`.
-
-Example if it is cloned next to `backend`:
-
-```cmd
-cd backend
-set PYTHONPATH=%CD%\..\pyLMUSharedMemory;%PYTHONPATH%
-set USE_MOCK_TELEMETRY=false
-python run_backend.py
-```
-
-PowerShell equivalent:
-
-```powershell
-cd backend
-$env:PYTHONPATH="$PWD\..\pyLMUSharedMemory;$env:PYTHONPATH"
-$env:USE_MOCK_TELEMETRY="false"
-python run_backend.py
-```
-
-If LMU shared memory is unavailable, the backend stays running and reports that live telemetry is disconnected.
 
 ## Frontend Setup
 
@@ -84,132 +55,61 @@ npm install
 npm run dev
 ```
 
-Frontend runs on:
+The frontend dev server runs on:
 
 ```text
 http://127.0.0.1:5173
 ```
 
-If Vite chooses another port, such as `5174`, use the URL shown in the terminal.
+If Vite chooses another port, use the URL shown in the terminal.
 
-To view the live dashboard from another computer on the same network, keep the backend
-running on the LMU computer and open the frontend through that computer's LAN IP:
+## Live LMU Shared Memory
 
-```text
-http://<LMU-PC-IP>:5173
+For development, install or keep `pyLMUSharedMemory` inside the backend folder:
+
+```cmd
+cd backend
+git clone https://github.com/TinyPedal/pyLMUSharedMemory.git pyLMUSharedMemory
 ```
 
-The frontend proxies `/api` and `/ws` back to the local backend on the LMU computer,
-so the second computer only needs to reach the frontend port. If the page loads but
-live data does not, allow port `5173` through Windows Firewall on the LMU computer.
+Run the backend with real LMU telemetry instead of mock data.
 
-## Live Mode
+CMD:
 
-Live Mode includes:
+```cmd
+cd backend
+.venv\Scripts\activate
+set USE_MOCK_TELEMETRY=false
+python run_backend.py
+```
 
-- Live Dashboard
-- Race Info
-- Driving
-- Circle Map
-- Lap Compare
-- Standings
-- Field Spread
-- Race History
-- X-Y Plotter
-- Stint Data
-- Opponent Stats
-- Race Control
-- Settings
-- Strategy Planner
-- Pit Window
-- Competitors
-- Session Review
+PowerShell:
 
-The backend records live telemetry while it is running. Session Review can open stored sessions later and shows:
+```powershell
+cd backend
+.venv\Scripts\activate
+$env:USE_MOCK_TELEMETRY="false"
+python run_backend.py
+```
 
-- detected LMU sessions
-- lap summaries
-- fuel usage
-- tyre wear and tyre temperatures
-- brake temperatures
-- ride heights
-- driver inputs
-- events and recommendations
+If LMU shared memory is unavailable, the backend stays running and reports that live telemetry is disconnected.
 
-## Automatic Session Detection
+## Data Storage
 
-One driving run can contain multiple LMU sessions, for example:
+Development currently stores local data under the repository:
 
-- Practice
-- Qualifying
-- Race
-- another Race
+```text
+data/sessions/lmu_strategy.sqlite3
+data/motec/
+```
 
-The backend automatically starts a new stored session when it detects:
+Native LMU DuckDB files stay in the user-selected LMU telemetry folder. The app stores only the configured folder path, session metadata, and lap/profile cache rows in its local SQLite database; raw DuckDB telemetry is read on demand and downsampled for review charts.
 
-- LMU session type change
-- track change
-- car change
-- session clock reset
-- lap counter reset
+The data root can be overridden for development and diagnostics:
 
-This means Practice, Qualifying, and Race are reviewable separately in Session Review.
-
-Existing old recordings cannot always be split perfectly if they were recorded before session segmentation existed.
-
-## CSV / MoTeC Analysis
-
-CSV Analysis imports telemetry CSV files with two header rows:
-
-- Row 1: channel names
-- Row 2: channel units
-- Row 3 onward: telemetry samples
-
-The importer stores the CSV as an offline analysis session, builds a channel registry, groups samples by lap, and creates derived channels where possible.
-
-The MoTeC-style workspace includes:
-
-- CSV Import
-- Lap Browser
-- Compare
-- Driver
-- Speed / Delta
-- Inputs
-- Powertrain
-- Brakes
-- Tyre Temperatures
-- Tyre Pressure / Wear
-- Tyre Load / Grip
-- Ride Height / Platform
-- Wheel Speeds
-- G-Force
-- Map / GPS
-- Environment
-- Histograms
-- X-Y Plotter
-- Fuel Strategy
-- Race Engineer
-
-Large CSV files are handled by the backend instead of browser-only parsing, so files over 200 MB are practical.
-
-## Race Engineer Layer
-
-The Race Engineer worksheet is deterministic and rule-based in the first version. It does not call an LLM.
-
-It analyzes:
-
-- lap time and driving
-- braking and throttle behavior
-- steering smoothness
-- setup health
-- tyre temperatures, pressures, and wear
-- brake temperatures
-- ride height and platform behavior
-- fuel usage
-- pit/refuel sequence
-- full-stint behavior
-
-Hints include severity, confidence, affected laps, evidence, and recommended action.
+```text
+LMU_TELEMETRY_DATA_DIR=C:\path\to\data
+```
 
 ## API Highlights
 
@@ -218,7 +118,17 @@ Hints include severity, confidence, affected laps, evidence, and recommended act
 - `GET /api/sessions`
 - `GET /api/session/review`
 - `GET /api/session/review/{session_id}`
+- `GET /api/session/review/{session_id}/dashboard`
 - `POST /api/session/current/finalize`
+- `GET /api/profile/overview`
+- `GET /api/profile/summary`
+- `GET /api/profile/best-laps`
+- `GET /api/profile/laps`
+- `GET /api/lmu-duckdb/settings`
+- `POST /api/lmu-duckdb/settings`
+- `POST /api/lmu-duckdb/sync`
+- `GET /api/lmu-duckdb/sessions`
+- `GET /api/lmu-duckdb/sessions/{session_id}/review`
 - `GET /api/telemetry/latest`
 - `GET /api/strategy/current`
 - `GET /api/competitors`
@@ -232,66 +142,6 @@ Hints include severity, confidence, affected laps, evidence, and recommended act
 - `WS /ws/strategy`
 - `WS /ws/recommendations`
 
-## Data Storage
-
-Live telemetry is stored in SQLite:
-
-```text
-data/sessions/lmu_strategy.sqlite3
-```
-
-CSV/MoTeC imports are stored under:
-
-```text
-data/motec/
-```
-
-## Troubleshooting
-
-### `bunx` is not recognized
-
-The frontend now uses Vite directly:
-
-```cmd
-cd frontend
-npm run dev
-```
-
-If your terminal still shows `bunx`, pull the latest local changes or check `frontend/package.json`.
-
-### Windows CMD does not support `export`
-
-Use `set`:
-
-```cmd
-set USE_MOCK_TELEMETRY=false
-set PYTHONPATH=%CD%\pyLMUSharedMemory;%PYTHONPATH%
-```
-
-PowerShell uses `$env:` instead:
-
-```powershell
-$env:USE_MOCK_TELEMETRY="false"
-```
-
-### Backend starts but frontend data disappears
-
-Restart the backend after code changes. The frontend may call API routes that only exist after the backend has restarted.
-
-### Tyres, brakes, or ride height show `--`
-
-Those fields depend on LMU shared-memory wheel channels. New recordings store the available wheel channels, but older sessions only contain the fields that were recorded at the time.
-
-### SQLite cannot open database file
-
-Make sure the backend is run from the project/backend setup and that the app can create:
-
-```text
-data/sessions/
-```
-
-The backend now creates the SQLite folder automatically when it starts.
-
 ## Development Checks
 
 Backend syntax check:
@@ -300,9 +150,41 @@ Backend syntax check:
 python -m compileall backend\app
 ```
 
+Backend tests:
+
+```cmd
+cd backend
+pytest
+```
+
 Frontend build:
 
 ```cmd
 cd frontend
 npm run build
 ```
+
+Frontend tests:
+
+```cmd
+cd frontend
+npm run test:run
+```
+
+## Troubleshooting
+
+### No live telemetry is detected
+
+Make sure LMU is running and shared memory is available. In development, make sure `USE_MOCK_TELEMETRY=false` and `pyLMUSharedMemory` is available under `backend/pyLMUSharedMemory` or on `PYTHONPATH`.
+
+### The frontend loads but data is stale
+
+Restart the backend after backend code changes. The frontend may call API routes that only exist after the backend has restarted.
+
+### Tyres, brakes, or ride height show `--`
+
+Those fields depend on LMU shared-memory wheel channels. New recordings store available wheel channels, but older sessions only contain the fields recorded at the time.
+
+### SQLite cannot open database file
+
+Make sure the app can create and write to `data/sessions/` and `data/motec/`, or set `LMU_TELEMETRY_DATA_DIR` to a writable folder.

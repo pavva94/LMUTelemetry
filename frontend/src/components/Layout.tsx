@@ -41,7 +41,7 @@ const profileItems = [
 const modes = [
   ["live", "Live Mode", "Real-time telemetry", Gauge, liveItems],
   ["csv", "CSV Analysis", "Offline MoTeC-style tools", FileSpreadsheet, csvItems],
-  ["profile", "User Profile", "History and records", UserRound, profileItems],
+  ["profile", "User Profile", "DuckDB career and review", UserRound, profileItems],
 ] as const;
 
 const items = [...liveItems, ...csvItems, ...profileItems] as const;
@@ -62,8 +62,8 @@ const pageDescriptions: Record<PageKey, string> = {
   pit: "Pit-window guidance based on current strategy assumptions and live session state.",
   settings: "Configuration for connection, display, recording behavior, and strategy assumptions.",
   motec: "Offline CSV analysis workspace for imported MoTeC-style files and their persisted summaries.",
-  profile: "Lifetime profile and personal records; global totals include all completed sessions, even sessions removed from visible history.",
-  review: "Saved session history based on compact aggregated summaries; remove sessions here to hide them from saved-session analytics.",
+  profile: "DuckDB-only career profile and personal records built from the configured Le Mans Ultimate telemetry folder.",
+  review: "Read-only DuckDB session review using cached file metadata and raw samples loaded on demand from the selected database.",
 };
 
 const firstPageByMode: Record<ModeKey, PageKey> = {
@@ -89,7 +89,7 @@ export function Layout({
 }) {
   const activeMode = modeForPage(page);
   const [, modeLabel, , , activeItems] = activeMode;
-  const isCsvMode = activeMode[0] === "csv";
+  const isOfflineMode = activeMode[0] === "csv" || activeMode[0] === "profile";
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -121,7 +121,7 @@ export function Layout({
             <span className="topbar-mode">{modeLabel}</span>
             <span className="topbar-description">{pageDescriptions[page]}</span>
           </div>
-          <span className={isCsvMode ? "badge blue" : connected ? "badge green" : "badge red"}>{isCsvMode ? "Offline analysis" : connected ? "Live socket" : "Reconnecting"}</span>
+          <span className={isOfflineMode ? "badge blue" : connected ? "badge green" : "badge red"}>{isOfflineMode ? "Offline analysis" : connected ? "Live socket" : "Reconnecting"}</span>
         </header>
         {children}
       </main>

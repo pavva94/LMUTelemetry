@@ -5,6 +5,7 @@ SQLAlchemy==2.0.36
 PyYAML==6.0.2
 pytest==8.3.4
 httpx==0.28.1
+duckdb==1.1.3
 eval_type_backport==0.2.2
 # pyLMUSharedMemory is not currently pip-installable from its repo root.
 # For live LMU mode, clone https://github.com/TinyPedal/pyLMUSharedMemory

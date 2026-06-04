@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from app.db.database import SessionLocal
-from app.db.models import LapSummaryModel, SessionAggregateModel, SessionModel, TelemetrySampleModel, UserLifetimeStatsModel
+from app.db.models import LapSummaryModel, LmuDuckdbLapModel, LmuDuckdbSessionModel, SessionAggregateModel, SessionModel, TelemetrySampleModel
 from app.db.repository import Repository
 from app.services.motec_repository import DB_PATH as MOTEC_DB_PATH, init_motec_db
 
@@ -119,19 +119,15 @@ class ProfileRepository:
     min_lap_time_ratio = 0.75
     max_lap_time_ratio = 1.80
     min_distance_ratio = 0.75
-    _all_laps_cache_key: tuple[int | None, int, str | None, float | None, float | None] | None = None
+    _all_laps_cache_key: tuple[int | None, int, str | None] | None = None
     _all_laps_cache: list[dict] | None = None
 
-    def _all_laps_cache_token(self) -> tuple[int | None, int, str | None, float | None, int | None, str | None, float | None]:
+    def _all_laps_cache_token(self) -> tuple[int | None, int, str | None]:
         with SessionLocal() as db:
-            latest_live_sample_id = db.scalar(select(func.max(TelemetrySampleModel.id)))
-            live_session_count = db.scalar(select(func.count(SessionModel.id))) or 0
-            latest_session_created = db.scalar(select(func.max(SessionModel.created_at)))
-            latest_session_end = db.scalar(select(func.max(SessionModel.ended_at_game_time)))
-            latest_aggregate_count = db.scalar(select(func.count(SessionAggregateModel.session_id))) or 0
-            latest_removed = db.scalar(select(func.max(SessionModel.removed_at)))
-        motec_mtime = MOTEC_DB_PATH.stat().st_mtime if MOTEC_DB_PATH.exists() else None
-        return latest_live_sample_id, int(live_session_count), latest_session_created, latest_session_end, int(latest_aggregate_count), latest_removed, motec_mtime
+            latest_lap_id = db.scalar(select(func.max(LmuDuckdbLapModel.id)))
+            active_session_count = db.scalar(select(func.count(LmuDuckdbSessionModel.id)).where(LmuDuckdbSessionModel.active.is_(True))) or 0
+            latest_sync = db.scalar(select(func.max(LmuDuckdbSessionModel.synced_at)))
+        return latest_lap_id, int(active_session_count), latest_sync
 
     def _live_lap_base(self, session: SessionModel, repository: Repository, lap_number: Any) -> dict:
         return {
@@ -382,13 +378,70 @@ class ProfileRepository:
                             "finish_status": session["finish_status"],
                         }
                     )
-        return rows
+            return rows
+
+    def _duckdb_laps(self) -> list[dict]:
+        with SessionLocal() as db:
+            rows = db.execute(
+                select(LmuDuckdbLapModel, LmuDuckdbSessionModel)
+                .join(LmuDuckdbSessionModel, LmuDuckdbSessionModel.id == LmuDuckdbLapModel.session_id)
+                .where(LmuDuckdbSessionModel.active.is_(True))
+                .order_by(LmuDuckdbLapModel.date.asc(), LmuDuckdbLapModel.id.asc())
+            ).all()
+        laps: list[dict] = []
+        for lap, session in rows:
+            laps.append(
+                {
+                    "id": f"duckdb:{lap.session_id}:{lap.lap_number}",
+                    "source": "duckdb",
+                    "session_id": lap.session_id,
+                    "session_name": lap.session_type or session.session_type or "LMU DuckDB",
+                    "source_file": lap.source_file or session.file_name,
+                    "date": lap.date or session.created_at,
+                    "track": lap.track or "Unknown track",
+                    "layout": lap.layout or "",
+                    "car": lap.car or "Unknown car",
+                    "car_class": lap.car_class or "Unknown class",
+                    "session_type": lap.session_type or session.session_type,
+                    "lap_number": lap.lap_number,
+                    "lap_time": lap.lap_time,
+                    "valid_lap": lap.valid_lap,
+                    "in_pit": lap.in_pit,
+                    "distance_km": lap.distance_km,
+                    "fuel_start": lap.fuel_start,
+                    "fuel_end": lap.fuel_end,
+                    "fuel_used": lap.fuel_used,
+                    "fuel_added": lap.fuel_added,
+                    "tyre_compound": None,
+                    "tyre_wear_fl": lap.tyre_wear_fl,
+                    "tyre_wear_fr": lap.tyre_wear_fr,
+                    "tyre_wear_rl": lap.tyre_wear_rl,
+                    "tyre_wear_rr": lap.tyre_wear_rr,
+                    "tyre_pressure_fl": lap.tyre_pressure_fl,
+                    "tyre_pressure_fr": lap.tyre_pressure_fr,
+                    "tyre_pressure_rl": lap.tyre_pressure_rl,
+                    "tyre_pressure_rr": lap.tyre_pressure_rr,
+                    "brake_temp_fl": lap.brake_temp_fl,
+                    "brake_temp_fr": lap.brake_temp_fr,
+                    "brake_temp_rl": lap.brake_temp_rl,
+                    "brake_temp_rr": lap.brake_temp_rr,
+                    "track_temp": lap.track_temp,
+                    "ambient_temp": lap.ambient_temp,
+                    "engine_oil_temp": lap.engine_oil_temp,
+                    "engine_water_temp": lap.engine_water_temp,
+                    "max_speed": lap.max_speed,
+                    "average_speed": lap.average_speed,
+                    "finish_position": lap.finish_position,
+                    "finish_status": lap.finish_status,
+                }
+            )
+        return laps
 
     def all_laps(self) -> list[dict]:
         token = self._all_laps_cache_token()
         if self.__class__._all_laps_cache_key == token and self.__class__._all_laps_cache is not None:
             return self.__class__._all_laps_cache
-        laps = self._with_lap_quality(self._live_laps() + self._motec_laps())
+        laps = self._with_lap_quality(self._duckdb_laps())
         self.__class__._all_laps_cache_key = token
         self.__class__._all_laps_cache = laps
         return laps
@@ -462,13 +515,8 @@ class ProfileRepository:
 
     def _persisted_session_counts(self) -> dict[str, int]:
         with SessionLocal() as db:
-            live_sessions = db.scalar(select(func.count(SessionModel.id)).where(SessionModel.is_saved.is_(True))) or 0
-        csv_sessions = 0
-        init_motec_db()
-        if MOTEC_DB_PATH.exists():
-            with sqlite3.connect(MOTEC_DB_PATH) as db:
-                csv_sessions = int(db.execute("select count(*) from motec_sessions").fetchone()[0] or 0)
-        return {"live": int(live_sessions), "csv": csv_sessions, "total": int(live_sessions) + csv_sessions}
+            duckdb_sessions = db.scalar(select(func.count(LmuDuckdbSessionModel.id)).where(LmuDuckdbSessionModel.active.is_(True))) or 0
+        return {"live": 0, "csv": 0, "duckdb": int(duckdb_sessions), "total": int(duckdb_sessions)}
 
     def _live_session_distances(self) -> dict[str, float]:
         with SessionLocal() as db:
@@ -512,19 +560,17 @@ class ProfileRepository:
             return {f"csv:{row['session_id']}": float(row["distance"] or 0.0) for row in rows}
 
     def _career_session_distances(self) -> dict[str, float]:
-        return {**self._live_session_distances(), **self._motec_session_distances()}
+        with SessionLocal() as db:
+            rows = db.execute(
+                select(LmuDuckdbLapModel.session_id, func.sum(func.coalesce(LmuDuckdbLapModel.distance_km, 0.0)))
+                .join(LmuDuckdbSessionModel, LmuDuckdbSessionModel.id == LmuDuckdbLapModel.session_id)
+                .where(LmuDuckdbSessionModel.active.is_(True))
+                .group_by(LmuDuckdbLapModel.session_id)
+            ).all()
+        return {f"duckdb:{session_id}": float(distance or 0.0) for session_id, distance in rows}
 
     def _lifetime_totals(self) -> dict:
-        with SessionLocal() as db:
-            stats = db.get(UserLifetimeStatsModel, 1)
-        if not stats:
-            return {}
-        return {
-            "total_distance_km": stats.total_distance_km,
-            "total_sessions": stats.total_sessions,
-            "total_laps": stats.total_laps,
-            "total_driving_time": stats.total_driving_time,
-        }
+        return {}
 
     def summary(self, laps: list[dict] | None = None, best_laps: list[dict] | None = None) -> dict:
         laps = laps if laps is not None else self.all_laps()
@@ -580,6 +626,7 @@ class ProfileRepository:
                 "race_sessions": len(race_sessions),
                 "live_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "live"}), persisted_sessions["live"]),
                 "csv_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "csv"}), persisted_sessions["csv"]),
+                "duckdb_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "duckdb"}), persisted_sessions["duckdb"]),
                 "best_lap_count": len(best_laps),
             },
             "distance_by_class": by_class,

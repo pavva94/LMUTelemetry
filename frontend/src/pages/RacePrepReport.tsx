@@ -57,23 +57,23 @@ export function RacePrepReport({ strategy }: Props) {
   const [tyresAvailable, setTyresAvailable] = useState("16");
 
   useEffect(() => {
-    api.sessions()
-      .then((rows) => {
-        setSessions(rows);
-        setStatus("Sessions loaded");
+    api.lmuDuckdbSessions(250)
+      .then((payload) => {
+        setSessions(payload.sessions);
+        setStatus(payload.total ? "DuckDB sessions loaded" : "No synced DuckDB sessions");
       })
-      .catch((exc) => setStatus(exc instanceof Error ? exc.message : "Could not load saved sessions"));
+      .catch((exc) => setStatus(exc instanceof Error ? exc.message : "Could not load DuckDB sessions"));
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     const load = () => {
-      const request = selected === "current" ? api.review() : api.reviewSession(selected);
+      const request = selected === "current" ? api.review() : api.reviewCachedLmuDuckdbSession(selected);
       request
         .then((data) => {
           if (!cancelled) {
             setReview(data);
-            setStatus(selected === "current" ? "Current live session report" : "Saved session report");
+            setStatus(selected === "current" ? "Current live session report" : "DuckDB session report");
           }
         })
         .catch((exc) => !cancelled && setStatus(exc instanceof Error ? exc.message : "Could not load report data"));
@@ -109,7 +109,7 @@ export function RacePrepReport({ strategy }: Props) {
   return (
     <div className="page grid">
       <section className="card span-12">
-        <SectionTitle title="Session Report" help="Reviews a selected live or saved session with pace, fuel, tyre, environment, and preparation statistics." />
+        <SectionTitle title="Session Report" help="Reviews the current live session or a synced LMU DuckDB session with pace, fuel, tyre, environment, and preparation statistics." />
         <div className="input-grid">
           <select value={selected} onChange={(event) => setSelected(event.target.value)}>
             <option value="current">Current live session</option>
@@ -128,7 +128,7 @@ export function RacePrepReport({ strategy }: Props) {
       </section>
 
       {!report ? (
-        <section className="card span-12"><EmptyState detail="Report appears once a live or saved session can be loaded." /></section>
+        <section className="card span-12"><EmptyState detail="Report appears once a live or synced DuckDB session can be loaded." /></section>
       ) : (
         <>
           <SessionOverview report={report} />

@@ -1,7 +1,10 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { formatRaceTime } from "../lib/timeFormat";
+import type { LmuDuckdbSettings } from "../types/lmuDuckdb";
 import type { ProfileLap, ProfileSummary } from "../types/profile";
+
+const DEFAULT_FOLDER = "G:\\SteamLibrary\\steamapps\\common\\Le Mans Ultimate\\UserData\\Telemetry";
 
 const fmt = (value?: number | null, digits = 1, suffix = "") =>
   value == null || Number.isNaN(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
@@ -26,8 +29,11 @@ export function UserProfile() {
   const [sort, setSort] = useState("date");
   const [direction, setDirection] = useState("desc");
   const [error, setError] = useState("");
+  const [folder, setFolder] = useState(DEFAULT_FOLDER);
+  const [settings, setSettings] = useState<LmuDuckdbSettings | null>(null);
+  const [syncing, setSyncing] = useState(false);
 
-  useEffect(() => {
+  const loadOverview = () =>
     api.profileOverview()
       .then((overview) => {
         setSummary(overview.summary);
@@ -35,7 +41,33 @@ export function UserProfile() {
         setError("");
       })
       .catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
+
+  useEffect(() => {
+    api.lmuDuckdbSettings()
+      .then((data) => {
+        setSettings(data);
+        if (data.folder_path) setFolder(data.folder_path);
+      })
+      .catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
+    void loadOverview();
   }, []);
+
+  const saveAndSync = async () => {
+    if (!folder.trim()) return;
+    setSyncing(true);
+    try {
+      await api.saveLmuDuckdbSettings(folder.trim());
+      const result = await api.syncLmuDuckdb();
+      setSettings(result);
+      if (result.folder_path) setFolder(result.folder_path);
+      await loadOverview();
+      setError("");
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setSyncing(false);
+    }
+  };
 
   const totals = summary?.totals || {};
   const onSort = (field: string) => {
@@ -50,10 +82,24 @@ export function UserProfile() {
     <div className="page grid">
       {error && <section className="card span-12"><div className="error-box">{error}</div></section>}
       <section className="card span-12">
+        <h2>LMU DuckDB Source</h2>
+        <div className="duckdb-path-grid profile-source">
+          <label>Telemetry folder<input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder={DEFAULT_FOLDER} /></label>
+          <button className="primary" disabled={syncing || !folder.trim()} onClick={() => void saveAndSync()}>{syncing ? "Syncing" : "Save and sync"}</button>
+          <input value={settings?.last_sync_status || "No sync has run yet"} readOnly />
+        </div>
+        <div className="header-grid">
+          <Metric label="Cached sessions" value={text(settings?.active_sessions)} sub={`${text(settings?.cached_sessions)} total records`} />
+          <Metric label="Warnings" value={text(settings?.warning_count)} />
+          <Metric label="Last sync" value={dateText(settings?.last_sync_at)} />
+        </div>
+        {(settings?.warnings || []).slice(0, 5).map((warning) => <p className="motec-warning" key={warning}>{warning}</p>)}
+      </section>
+      <section className="card span-12">
         <h2>Career Overview</h2>
         <div className="header-grid">
           <Metric label="Distance" value={fmt(totals.total_distance_km as number, 1, " km")} />
-          <Metric label="Sessions" value={text(totals.total_sessions as number)} sub={`${text(totals.live_sessions as number)} live / ${text(totals.csv_sessions as number)} csv`} />
+          <Metric label="Sessions" value={text(totals.total_sessions as number)} sub={`${text(totals.duckdb_sessions as number)} DuckDB`} />
           <Metric label="Laps" value={text(totals.total_laps as number)} sub={`${text(totals.valid_laps as number)} valid`} />
           <Metric label="Driving time" value={formatRaceTime(totals.total_driving_time as number)} />
           <Metric label="Cars" value={text(totals.different_cars as number)} />
@@ -75,7 +121,7 @@ export function UserProfile() {
 
       <section className="card span-12">
         <h2>Best Laps</h2>
-        {bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once live or CSV laps are stored." />}
+        {bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU DuckDB folder is synced." />}
       </section>
     </div>
   );
@@ -146,13 +192,19 @@ function LapTable({
               <td>{fmt(lap.ambient_temp, 1, " C")}</td>
               <td>{fmt(lap.engine_oil_temp, 0, " C")} / {fmt(lap.engine_water_temp, 0, " C")}</td>
               <td>{fmt(lap.max_speed, 0, " km/h")} / {fmt(lap.average_speed, 0, " km/h")}</td>
-              <td>{lap.source === "live" ? <span className="badge blue">Live</span> : <span className="badge amber">CSV</span>}</td>
+              <td>{sourceBadge(lap.source)}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
   );
+}
+
+function sourceBadge(source: ProfileLap["source"]) {
+  if (source === "live") return <span className="badge blue">Live</span>;
+  if (source === "csv") return <span className="badge amber">CSV</span>;
+  return <span className="badge green">DuckDB</span>;
 }
 
 function validityBadge(lap: ProfileLap) {

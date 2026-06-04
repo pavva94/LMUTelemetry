@@ -3,6 +3,7 @@ import { api } from "./api/client";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Layout, type PageKey } from "./components/Layout";
 import { LiveDashboard } from "./pages/LiveDashboard";
+import { LmuDuckdbReview } from "./pages/LmuDuckdbReview";
 import { MotecWorkspace } from "./pages/MotecWorkspace";
 import { PitWindow } from "./pages/PitWindow";
 import {
@@ -14,7 +15,6 @@ import {
   SettingsPage,
   XYPlotter,
 } from "./pages/RaceEngineeringPages";
-import { SessionReview } from "./pages/SessionReview";
 import { RacePrepReport } from "./pages/RacePrepReport";
 import { StrategyPlanner } from "./pages/StrategyPlanner";
 import { UserProfile } from "./pages/UserProfile";
@@ -48,7 +48,7 @@ export default function App() {
         {page === "planner" && <StrategyPlanner strategy={strategy} telemetry={telemetry} />}
         {page === "race-prep" && <RacePrepReport strategy={strategy} />}
         {page === "pit" && <PitWindow strategy={strategy} telemetry={telemetry} />}
-        {page === "review" && <SessionReview />}
+        {page === "review" && <LmuDuckdbReview />}
       </ErrorBoundary>
     </Layout>
   );

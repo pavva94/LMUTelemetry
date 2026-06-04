@@ -312,7 +312,12 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
 
   useEffect(() => {
-    api.sessions().then(setSessions).catch(() => setSourceStatus("Saved sessions unavailable"));
+    api.lmuDuckdbSessions(250)
+      .then((payload) => {
+        setSessions(payload.sessions);
+        setSourceStatus(payload.total ? "DuckDB sessions loaded" : "No synced DuckDB sessions");
+      })
+      .catch(() => setSourceStatus("DuckDB sessions unavailable; sync the folder in User Profile"));
   }, []);
 
   useEffect(() => {
@@ -332,14 +337,14 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
       return;
     }
     let cancelled = false;
-    api.reviewSession(selectedSessionId)
+    api.reviewCachedLmuDuckdbSession(selectedSessionId)
       .then((review) => {
         if (!cancelled) {
           setSessionReview(review);
-          setSourceStatus("Saved session loaded");
+          setSourceStatus("DuckDB session loaded");
         }
       })
-      .catch((exc) => !cancelled && setSourceStatus(exc instanceof Error ? exc.message : "Could not load saved session"));
+      .catch((exc) => !cancelled && setSourceStatus(exc instanceof Error ? exc.message : "Could not load DuckDB session"));
     return () => {
       cancelled = true;
     };
@@ -362,7 +367,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   };
   const liveModel = useMemo(() => modelFromLive(strategy, telemetry, form), [strategy, telemetry, form]);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId);
-  const sessionModel = useMemo(() => modelFromSession(sessionReview, selectedSession ? `${selectedSession.session_type || "Session"} - ${selectedSession.track_name || "Unknown track"}` : "saved session"), [sessionReview, selectedSession]);
+  const sessionModel = useMemo(() => modelFromSession(sessionReview, selectedSession ? `${selectedSession.session_type || "Session"} - ${selectedSession.track_name || "Unknown track"}` : "DuckDB session"), [sessionReview, selectedSession]);
   const activeModel = modelSource === "session" && sessionModel ? sessionModel : liveModel;
 
   const applyModelToForm = (model: PlannerModel, clearDirty: boolean) => {
@@ -387,7 +392,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   };
   const useSelectedSession = () => {
     if (!sessionModel) {
-      setSourceStatus("Select a saved session with valid laps first");
+      setSourceStatus("Select a DuckDB session with valid laps first");
       return;
     }
     setModelSource("session");
@@ -473,13 +478,13 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           </label>
           <label>
             <span className="label">Active normal lap</span>
-            <input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? "saved session/manual" : activeModel.label})`} readOnly />
+            <input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? "DuckDB session/manual" : activeModel.label})`} readOnly />
             <span className="subvalue">used by strategy model</span>
           </label>
         </div>
         <p className="control-row">
           <button type="button" onClick={useLiveData}>Use live data</button>
-          <button type="button" onClick={useSelectedSession}>Use selected session</button>
+          <button type="button" onClick={useSelectedSession}>Use selected DuckDB session</button>
           <button className="primary" onClick={() => void api.updateAssumptions({
           race_duration_minutes: form.race_duration_minutes,
           normal_lap_time: form.normal_lap_time,
@@ -500,7 +505,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
       <section className="card span-12">
         <SectionTitle title="Model Status" help="Summarizes the live data feeding the race simulation. More valid fuel and tyre laps improve confidence." />
         <div className="motec-value-grid">
-          <div><span className="label">Model source</span><strong>{activeModel.source === "session" ? "Saved session" : "Live"}</strong><span className="subvalue">{activeModel.label}</span></div>
+          <div><span className="label">Model source</span><strong>{activeModel.source === "session" ? "DuckDB session" : "Live"}</strong><span className="subvalue">{activeModel.label}</span></div>
           <div><span className="label">Fuel use</span><strong>{fmt(Number.isFinite(fuelPerLap ?? NaN) ? fuelPerLap : null, 3, " L/lap")}</strong><span className="subvalue">{activeModel.fuelObservedLaps}/{activeModel.fuelRequiredLaps} valid laps</span></div>
           <div><span className="label">Tyre wear</span><strong>{pct(Number.isFinite(currentWear) ? currentWear : null)}</strong><span className="subvalue">{fmt(wearRate != null && Number.isFinite(wearRate) ? wearRate * 100 : null, 2, "% / lap")}</span></div>
           <div><span className="label">Race start fuel</span><strong>{fmt(Math.min(form.race_start_fuel_liters, form.tank_capacity_liters), 1, " L")}</strong><span className="subvalue">editable, capped by tank</span></div>

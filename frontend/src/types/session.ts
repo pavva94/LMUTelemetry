@@ -35,11 +35,22 @@ export type AggregatedSessionSummary = {
 
 export type SessionReview = {
   session?: SavedSession | null;
-  telemetry_samples: Array<Record<string, number | string | null>>;
+  telemetry_samples: Array<Record<string, number | string | boolean | null>>;
   recommendations: Array<Record<string, number | string | null>>;
   laps: Array<Record<string, number | string | boolean | null>>;
   pit_events: Array<Record<string, number | string | boolean | null>>;
   summary?: AggregatedSessionSummary | null;
+  channel_manifest?: Array<{
+    table: string;
+    schema?: string;
+    kind: string;
+    columns: string[];
+    row_count: number;
+    frequency?: number | null;
+    unit?: string | null;
+    mapped_fields?: string[];
+  }>;
+  available_fields?: Record<string, boolean>;
 };
 
 export type SessionDashboard = {

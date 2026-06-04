@@ -62,6 +62,87 @@ class UserLifetimeStatsModel(Base):
     updated_at: Mapped[Optional[str]] = mapped_column(String)
 
 
+class AppSettingModel(Base):
+    __tablename__ = "app_settings"
+    key: Mapped[str] = mapped_column(String, primary_key=True)
+    value: Mapped[Optional[str]] = mapped_column(Text)
+    updated_at: Mapped[Optional[str]] = mapped_column(String)
+
+
+class LmuDuckdbSessionModel(Base):
+    __tablename__ = "lmu_duckdb_sessions"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    file_key: Mapped[str] = mapped_column(String, nullable=False)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    file_name: Mapped[str] = mapped_column(String, nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    modified_at: Mapped[Optional[str]] = mapped_column(String)
+    signature: Mapped[str] = mapped_column(String, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[str] = mapped_column(String, nullable=False)
+    synced_at: Mapped[Optional[str]] = mapped_column(String)
+    track_name: Mapped[Optional[str]] = mapped_column(String)
+    track_layout: Mapped[Optional[str]] = mapped_column(String)
+    session_type: Mapped[Optional[str]] = mapped_column(String)
+    vehicle_name: Mapped[Optional[str]] = mapped_column(String)
+    vehicle_model: Mapped[Optional[str]] = mapped_column(String)
+    vehicle_class: Mapped[Optional[str]] = mapped_column(String)
+    started_at_game_time: Mapped[Optional[float]] = mapped_column(Float)
+    ended_at_game_time: Mapped[Optional[float]] = mapped_column(Float)
+    final_position: Mapped[Optional[int]] = mapped_column(Integer)
+    final_class_position: Mapped[Optional[int]] = mapped_column(Integer)
+    classified_status: Mapped[Optional[str]] = mapped_column(String)
+    sample_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    latest_lap_number: Mapped[Optional[int]] = mapped_column(Integer)
+    latest_game_time: Mapped[Optional[float]] = mapped_column(Float)
+    metadata_json: Mapped[Optional[str]] = mapped_column(Text)
+    warnings_json: Mapped[Optional[str]] = mapped_column(Text)
+    summary_json: Mapped[Optional[str]] = mapped_column(Text)
+    pit_events_json: Mapped[Optional[str]] = mapped_column(Text)
+
+
+class LmuDuckdbLapModel(Base):
+    __tablename__ = "lmu_duckdb_laps"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    lap_number: Mapped[str] = mapped_column(String, nullable=False)
+    date: Mapped[Optional[str]] = mapped_column(String)
+    track: Mapped[Optional[str]] = mapped_column(String)
+    layout: Mapped[Optional[str]] = mapped_column(String)
+    car: Mapped[Optional[str]] = mapped_column(String)
+    car_class: Mapped[Optional[str]] = mapped_column(String)
+    session_type: Mapped[Optional[str]] = mapped_column(String)
+    source_file: Mapped[Optional[str]] = mapped_column(String)
+    lap_time: Mapped[Optional[float]] = mapped_column(Float)
+    valid_lap: Mapped[Optional[bool]] = mapped_column(Boolean)
+    in_pit: Mapped[Optional[bool]] = mapped_column(Boolean)
+    distance_km: Mapped[Optional[float]] = mapped_column(Float)
+    fuel_start: Mapped[Optional[float]] = mapped_column(Float)
+    fuel_end: Mapped[Optional[float]] = mapped_column(Float)
+    fuel_used: Mapped[Optional[float]] = mapped_column(Float)
+    fuel_added: Mapped[Optional[float]] = mapped_column(Float)
+    tyre_wear_fl: Mapped[Optional[float]] = mapped_column(Float)
+    tyre_wear_fr: Mapped[Optional[float]] = mapped_column(Float)
+    tyre_wear_rl: Mapped[Optional[float]] = mapped_column(Float)
+    tyre_wear_rr: Mapped[Optional[float]] = mapped_column(Float)
+    tyre_pressure_fl: Mapped[Optional[float]] = mapped_column(Float)
+    tyre_pressure_fr: Mapped[Optional[float]] = mapped_column(Float)
+    tyre_pressure_rl: Mapped[Optional[float]] = mapped_column(Float)
+    tyre_pressure_rr: Mapped[Optional[float]] = mapped_column(Float)
+    brake_temp_fl: Mapped[Optional[float]] = mapped_column(Float)
+    brake_temp_fr: Mapped[Optional[float]] = mapped_column(Float)
+    brake_temp_rl: Mapped[Optional[float]] = mapped_column(Float)
+    brake_temp_rr: Mapped[Optional[float]] = mapped_column(Float)
+    track_temp: Mapped[Optional[float]] = mapped_column(Float)
+    ambient_temp: Mapped[Optional[float]] = mapped_column(Float)
+    engine_oil_temp: Mapped[Optional[float]] = mapped_column(Float)
+    engine_water_temp: Mapped[Optional[float]] = mapped_column(Float)
+    max_speed: Mapped[Optional[float]] = mapped_column(Float)
+    average_speed: Mapped[Optional[float]] = mapped_column(Float)
+    finish_position: Mapped[Optional[int]] = mapped_column(Integer)
+    finish_status: Mapped[Optional[str]] = mapped_column(String)
+
+
 class TelemetrySampleModel(Base):
     __tablename__ = "telemetry_samples"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

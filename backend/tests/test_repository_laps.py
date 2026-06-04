@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.database import Base
-from app.db.models import LapSummaryModel, RecommendationModel, SessionAggregateModel, SessionModel, TelemetrySampleModel
+from app.db.models import LapSummaryModel, LmuDuckdbLapModel, LmuDuckdbSessionModel, RecommendationModel, SessionAggregateModel, SessionModel, TelemetrySampleModel
 import app.db.repository as repository_module
 import app.services.profile_repository as profile_repository_module
 from app.db.repository import Repository
@@ -264,7 +264,7 @@ def test_finalize_stores_result_from_latest_sample_without_snapshot(monkeypatch)
     assert review["telemetry_samples"][0]["speed_kph"] == 180
 
 
-def test_profile_live_laps_use_persisted_official_lap_times(monkeypatch, tmp_path) -> None:
+def test_profile_uses_only_active_duckdb_lap_cache(monkeypatch, tmp_path) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
     monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
@@ -278,15 +278,20 @@ def test_profile_live_laps_use_persisted_official_lap_times(monkeypatch, tmp_pat
             TelemetrySampleModel(session_id="profile", timestamp="2026-01-01T00:00:01", lap_number=1, game_time=1.0, fuel_liters=89, speed_kph=210),
             TelemetrySampleModel(session_id="profile", timestamp="2026-01-01T00:01:31.234000", lap_number=2, game_time=91.234, last_lap_time=91.234, fuel_liters=86, speed_kph=205),
         ])
+        db.add(LmuDuckdbSessionModel(id="duck", file_key="duck", file_path="C:/telemetry/duck.duckdb", file_name="duck.duckdb", file_size_bytes=100, signature="sig", active=True, created_at="2026-01-02T00:00:00", synced_at="2026-01-02T00:01:00", track_name="Le Mans", session_type="Race", vehicle_name="Ferrari", vehicle_class="Hypercar", sample_count=10))
+        db.add(LmuDuckdbSessionModel(id="old", file_key="old", file_path="C:/telemetry/old.duckdb", file_name="old.duckdb", file_size_bytes=100, signature="sig", active=False, created_at="2026-01-03T00:00:00", track_name="Spa", session_type="Race", vehicle_name="Porsche", vehicle_class="GTE", sample_count=10))
+        db.add(LmuDuckdbLapModel(session_id="duck", lap_number="1", date="2026-01-02T00:00:00", track="Le Mans", car="Ferrari", car_class="Hypercar", session_type="Race", lap_time=91.234, valid_lap=True, distance_km=13.6, fuel_used=2.5, max_speed=320, average_speed=190))
+        db.add(LmuDuckdbLapModel(session_id="old", lap_number="1", date="2026-01-03T00:00:00", track="Spa", car="Porsche", car_class="GTE", session_type="Race", lap_time=100.0, valid_lap=True, distance_km=7.0))
         db.commit()
 
     laps = ProfileRepository().all_laps()
-    lap_one = next(lap for lap in laps if lap["source"] == "live" and lap["lap_number"] == 1)
+    assert {lap["source"] for lap in laps} == {"duckdb"}
+    lap_one = next(lap for lap in laps if lap["session_id"] == "duck" and lap["lap_number"] == "1")
     assert lap_one["lap_time"] == 91.234
-    assert ProfileRepository().filtered_laps(ProfileFilters())["filter_options"]["tracks"] == ["Spa"]
+    assert ProfileRepository().filtered_laps(ProfileFilters())["filter_options"]["tracks"] == ["Le Mans"]
 
 
-def test_profile_summary_counts_persisted_sessions_without_completed_laps(monkeypatch, tmp_path) -> None:
+def test_profile_summary_counts_duckdb_sessions_without_completed_laps(monkeypatch, tmp_path) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
     monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
@@ -295,15 +300,18 @@ def test_profile_summary_counts_persisted_sessions_without_completed_laps(monkey
     ProfileRepository._all_laps_cache = None
     with factory() as db:
         db.add(SessionModel(id="empty", created_at="2026-01-01T00:00:00", track_name="Spa", session_type="Practice", vehicle_name="Porsche"))
+        db.add(LmuDuckdbSessionModel(id="empty-duck", file_key="empty-duck", file_path="C:/telemetry/empty.duckdb", file_name="empty.duckdb", file_size_bytes=100, signature="sig", active=True, created_at="2026-01-01T00:00:00", track_name="Spa", session_type="Practice", vehicle_name="Porsche", sample_count=10))
         db.commit()
 
     summary = ProfileRepository().summary()
 
     assert summary["totals"]["total_sessions"] == 1
-    assert summary["totals"]["live_sessions"] == 1
+    assert summary["totals"]["live_sessions"] == 0
+    assert summary["totals"]["csv_sessions"] == 0
+    assert summary["totals"]["duckdb_sessions"] == 1
 
 
-def test_profile_total_distance_includes_invalid_stored_live_laps(monkeypatch, tmp_path) -> None:
+def test_profile_total_distance_includes_invalid_duckdb_laps(monkeypatch, tmp_path) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
     monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
@@ -318,11 +326,13 @@ def test_profile_total_distance_includes_invalid_stored_live_laps(monkeypatch, t
             TelemetrySampleModel(session_id="distance", timestamp="2026-01-01T00:01:00", lap_number=1, game_time=60.0, speed_kph=180),
             TelemetrySampleModel(session_id="distance", timestamp="2026-01-01T00:02:00", lap_number=2, game_time=120.0, speed_kph=180),
         ])
+        db.add(LmuDuckdbSessionModel(id="distance-duck", file_key="distance-duck", file_path="C:/telemetry/distance.duckdb", file_name="distance.duckdb", file_size_bytes=100, signature="sig", active=True, created_at="2026-01-01T00:00:00", track_name="Spa", session_type="Practice", vehicle_name="Porsche", vehicle_class="GTE", sample_count=10))
+        db.add(LmuDuckdbLapModel(session_id="distance-duck", lap_number="1", date="2026-01-01T00:00:00", track="Spa", car="Porsche", car_class="GTE", session_type="Practice", lap_time=72.0, valid_lap=False, distance_km=3.0))
         db.commit()
 
     summary = ProfileRepository().summary()
 
-    assert summary["totals"]["total_distance_km"] == 6.0
+    assert summary["totals"]["total_distance_km"] == 3.0
     assert summary["distance_by_class"][0]["distance_km"] == 3.0
     assert summary["totals"]["total_laps"] == 1
     assert summary["totals"]["valid_laps"] == 0

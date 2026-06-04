@@ -1,6 +1,6 @@
 export type ProfileLap = {
   id: string;
-  source: "live" | "csv";
+  source: "live" | "csv" | "duckdb";
   session_id: string;
   session_name?: string | null;
   source_file?: string | null;

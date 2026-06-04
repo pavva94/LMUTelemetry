@@ -139,3 +139,13 @@ def _ensure_sqlite_columns() -> None:
             for name, column_type in columns.items():
                 if name not in existing:
                     connection.execute(text(f"ALTER TABLE session_aggregates ADD COLUMN {name} {column_type}"))
+
+    if "lmu_duckdb_sessions" in table_names:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_sessions_file_key ON lmu_duckdb_sessions (file_key)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_sessions_active_modified ON lmu_duckdb_sessions (active, modified_at)"))
+
+    if "lmu_duckdb_laps" in table_names:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_laps_session_lap ON lmu_duckdb_laps (session_id, lap_number)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_laps_track_car ON lmu_duckdb_laps (track, car, car_class)"))

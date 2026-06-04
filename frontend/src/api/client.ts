@@ -1,6 +1,7 @@
 import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { SavedSession, SessionDashboard, SessionReview } from "../types/session";
+import type { LmuDuckdbScanResponse, LmuDuckdbSettings } from "../types/lmuDuckdb";
 import type { MotecSession, MotecSample } from "../types/motec";
 import type { ProfileLap, ProfileLapResponse, ProfileOverview, ProfileSummary } from "../types/profile";
 
@@ -11,6 +12,16 @@ export const REVIEW_SAMPLE_LIMIT = 1200;
 async function getJson<T>(path: string): Promise<T> {
   const response = await fetch(`${API_BASE}${path}`);
   if (!response.ok) throw new Error(`${path} failed with ${response.status}`);
+  return response.json();
+}
+
+async function postJson<T>(path: string, body: Record<string, unknown>): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw new Error((await response.text()) || `${path} failed with ${response.status}`);
   return response.json();
 }
 
@@ -45,6 +56,16 @@ export const api = {
   },
   motecSessions: () => getJson<MotecSession[]>("/api/motec/sessions"),
   motecSession: (id: string) => getJson<MotecSession>(`/api/motec/sessions/${id}`),
+  scanLmuDuckdbFolder: (path: string, limit = 250, offset = 0) =>
+    postJson<LmuDuckdbScanResponse>(`/api/lmu-duckdb/sessions?limit=${limit}&offset=${offset}`, { path }),
+  lmuDuckdbSettings: () => getJson<LmuDuckdbSettings>("/api/lmu-duckdb/settings"),
+  saveLmuDuckdbSettings: (path: string) => postJson<LmuDuckdbSettings>("/api/lmu-duckdb/settings", { path }),
+  syncLmuDuckdb: (path?: string) => postJson<LmuDuckdbSettings>("/api/lmu-duckdb/sync", path ? { path } : {}),
+  lmuDuckdbSessions: (limit = 250, offset = 0) => getJson<LmuDuckdbScanResponse>(`/api/lmu-duckdb/sessions?limit=${limit}&offset=${offset}`),
+  reviewLmuDuckdbSession: (path: string, id: string, limit = REVIEW_SAMPLE_LIMIT) =>
+    postJson<SessionReview>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review?limit=${limit}`, { path }),
+  reviewCachedLmuDuckdbSession: (id: string, limit = REVIEW_SAMPLE_LIMIT) =>
+    getJson<SessionReview>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review?limit=${limit}`),
   profileOverview: () => getJson<ProfileOverview>("/api/profile/overview"),
   profileSummary: () => getJson<ProfileSummary>("/api/profile/summary"),
   profileBestLaps: () => getJson<ProfileLap[]>("/api/profile/best-laps"),
