@@ -45,6 +45,7 @@ const pct = (value?: number | null) => (value == null || Number.isNaN(value) ? "
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
 const carName = (car?: { vehicle_model?: string | null; vehicle_name?: string | null }) => car?.vehicle_model || car?.vehicle_name || null;
 const seconds = (value?: number | null) => formatRaceGap(value);
+const interval = (value?: number | null) => value == null || Number.isNaN(value) || !Number.isFinite(value) ? "--" : formatRaceTime(value);
 const tyreTemp = (value?: TyreTemps) => fmt(value?.center_c ?? value?.left_c ?? value?.right_c ?? value?.carcass_c, 1, " C");
 const lapTime = (value?: number | null) => formatRaceTime(value);
 const assistSetting = (active?: boolean | null, setting?: number | null, max?: number | null) => {
@@ -643,7 +644,14 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
             const angle = (normalizedProgress(car, cars) * Math.PI * 2) - Math.PI / 2;
             const x = 50 + Math.cos(angle) * 42;
             const y = 50 + Math.sin(angle) * 42;
-            return <span key={car.vehicle_id} className={car.is_player ? "car-dot player" : "car-dot"} style={{ left: `${x}%`, top: `${y}%`, background: classColors[index % classColors.length] }}>{car.position}</span>;
+            const gapAhead = car.is_player ? player?.gap_car_ahead ?? car.time_behind_next : car.time_behind_next;
+            const title = `${car.is_player ? "You" : car.driver_name || carName(car) || `Car ${car.vehicle_id}`} - gap ahead ${interval(gapAhead)}`;
+            return (
+              <span key={car.vehicle_id} className={car.is_player ? "car-dot player" : "car-dot"} style={{ left: `${x}%`, top: `${y}%`, background: classColors[index % classColors.length] }} title={title}>
+                {car.position}
+                {gapAhead != null && <small className="car-gap-label">{interval(gapAhead)}</small>}
+              </span>
+            );
           })}
           <div className="circle-center">
             <strong>{seconds(player?.gap_car_ahead)}</strong>
@@ -667,7 +675,7 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
         {carsOnTrack.length ? (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Pos</th><th>Driver</th><th>Car</th><th>Class</th><th>Lap</th><th>Gap to you</th><th>Last</th><th>Best</th></tr></thead>
+              <thead><tr><th>Pos</th><th>Driver</th><th>Car</th><th>Class</th><th>Lap</th><th>Gap ahead</th><th>Gap to you</th><th>Last</th><th>Best</th></tr></thead>
               <tbody>
                 {carsOnTrack.map((car) => {
                   const gap = gapToPlayer(car);
@@ -678,6 +686,7 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
                       <td>{text(carName(car))}</td>
                       <td>{text(car.vehicle_class)}</td>
                       <td>{text(car.total_laps ?? car.current_lap)}</td>
+                      <td>{car.is_player ? interval(player?.gap_car_ahead ?? car.time_behind_next) : interval(car.time_behind_next)}</td>
                       <td>{car.is_player ? "You" : gap == null ? "--" : seconds(gap)}</td>
                       <td>{lapTime(car.last_lap_time)}</td>
                       <td>{lapTime(car.best_lap_time)}</td>

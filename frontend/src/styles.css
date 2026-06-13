@@ -141,6 +141,14 @@ select { width: 100%; border: 1px solid #33414d; background: #0f1419; color: #ff
 .motec-warning { background: #443112; border: 1px solid #6b4a14; color: #ffd37a; border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
 .motec-value-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .motec-value-grid > div { display: grid; gap: 3px; background: #0f1419; border: 1px solid #27313a; border-radius: 6px; padding: 10px; }
+.report-toolbar { align-items: end; margin-bottom: 0; }
+.report-toolbar label { min-width: min(520px, 100%); flex: 1 1 360px; }
+.report-toolbar .badge { align-self: end; min-height: 38px; justify-content: center; text-transform: none; }
+.engineering-finding-list { display: grid; gap: 8px; margin-bottom: 12px; }
+.engineering-finding-list p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; margin: 0; padding: 9px; border: 1px solid #27313a; border-radius: 6px; background: #0f1419; color: #d9e3ea; line-height: 1.35; }
+.engineering-finding-list .badge { flex: 0 0 auto; }
+.pit-stop-report { display: grid; gap: 8px; margin-top: 12px; }
+.pit-stop-report .section-title { margin-bottom: 0; }
 .strategy-input-grid label { align-content: start; }
 .strategy-card { display: grid; gap: 11px; }
 .strategy-card.selected { border-color: #e6b450; background: #171c20; box-shadow: inset 0 0 0 1px rgba(230,180,80,.32); }
@@ -160,11 +168,27 @@ select { width: 100%; border: 1px solid #33414d; background: #0f1419; color: #ff
 .strategy-summary-line { display: flex; flex-wrap: wrap; gap: 8px; }
 .strategy-summary-line span { padding: 7px 9px; border: 1px solid #27313a; border-radius: 6px; background: #0f1419; color: #aeb8c2; font-size: 12px; font-weight: 700; }
 .motec-map { width: 100%; min-height: 420px; display: block; background: #0f1419; border-radius: 8px; }
+.gps-compare { display: grid; gap: 10px; }
+.gps-compare-toolbar { display: grid; grid-template-columns: repeat(2, minmax(160px, 1fr)) minmax(160px, .8fr) auto; gap: 10px; align-items: end; }
+.gps-compare-toolbar button { min-height: 38px; }
+.gps-legend { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: #aeb8c2; font-size: 12px; }
+.gps-legend span { display: inline-flex; align-items: center; min-height: 26px; padding: 4px 8px; border: 1px solid #33414d; border-radius: 6px; background: #0f1419; }
+.gps-input-key::before { content: ""; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: #aeb8c2; }
+.gps-input-key.throttle::before { background: #69d28f; }
+.gps-input-key.brake::before { background: #ff6961; }
+.gps-map-shell { position: relative; min-height: 520px; border: 1px solid #27313a; border-radius: 8px; overflow: hidden; background: #0f1419; }
+.gps-compare-map { display: block; width: 100%; min-height: 520px; touch-action: none; cursor: grab; }
+.gps-compare-map:active { cursor: grabbing; }
+.gps-selectable-point { cursor: pointer; }
+.gps-point-hint { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid #d9e3ea; border-radius: 6px; background: rgba(12, 15, 18, .92); color: #d9e3ea; font-size: 12px; box-shadow: 0 10px 28px rgba(0,0,0,.32); }
+.gps-point-hint strong { font-size: 13px; color: #fff; }
 .lap-analysis-page { align-items: start; }
 .lap-analysis-sticky { position: sticky; top: 0; z-index: 2; box-shadow: 0 10px 28px rgba(0,0,0,.18); }
 .lap-context-grid { display: grid; grid-template-columns: minmax(180px, 1.5fr) repeat(2, minmax(130px, .8fr)) repeat(3, minmax(110px, .6fr)); gap: 10px; align-items: end; }
 .lap-metric { display: grid; gap: 4px; min-height: 56px; padding: 8px 10px; border: 1px solid #27313a; border-radius: 6px; background: #0f1419; }
 .lap-metric strong { font-size: 18px; overflow-wrap: anywhere; }
+.lap-validity-note { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; color: #aeb8c2; font-size: 12px; }
+.lap-validity-note span { padding: 5px 7px; border: 1px solid #27313a; border-radius: 6px; background: #0f1419; }
 .lap-sector-table { margin-top: 10px; }
 .lap-sector-table table { font-size: 12px; }
 .lap-sector-table th, .lap-sector-table td { padding: 6px 8px; }
@@ -188,6 +212,7 @@ select { width: 100%; border: 1px solid #33414d; background: #0f1419; color: #ff
 .circle-map { position: relative; min-height: 430px; aspect-ratio: 1 / 1; max-width: 520px; margin: 0 auto; border: 2px solid #33414d; border-radius: 50%; background: radial-gradient(circle, #141a20 0 40%, transparent 41%); }
 .car-dot { position: absolute; width: 28px; height: 28px; transform: translate(-50%, -50%); border-radius: 50%; color: #0c0f12; font-size: 11px; font-weight: 900; display: grid; place-items: center; border: 2px solid #0c0f12; }
 .car-dot.player { width: 34px; height: 34px; border-color: #e6edf3; }
+.car-gap-label { position: absolute; top: calc(100% + 3px); left: 50%; transform: translateX(-50%); color: #e6edf3; background: rgba(12,15,18,.86); border: 1px solid #33414d; border-radius: 5px; padding: 1px 4px; font-size: 9px; line-height: 1.2; white-space: nowrap; pointer-events: none; }
 .circle-center { position: absolute; inset: 36%; display: grid; place-items: center; align-content: center; color: #aeb8c2; text-transform: uppercase; font-size: 11px; }
 .circle-center strong { color: #e6edf3; font-size: 22px; }
 .spread-chart { position: relative; height: 160px; border-bottom: 2px solid #33414d; background: linear-gradient(90deg, rgba(109,214,255,.08), rgba(230,180,80,.08)); border-radius: 8px; }
@@ -206,6 +231,7 @@ label input[type="checkbox"] { width: auto; margin-right: 8px; }
   .duckdb-workspace { grid-template-columns: 1fr; }
   .duckdb-browser { max-height: 420px; border-right: 0; border-bottom: 1px solid #222a32; }
   .duckdb-path-grid { grid-template-columns: 1fr; }
+  .gps-compare-toolbar { grid-template-columns: 1fr 1fr; }
   .speed-gear { grid-template-columns: 1fr 1fr; }
   .motec-workspace { grid-template-columns: 1fr; }
   .motec-worksheets { max-height: 260px; border-right: 0; border-bottom: 1px solid #222a32; }
@@ -213,5 +239,7 @@ label input[type="checkbox"] { width: auto; margin-right: 8px; }
 
 @media (max-width: 640px) {
   .lap-context-grid { grid-template-columns: 1fr; }
+  .gps-compare-toolbar { grid-template-columns: 1fr; }
+  .gps-map-shell, .gps-compare-map { min-height: 380px; }
   .tire-matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 }

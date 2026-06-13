@@ -121,6 +121,40 @@ def test_payload_uses_fastest_valid_lap_as_reference() -> None:
     assert payload["selected_lap_number"] == 2
 
 
+def test_payload_lists_completed_laps_even_when_marked_not_clean() -> None:
+    config = VehicleAnalysisConfig(poll_hz=10)
+    buffer = LiveLapBuffer(config)
+    buffer._completed[1] = make_lap(lap_number=1)
+    buffer._completed[2] = make_lap(lap_number=2, invalidated=True)
+    buffer._completed[3] = make_lap(lap_number=3, in_pits=True)
+
+    payload = analysis_payload(buffer, config)
+
+    assert [lap["lap_number"] for lap in payload["laps"]] == [1, 2, 3]
+    assert payload["selected_lap_number"] == 3
+    assert payload["reference_lap_number"] == 1
+    marked = {lap["lap_number"]: lap for lap in payload["laps"]}
+    assert marked[1]["valid_lap"] is True
+    assert marked[2]["valid_lap"] is False
+    assert marked[2]["reason"] == "Lap invalidated"
+    assert marked[3]["valid_lap"] is False
+    assert marked[3]["reason"] == "Pit lane"
+
+
+def test_payload_honors_selected_marked_lap_for_comparison() -> None:
+    config = VehicleAnalysisConfig(poll_hz=10)
+    buffer = LiveLapBuffer(config)
+    buffer._completed[1] = make_lap(lap_number=1)
+    buffer._completed[2] = make_lap(lap_number=2, yellow=True)
+
+    payload = analysis_payload(buffer, config, selected_lap=2, reference_lap=1)
+
+    assert payload["selected_lap_number"] == 2
+    assert payload["reference_lap_number"] == 1
+    assert payload["current_lap_data"][0]["lap_number"] == 2
+    assert payload["reference_lap_data"][0]["lap_number"] == 1
+
+
 def test_live_snapshot_treats_null_byte_yellow_flag_as_clear() -> None:
     snapshot = TelemetrySnapshot(
         timestamp=utc_now(),

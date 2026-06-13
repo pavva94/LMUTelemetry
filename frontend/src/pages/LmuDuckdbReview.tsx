@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
@@ -8,6 +8,19 @@ import type { LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview as Review } from "../types/session";
 
 type Row = Record<string, number | string | boolean | null | undefined>;
+type GpsPoint = {
+  lap: string;
+  lapLabel: string;
+  progress: number;
+  x: number;
+  y: number;
+  lat: number;
+  lon: number;
+  throttle: number | null;
+  brake: number | null;
+  speed: number | null;
+  time: number | null;
+};
 
 const DEFAULT_FOLDER = "G:\\SteamLibrary\\steamapps\\common\\Le Mans Ultimate\\UserData\\Telemetry";
 const SCAN_LIMIT = 250;
@@ -25,6 +38,16 @@ const fileSize = (bytes?: number | null) => {
 };
 const sessionTitle = (session?: LmuDuckdbSession | null) =>
   [session?.session_type, session?.track_name, carName(session)].filter(Boolean).join(" - ") || session?.file_name || "DuckDB session";
+const percentDelta = (a?: number | null, b?: number | null) => {
+  if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b)) return "--";
+  const scale = Math.max(Math.abs(a), Math.abs(b)) <= 1 ? 100 : 1;
+  const delta = (a - b) * scale;
+  return `${delta > 0 ? "+" : ""}${delta.toFixed(0)} pp`;
+};
+const pointNumber = (row: Row, key: string) => {
+  const value = Number(row[key]);
+  return Number.isFinite(value) ? value : null;
+};
 
 function EmptyState({ detail }: { detail: string }) {
   return <div className="empty-state"><strong>No data yet</strong><span>{detail}</span></div>;
@@ -42,6 +65,49 @@ function avg(rows: Row[], key: string) {
 function max(rows: Row[], key: string) {
   const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
   return values.length ? Math.max(...values) : null;
+}
+
+function averageFiveLapPace(laps: Row[]) {
+  const lapTimes = laps
+    .filter((lap) => !lap.in_pit)
+    .map((lap) => Number(lap.lap_time))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  if (lapTimes.length < 5) return null;
+  const windowAverages = lapTimes.slice(0, -4).map((_, index) => {
+    const window = lapTimes.slice(index, index + 5);
+    return window.reduce((sum, value) => sum + value, 0) / window.length;
+  });
+  return windowAverages.reduce((sum, value) => sum + value, 0) / windowAverages.length;
+}
+
+function quantile(values: number[], fraction: number) {
+  if (!values.length) return null;
+  const ordered = [...values].sort((a, b) => a - b);
+  const position = (ordered.length - 1) * fraction;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return ordered[lower];
+  return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower);
+}
+
+function withoutOutliers(values: number[]) {
+  const clean = values.filter(Number.isFinite);
+  if (clean.length < 4) return clean;
+  const q1 = quantile(clean, 0.25);
+  const q3 = quantile(clean, 0.75);
+  if (q1 != null && q3 != null && q3 > q1) {
+    const iqr = q3 - q1;
+    const lower = Math.max(0, q1 - (1.5 * iqr));
+    const upper = q3 + (1.5 * iqr);
+    const filtered = clean.filter((value) => value >= lower && value <= upper);
+    return filtered.length ? filtered : clean;
+  }
+  const median = quantile(clean, 0.5);
+  if (median == null) return clean;
+  const mad = quantile(clean.map((value) => Math.abs(value - median)), 0.5);
+  if (!mad) return clean;
+  const filtered = clean.filter((value) => Math.abs(value - median) / mad <= 3.5);
+  return filtered.length ? filtered : clean;
 }
 
 function hasLineData(rows: Row[], lines: Array<[string, string]>) {
@@ -116,6 +182,278 @@ function LatestValues({ rows, fields }: { rows: Row[]; fields: Array<[string, st
       {fields.map(([key, label]) => (
         <div key={key}><span className="label">{label}</span><strong>{text(latest[key])}</strong></div>
       ))}
+    </div>
+  );
+}
+
+function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; samples: Row[]; laps: Row[] }) {
+  const fastestPair = useMemo(() => {
+    return laps
+      .map((lap) => ({ lap: String(lap.lap_number ?? ""), time: Number(lap.lap_time), inPit: Boolean(lap.in_pit) }))
+      .filter((lap) => lap.lap && Number.isFinite(lap.time) && lap.time > 0 && !lap.inPit)
+      .sort((a, b) => a.time - b.time)
+      .slice(0, 2)
+      .map((lap) => lap.lap);
+  }, [laps]);
+  const lapOptions = useMemo(() => {
+    const fromLaps = laps.map((lap) => String(lap.lap_number ?? "")).filter(Boolean);
+    const fromSamples = samples.map((sample) => String(sample.lap_number ?? "")).filter(Boolean);
+    return Array.from(new Set([...fromLaps, ...fromSamples])).sort((a, b) => Number(a) - Number(b));
+  }, [laps, samples]);
+  const [lapA, setLapA] = useState("");
+  const [lapB, setLapB] = useState("");
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [selectedPoint, setSelectedPoint] = useState<GpsPoint | null>(null);
+  const [trajectoryRows, setTrajectoryRows] = useState<Row[]>([]);
+  const [trajectoryStatus, setTrajectoryStatus] = useState("");
+  const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
+  const width = 1000;
+  const height = 620;
+
+  useEffect(() => {
+    setLapA(fastestPair[0] || lapOptions[0] || "");
+    setLapB(fastestPair[1] || fastestPair[0] || lapOptions[1] || lapOptions[0] || "");
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setSelectedPoint(null);
+  }, [fastestPair, lapOptions]);
+
+  const lapMeta = useMemo(() => {
+    return laps.reduce<Record<string, { time?: number | null; samples?: number | string | boolean | null }>>((acc, lap) => {
+      const key = String(lap.lap_number ?? "");
+      if (key) acc[key] = { time: pointNumber(lap, "lap_time"), samples: lap.sample_count };
+      return acc;
+    }, {});
+  }, [laps]);
+
+  useEffect(() => {
+    if (!sessionId || !lapA) return;
+    let mounted = true;
+    setTrajectoryStatus("Loading GPS trajectory");
+    api.lmuDuckdbTrajectory(sessionId, lapA, lapB, 1800)
+      .then((payload) => {
+        if (!mounted) return;
+        setTrajectoryRows((payload.points || []) as Row[]);
+        setTrajectoryStatus(payload.warnings?.[0] || "GPS trajectory loaded");
+      })
+      .catch((exc) => {
+        if (!mounted) return;
+        setTrajectoryRows([]);
+        setTrajectoryStatus(exc instanceof Error ? exc.message : String(exc));
+      });
+    return () => {
+      mounted = false;
+    };
+  }, [sessionId, lapA, lapB]);
+
+  const mapData = useMemo(() => {
+    const selected = new Set([lapA, lapB].filter(Boolean));
+    const sourceRows = trajectoryRows.length ? trajectoryRows : samples;
+    const raw = sourceRows
+      .filter((sample) => selected.has(String(sample.lap_number ?? "")))
+      .map((sample) => ({
+        lap: String(sample.lap_number ?? ""),
+        lat: pointNumber(sample, "gps_latitude"),
+        lon: pointNumber(sample, "gps_longitude"),
+        throttle: pointNumber(sample, "throttle"),
+        brake: pointNumber(sample, "brake"),
+        speed: pointNumber(sample, "speed_kph"),
+        time: pointNumber(sample, "game_time"),
+      }))
+      .filter((sample): sample is Omit<GpsPoint, "x" | "y" | "lapLabel"> => sample.lat != null && sample.lon != null);
+    if (!raw.length) return { byLap: {} as Record<string, GpsPoint[]>, count: 0 };
+    const lats = raw.map((point) => point.lat);
+    const lons = raw.map((point) => point.lon);
+    const minLat = Math.min(...lats);
+    const maxLat = Math.max(...lats);
+    const minLon = Math.min(...lons);
+    const maxLon = Math.max(...lons);
+    const lonSpan = Math.max(maxLon - minLon, 0.000001);
+    const latSpan = Math.max(maxLat - minLat, 0.000001);
+    const innerW = width - 80;
+    const innerH = height - 80;
+    const scale = Math.min(innerW / lonSpan, innerH / latSpan);
+    const drawW = lonSpan * scale;
+    const drawH = latSpan * scale;
+    const offsetX = (width - drawW) / 2;
+    const offsetY = (height - drawH) / 2;
+    const byLapRaw = raw.reduce<Record<string, typeof raw>>((acc, point) => {
+      (acc[point.lap] ||= []).push(point);
+      return acc;
+    }, {});
+    const byLap: Record<string, GpsPoint[]> = {};
+    Object.entries(byLapRaw).forEach(([lap, lapPoints]) => {
+      const denominator = Math.max(1, lapPoints.length - 1);
+      byLap[lap] = lapPoints.map((point, index) => ({
+        ...point,
+        lapLabel: `Lap ${point.lap}`,
+        progress: index / denominator,
+        x: offsetX + (point.lon - minLon) * scale,
+        y: offsetY + drawH - (point.lat - minLat) * scale,
+      }));
+    });
+    return {
+      byLap,
+      count: Object.values(byLap).reduce((sum, points) => sum + points.length, 0),
+    };
+  }, [samples, trajectoryRows, lapA, lapB]);
+
+  const pairedHover = useMemo(() => {
+    if (!selectedPoint) return null;
+    const otherLap = selectedPoint.lap === lapA ? lapB : lapA;
+    const candidates = mapData.byLap[otherLap] || [];
+    if (!candidates.length) return null;
+    return candidates.reduce((best, point) => (
+      Math.abs(point.progress - selectedPoint.progress) < Math.abs(best.progress - selectedPoint.progress) ? point : best
+    ), candidates[0]);
+  }, [selectedPoint, lapA, lapB, mapData.byLap]);
+
+  const activePoints = [selectedPoint, pairedHover].filter((point): point is GpsPoint => Boolean(point));
+
+  const viewWidth = width / zoom;
+  const viewHeight = height / zoom;
+  const maxPanX = (width - viewWidth) / 2;
+  const maxPanY = (height - viewHeight) / 2;
+  const clampedPan = {
+    x: Math.max(-maxPanX, Math.min(maxPanX, pan.x)),
+    y: Math.max(-maxPanY, Math.min(maxPanY, pan.y)),
+  };
+  const viewBox = `${(width - viewWidth) / 2 + clampedPan.x} ${(height - viewHeight) / 2 + clampedPan.y} ${viewWidth} ${viewHeight}`;
+  const lapStyles: Record<string, { stroke: string; marker: string }> = {
+    [lapA]: { stroke: "#6dd6ff", marker: "#d8f3ff" },
+    [lapB]: { stroke: "#e6b450", marker: "#ffedba" },
+  };
+  const hintX = selectedPoint ? Math.max(14, Math.min(width - 274, selectedPoint.x + 14)) : 0;
+  const hintY = selectedPoint ? Math.max(14, Math.min(height - 98, selectedPoint.y - 48)) : 0;
+
+  const inputColor = (point: GpsPoint) => {
+    const throttle = point.throttle == null ? 0 : Math.abs(point.throttle) <= 1 ? point.throttle * 100 : point.throttle;
+    const brake = point.brake == null ? 0 : Math.abs(point.brake) <= 1 ? point.brake * 100 : point.brake;
+    if (brake > throttle && brake > 4) return "#ff6961";
+    if (throttle > 4) return "#69d28f";
+    return "#aeb8c2";
+  };
+
+  if (!lapOptions.length || !samples.some((sample) => pointNumber(sample, "gps_latitude") != null && pointNumber(sample, "gps_longitude") != null)) {
+    return <EmptyState detail="GPS Latitude and GPS Longitude were not found in the loaded review samples." />;
+  }
+
+  return (
+    <div className="gps-compare">
+      <div className="gps-compare-toolbar">
+        <label>Primary lap
+          <select value={lapA} onChange={(event) => setLapA(event.target.value)}>
+            {lapOptions.map((lap) => <option key={lap} value={lap}>Lap {lap} {lapMeta[lap]?.time ? `- ${formatRaceTime(lapMeta[lap].time)}` : ""}</option>)}
+          </select>
+        </label>
+        <label>Comparison lap
+          <select value={lapB} onChange={(event) => setLapB(event.target.value)}>
+            {lapOptions.map((lap) => <option key={lap} value={lap}>Lap {lap} {lapMeta[lap]?.time ? `- ${formatRaceTime(lapMeta[lap].time)}` : ""}</option>)}
+          </select>
+        </label>
+        <label>Zoom
+          <input type="range" min="1" max="8" step="0.1" value={zoom} onChange={(event) => setZoom(Number(event.target.value))} />
+        </label>
+        <button type="button" onClick={() => { setZoom(1); setPan({ x: 0, y: 0 }); }}>Reset view</button>
+      </div>
+      <div className="gps-legend">
+        {[lapA, lapB].filter(Boolean).map((lap) => (
+          <span key={lap} style={{ borderColor: lapStyles[lap]?.stroke }}>{`Lap ${lap} / ${formatRaceTime(lapMeta[lap]?.time ?? null)} / ${text(lapMeta[lap]?.samples)} samples`}</span>
+        ))}
+        {trajectoryStatus && <span>{trajectoryStatus}</span>}
+        <span className="gps-input-key throttle">Throttle</span>
+        <span className="gps-input-key brake">Brake</span>
+      </div>
+      <div className="gps-map-shell">
+        <svg
+          className="gps-compare-map"
+          viewBox={viewBox}
+          role="img"
+          onWheel={(event) => {
+            event.preventDefault();
+            const next = Math.max(1, Math.min(8, zoom + (event.deltaY < 0 ? 0.35 : -0.35)));
+            setZoom(next);
+          }}
+          onPointerDown={(event) => {
+            event.currentTarget.setPointerCapture(event.pointerId);
+            dragRef.current = { x: event.clientX, y: event.clientY, panX: pan.x, panY: pan.y };
+          }}
+          onPointerMove={(event) => {
+            if (!dragRef.current) return;
+            const factor = 1 / zoom;
+            setPan({
+              x: dragRef.current.panX - (event.clientX - dragRef.current.x) * factor,
+              y: dragRef.current.panY - (event.clientY - dragRef.current.y) * factor,
+            });
+          }}
+          onPointerUp={() => { dragRef.current = null; }}
+          onPointerLeave={() => { dragRef.current = null; }}
+        >
+          <rect x="0" y="0" width={width} height={height} fill="#0f1419" />
+          {Object.entries(mapData.byLap).map(([lap, points]) => (
+            <g key={lap}>
+              <polyline
+                points={points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ")}
+                fill="none"
+                stroke={lapStyles[lap]?.stroke || "#d9e3ea"}
+                strokeWidth={lap === lapA ? 4 : 3}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={lap === lapA ? 0.92 : 0.76}
+              />
+              {points.map((point, index) => (
+                <circle
+                  key={`${lap}-${index}`}
+                  cx={point.x}
+                  cy={point.y}
+                  r={lap === lapA ? 4.4 : 3.8}
+                  fill={inputColor(point)}
+                  stroke={lapStyles[lap]?.marker || "#fff"}
+                  strokeWidth="0.8"
+                  opacity="0.86"
+                  pointerEvents={lap === lapA ? "auto" : "none"}
+                  className={lap === lapA ? "gps-selectable-point" : undefined}
+                  onClick={() => setSelectedPoint(point)}
+                />
+              ))}
+            </g>
+          ))}
+          {selectedPoint && pairedHover && (
+            <line
+              x1={selectedPoint.x}
+              y1={selectedPoint.y}
+              x2={pairedHover.x}
+              y2={pairedHover.y}
+              stroke="#ffffff"
+              strokeWidth="1.5"
+              strokeDasharray="6 5"
+              opacity="0.78"
+            />
+          )}
+          {activePoints.map((point) => (
+            <circle
+              key={`active-${point.lap}`}
+              cx={point.x}
+              cy={point.y}
+              r="8"
+              fill="none"
+              stroke="#ffffff"
+              strokeWidth="2"
+              pointerEvents="none"
+            />
+          ))}
+          {selectedPoint && pairedHover && (
+            <foreignObject x={hintX} y={hintY} width="260" height="84" pointerEvents="none">
+              <div className="gps-point-hint">
+                <strong>{Math.round(selectedPoint.progress * 100)}% lap distance</strong>
+                <span>Throttle diff {percentDelta(selectedPoint.throttle, pairedHover.throttle)}</span>
+                <span>Brake diff {percentDelta(selectedPoint.brake, pairedHover.brake)}</span>
+              </div>
+            </foreignObject>
+          )}
+        </svg>
+      </div>
     </div>
   );
 }
@@ -197,7 +535,7 @@ export function LmuDuckdbReview() {
     if (!selectedId) return;
     let mounted = true;
     setStatus("Loading selected DuckDB session");
-    api.reviewCachedLmuDuckdbSession(selectedId)
+    api.reviewCachedLmuDuckdbSession(selectedId, 300)
       .then((data) => {
         if (!mounted) return;
         setReview(data);
@@ -224,7 +562,12 @@ export function LmuDuckdbReview() {
 
   const summary = useMemo(() => {
     const aggregate = review?.summary;
-    const fuelUsed = laps.map((lap) => Number(lap.fuel_used)).filter(Number.isFinite).reduce((sum, value) => sum + value, 0);
+    const validFuelUsed = laps
+      .filter((lap) => !lap.in_pit && Number(lap.lap_time) > 0)
+      .map((lap) => Number(lap.fuel_used))
+      .filter((value) => Number.isFinite(value) && value > 0);
+    const fuelUsedForAverage = withoutOutliers(validFuelUsed);
+    const fuelUsed = validFuelUsed.reduce((sum, value) => sum + value, 0);
     return {
       laps: aggregate?.lap_count ?? laps.length,
       samples: samples.length,
@@ -235,9 +578,12 @@ export function LmuDuckdbReview() {
         return values.length ? Math.min(...values) : null;
       })(),
       topSpeed: aggregate?.top_speed ?? max(laps, "top_speed") ?? max(samples, "speed_kph"),
+      avgFuelPerLap: aggregate?.average_fuel_per_lap ?? (fuelUsedForAverage.length ? fuelUsedForAverage.reduce((sum, value) => sum + value, 0) / fuelUsedForAverage.length : null),
+      fiveLapPace: aggregate?.average_five_lap_pace ?? averageFiveLapPace(laps),
       fuelUsed: aggregate?.total_fuel_used ?? (fuelUsed || null),
       distance: aggregate?.total_distance_km,
       tyreWear: aggregate?.average_tyre_wear,
+      tyreLifeRemaining: aggregate?.average_tyre_life_remaining,
       tyreTemp: aggregate?.average_tyre_temp,
       tyrePressure: aggregate?.average_tyre_pressure,
       brakeTemp: aggregate?.average_brake_temp,
@@ -318,10 +664,12 @@ export function LmuDuckdbReview() {
           <Metric label="Samples" value={summary.samples} sub={summary.storedSamples ? `${summary.storedSamples} native rows` : "mapped review samples"} />
           <Metric label="Best lap" value={formatRaceTime(summary.bestLap)} />
           <Metric label="Average lap" value={formatRaceTime(summary.avgLap)} />
+          <Metric label="Avg 5-lap pace" value={formatRaceTime(summary.fiveLapPace)} />
           <Metric label="Top speed" value={fmt(summary.topSpeed, 0, " km/h")} />
           <Metric label="Fuel used" value={fmt(summary.fuelUsed, 2, " L")} />
+          <Metric label="Avg fuel/lap" value={fmt(summary.avgFuelPerLap, 2, " L")} />
           <Metric label="Distance" value={fmt(summary.distance, 1, " km")} />
-          <Metric label="Avg tyre wear" value={fmt(summary.tyreWear, 2)} />
+          <Metric label="Avg tyre wear used" value={fmt(summary.tyreWear, 2, "%")} sub={summary.tyreLifeRemaining != null ? `${fmt(summary.tyreLifeRemaining, 1, "%")} life left` : undefined} />
           <Metric label="Avg tyre temp" value={fmt(summary.tyreTemp, 0, " C")} />
           <Metric label="Avg pressure" value={fmt(summary.tyrePressure, 1)} />
           <Metric label="Avg brake temp" value={fmt(summary.brakeTemp, 0, " C")} />
@@ -414,6 +762,12 @@ export function LmuDuckdbReview() {
           </table>
         </div>
       </section>
+      {available.gps && (
+        <section className="card span-12">
+          <SectionTitle title="Lap Trajectory Compare" help="Compares two GPS lap traces from the selected DuckDB session. The selectors default to the two fastest laps; select one point on the primary trace to see throttle and brake deltas at the matching point on the comparison lap." />
+          <LapTrajectoryMap sessionId={selectedId} samples={samples} laps={laps} />
+        </section>
+      )}
       </main>
     </div>
   );

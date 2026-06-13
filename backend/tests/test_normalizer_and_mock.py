@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.telemetry.mock_collector import MockTelemetryCollector
-from app.telemetry.normalizer import _normalize_competitor, _normalize_tyres, completed_lap_time, kelvin_to_celsius, normalize_lmu_snapshot, session_type_name, tyre_wear_used_fraction, vector_speed_kph, yellow_flag_state_name
+from app.telemetry.normalizer import _normalize_competitor, _normalize_tyres, completed_lap_time, kelvin_to_celsius, normalize_lmu_snapshot, race_gap, session_type_name, tyre_wear_used_fraction, vector_speed_kph, yellow_flag_state_name
 
 
 def test_mock_collector_emits_valid_snapshot() -> None:
@@ -18,6 +18,9 @@ def test_normalizer_helpers() -> None:
     assert vector_speed_kph((3, 4, 0)) == 18
     assert completed_lap_time(1.0) is None
     assert completed_lap_time(95.2) == 95.2
+    assert race_gap(0.0) is None
+    assert race_gap(0.0, allow_zero=True) == 0.0
+    assert race_gap(4.2) == 4.2
     assert round(tyre_wear_used_fraction(0.98) or 0, 3) == 0.02
     assert round(tyre_wear_used_fraction(92) or 0, 3) == 0.08
 
@@ -87,6 +90,16 @@ def test_competitor_normalizer_filters_placeholder_lap_times() -> None:
     assert competitor.estimated_lap_time == 96.4
 
 
+def test_competitor_normalizer_filters_placeholder_zero_gaps() -> None:
+    leader = _normalize_competitor(SimpleNamespace(mID=1, mPlace=1, mTimeBehindLeader=0.0, mTimeBehindNext=0.0), SimpleNamespace(), False)
+    opponent = _normalize_competitor(SimpleNamespace(mID=2, mPlace=2, mTimeBehindLeader=0.0, mTimeBehindNext=0.0), SimpleNamespace(), False)
+
+    assert leader.time_behind_leader == 0.0
+    assert leader.time_behind_next is None
+    assert opponent.time_behind_leader is None
+    assert opponent.time_behind_next is None
+
+
 def test_normalizer_computes_signed_gap_to_player_from_leader_gaps() -> None:
     vehicles = [
         SimpleNamespace(mID=1, mPlace=2, mClassPosition=1, mDriverName=b"Ahead", mVehicleName=b"Team A", mVehicleClass=b"GT3", mTimeBehindLeader=5.0, mTimeBehindNext=1.0),
@@ -110,3 +123,33 @@ def test_normalizer_computes_signed_gap_to_player_from_leader_gaps() -> None:
     assert snapshot.player is not None
     assert snapshot.player.gap_car_ahead == 2.0
     assert snapshot.player.gap_car_behind == 3.0
+
+
+def test_normalizer_prefers_dedicated_player_gap_channels() -> None:
+    vehicles = [
+        SimpleNamespace(mID=1, mPlace=4, mClassPosition=1, mDriverName=b"Ahead", mVehicleName=b"Team A", mVehicleClass=b"GT3", mTimeBehindNext=None, mTimeBehindLeader=None),
+        SimpleNamespace(mID=2, mPlace=5, mClassPosition=2, mDriverName=b"Player", mVehicleName=b"Team P", mVehicleClass=b"GT3", mTimeBehindNext=None, mTimeBehindLeader=None),
+        SimpleNamespace(mID=3, mPlace=6, mClassPosition=3, mDriverName=b"Behind", mVehicleName=b"Team B", mVehicleClass=b"GT3", mTimeBehindNext=None, mTimeBehindLeader=None),
+    ]
+    telemetry_rows = [
+        SimpleNamespace(mVehicleModel=b"Car"),
+        SimpleNamespace(mVehicleModel=b"Car", mTimeGapCarAhead=1.75, mTimeGapCarBehind=2.5, mTimeGapPlaceAhead=1.8, mTimeGapPlaceBehind=2.6),
+        SimpleNamespace(mVehicleModel=b"Car"),
+    ]
+    raw = SimpleNamespace(
+        scoring=SimpleNamespace(
+            scoringInfo=SimpleNamespace(mNumVehicles=3, mPlayerVehScoringId=1, mTrackName=b"Track", mSession=10, mCurrentET=100.0, mEndET=200.0),
+            vehScoringInfo=vehicles,
+        ),
+        telemetry=SimpleNamespace(playerVehicleIdx=1, telemInfo=telemetry_rows),
+    )
+
+    snapshot = normalize_lmu_snapshot(raw)
+
+    assert snapshot.player is not None
+    assert snapshot.player.gap_car_ahead == 1.75
+    assert snapshot.player.gap_car_behind == 2.5
+    assert snapshot.player.gap_place_ahead == 1.8
+    assert snapshot.player.gap_place_behind == 2.6
+    assert snapshot.competitors[0].gap_to_player == -1.75
+    assert snapshot.competitors[2].gap_to_player == 2.5

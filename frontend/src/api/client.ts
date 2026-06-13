@@ -74,6 +74,12 @@ export const api = {
     postJson<SessionReview>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review?limit=${limit}`, { path }),
   reviewCachedLmuDuckdbSession: (id: string, limit = REVIEW_SAMPLE_LIMIT) =>
     getJson<SessionReview>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review?limit=${limit}`),
+  lmuDuckdbTrajectory: (id: string, lapA?: string, lapB?: string, maxPoints = 1600) => {
+    const params = new URLSearchParams({ max_points: String(maxPoints) });
+    if (lapA) params.set("lap_a", lapA);
+    if (lapB) params.set("lap_b", lapB);
+    return getJson<{ session_id: string; laps: string[]; points: Array<Record<string, number | string | boolean | null>>; warnings: string[] }>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/trajectory?${params}`);
+  },
   profileOverview: () => getJson<ProfileOverview>("/api/profile/overview"),
   profileSummary: () => getJson<ProfileSummary>("/api/profile/summary"),
   profileBestLaps: () => getJson<ProfileLap[]>("/api/profile/best-laps"),

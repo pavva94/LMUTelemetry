@@ -11,6 +11,15 @@ export type StatSummary = {
   trend: "rising" | "falling" | "stable" | "unavailable";
 };
 
+export type ChartRow = Record<string, number | string | boolean | null>;
+
+export type EngineeringFinding = {
+  title: string;
+  severity: "info" | "warning" | "critical";
+  evidence: string;
+  detail: string;
+};
+
 export type RacePrepReport = {
   session: {
     track: string | null;
@@ -94,6 +103,21 @@ export type RacePrepReport = {
     liftCoastOptions: Array<{ label: string; targetSaving: string; consumption: string; paceLoss: string; recommendation: string; risk: "low" | "medium" | "high" | "unknown" }>;
     finalRecommendation: string;
   };
+  coverage: {
+    sampleCount: number;
+    lapCount: number;
+    validLapRatio: number | null;
+    channelGroups: string[];
+    missingGroups: string[];
+  };
+  charts: {
+    laps: ChartRow[];
+    samples: ChartRow[];
+    stints: ChartRow[];
+    events: ChartRow[];
+    pitStops: ChartRow[];
+  };
+  engineeringFindings: EngineeringFinding[];
 };
 
 export type RacePrepOptions = {
@@ -106,6 +130,7 @@ export type RacePrepOptions = {
 
 const wheels: Wheel[] = ["fl", "fr", "rl", "rr"];
 const wheelLabel: Record<Wheel, string> = { fl: "front-left", fr: "front-right", rl: "rear-left", rr: "rear-right" };
+const wheelDisplay: Record<Wheel, string> = { fl: "Front-left", fr: "Front-right", rl: "Rear-left", rr: "Rear-right" };
 
 const num = toFiniteNumber;
 const avg = average;
@@ -126,6 +151,412 @@ function lapTrend(values: number[]): RacePrepReport["pace"]["trend"] {
 
 function rowTime(row: Row): number {
   return num(row.game_time) ?? num(row.end_time) ?? num(row.start_time) ?? 0;
+}
+
+function numericRows(rows: Row[], keys: string[]) {
+  return rows.some((row) => keys.some((key) => num(row[key]) != null));
+}
+
+function decimateRows<T>(rows: T[], limit = 650): T[] {
+  if (rows.length <= limit) return rows;
+  const step = Math.ceil(rows.length / limit);
+  return rows.filter((_, index) => index % step === 0 || index === rows.length - 1);
+}
+
+function chartNumber(value: unknown): number | null {
+  return num(value);
+}
+
+function chartWear(value: unknown): number | null {
+  return tyreWearUsedFraction(num(value));
+}
+
+function buildCoverage(samples: Row[], laps: Row[]): RacePrepReport["coverage"] {
+  const groups: Array<[string, string[]]> = [
+    ["Pace", ["lap_time", "speed_kph", "top_speed"]],
+    ["Driver inputs", ["throttle", "brake", "steering"]],
+    ["Fuel", ["fuel_liters", "fuel_used", "fuel_start", "fuel_end"]],
+    ["Tyres", ["tyre_wear_fl", "tyre_temp_fl", "tyre_pressure_fl", "tyre_wear_end_fl", "tyre_wear_delta"]],
+    ["Brakes", ["brake_temp_fl", "brake_temp_fr", "brake_temp_rl", "brake_temp_rr"]],
+    ["Platform", ["ride_height_fl", "ride_height_fr", "ride_height_rl", "ride_height_rr", "front_ride_height", "rear_ride_height"]],
+    ["G-force", ["g_force_lat", "g_force_long", "g_force_vert"]],
+    ["Environment", ["track_temp", "ambient_temp", "rain", "wetness"]],
+  ];
+  const source = [...samples, ...laps];
+  const channelGroups = groups.filter(([, keys]) => numericRows(source, keys)).map(([label]) => label);
+  const missingGroups = groups.filter(([label]) => !channelGroups.includes(label)).map(([label]) => label);
+  const validLapCount = laps.filter((lap) => {
+    const lapTime = num(lap.lap_time);
+    const fuelAdded = num(lap.fuel_added) || 0;
+    return lapTime != null && lapTime >= 40 && lapTime <= 900 && lap.valid_lap !== false && lap.in_pit !== true && fuelAdded <= 2;
+  }).length;
+  return {
+    sampleCount: samples.length,
+    lapCount: laps.length,
+    validLapRatio: laps.length ? validLapCount / laps.length : null,
+    channelGroups,
+    missingGroups,
+  };
+}
+
+function buildLapSeries(laps: Row[], bestLap: number | null): ChartRow[] {
+  return laps.map((lap, index) => {
+    const lapTime = chartNumber(lap.lap_time);
+    const tyreWearDelta = avg(wheels.map((wheel) => chartNumber(lap[`tyre_wear_delta_${wheel}`]))) ?? chartNumber(lap.tyre_wear_delta);
+    const valid = lap.valid_lap !== false && lap.in_pit !== true && lapTime != null;
+    const row: ChartRow = {
+      lap: chartNumber(lap.lap_number) ?? index + 1,
+      lap_time: lapTime,
+      delta: lapTime != null && bestLap != null ? lapTime - bestLap : null,
+      fuel_used: chartNumber(lap.fuel_used),
+      top_speed: chartNumber(lap.top_speed),
+      tyre_wear_delta: tyreWearDelta,
+      track_temp: chartNumber(lap.track_temp),
+      ambient_temp: chartNumber(lap.ambient_temp),
+      valid_lap: Boolean(valid),
+      in_pit: lap.in_pit === true,
+      invalid_marker: valid ? null : lapTime,
+      pit_marker: lap.in_pit === true ? lapTime : null,
+    };
+    for (const wheel of wheels) {
+      row[`tyre_wear_${wheel}`] = chartWear(lap[`tyre_wear_end_${wheel}`] ?? lap.tyre_wear_end);
+      row[`tyre_temp_${wheel}`] = chartNumber(lap[`tyre_temp_${wheel}`]);
+      row[`tyre_pressure_${wheel}`] = chartNumber(lap[`tyre_pressure_${wheel}`]);
+      row[`brake_temp_${wheel}`] = chartNumber(lap[`brake_temp_${wheel}`]);
+      row[`ride_height_${wheel}`] = chartNumber(lap[`ride_height_${wheel}`]);
+    }
+    return row;
+  });
+}
+
+function buildSampleSeries(samples: Row[]): ChartRow[] {
+  return decimateRows(samples).map((sample) => {
+    const row: ChartRow = {
+      game_time: rowTime(sample),
+      speed_kph: chartNumber(sample.speed_kph),
+      rpm: chartNumber(sample.rpm),
+      throttle: chartNumber(sample.throttle),
+      brake: chartNumber(sample.brake),
+      steering: chartNumber(sample.steering),
+      fuel_liters: chartNumber(sample.fuel_liters),
+      g_force_lat: chartNumber(sample.g_force_lat),
+      g_force_long: chartNumber(sample.g_force_long),
+      g_force_vert: chartNumber(sample.g_force_vert),
+      front_ride_height: chartNumber(sample.front_ride_height),
+      rear_ride_height: chartNumber(sample.rear_ride_height),
+      track_temp: chartNumber(sample.track_temp),
+      ambient_temp: chartNumber(sample.ambient_temp),
+    };
+    for (const wheel of wheels) {
+      row[`tyre_wear_${wheel}`] = chartWear(sample[`tyre_wear_${wheel}`]);
+      row[`tyre_temp_${wheel}`] = chartNumber(sample[`tyre_temp_${wheel}`]);
+      row[`tyre_pressure_${wheel}`] = chartNumber(sample[`tyre_pressure_${wheel}`]);
+      row[`brake_temp_${wheel}`] = chartNumber(sample[`brake_temp_${wheel}`]);
+      row[`ride_height_${wheel}`] = chartNumber(sample[`ride_height_${wheel}`]);
+    }
+    return row;
+  });
+}
+
+function buildStintSeries(laps: Row[]): ChartRow[] {
+  const stints: Row[][] = [];
+  let current: Row[] = [];
+  laps.forEach((lap) => {
+    if (lap.in_pit === true) {
+      if (current.length) {
+        stints.push(current);
+        current = [];
+      }
+      return;
+    }
+    current.push(lap);
+  });
+  if (current.length) stints.push(current);
+  return stints.map((rows, index) => {
+    const lapTimes = rows.map((lap) => chartNumber(lap.lap_time)).filter((value): value is number => value != null);
+    const fuel = rows.map((lap) => chartNumber(lap.fuel_used)).filter((value): value is number => value != null && value > 0);
+    const tyreWearDeltas = rows.map((lap) => avg(wheels.map((wheel) => chartNumber(lap[`tyre_wear_delta_${wheel}`]))) ?? chartNumber(lap.tyre_wear_delta)).filter((value): value is number => value != null);
+    return {
+      stint: index + 1,
+      start_lap: chartNumber(rows[0]?.lap_number),
+      end_lap: chartNumber(rows[rows.length - 1]?.lap_number),
+      lap_count: rows.length,
+      average_lap: avg(lapTimes),
+      best_lap: min(lapTimes),
+      fuel_per_lap: avg(fuel),
+      tyre_wear_delta: tyreWearDeltas.length ? tyreWearDeltas.reduce((sum, value) => sum + Math.abs(value), 0) : null,
+      top_speed: max(rows.map((lap) => chartNumber(lap.top_speed))),
+    };
+  });
+}
+
+function buildEventSeries(review: SessionReview): ChartRow[] {
+  const pitEvents = (review.pit_events || []).map((event, index) => ({
+    event_index: index + 1,
+    lap: chartNumber(event.lap_number),
+    timestamp: chartNumber(event.timestamp),
+    type: String(event.type ?? "Pit"),
+    message: String(event.message ?? event.phase ?? "Pit event"),
+  }));
+  const recommendations = (review.recommendations || []).map((event, index) => ({
+    event_index: pitEvents.length + index + 1,
+    lap: chartNumber(event.lap_number),
+    timestamp: chartNumber(event.timestamp),
+    type: String(event.recommendation_type ?? event.type ?? "Recommendation"),
+    message: String(event.message ?? event.priority ?? "Recommendation"),
+  }));
+  return [...pitEvents, ...recommendations].sort((a, b) => (a.timestamp ?? a.lap ?? a.event_index) - (b.timestamp ?? b.lap ?? b.event_index));
+}
+
+function lapNumber(row: Row | undefined): number | null {
+  return num(row?.lap_number);
+}
+
+function lapFuelEnd(row: Row | undefined): number | null {
+  return num(row?.fuel_end) ?? num(row?.fuel_liters);
+}
+
+function lapFuelStart(row: Row | undefined): number | null {
+  return num(row?.fuel_start) ?? num(row?.fuel_liters);
+}
+
+function lapWear(row: Row | undefined, wheel: Wheel, phase: "start" | "end"): number | null {
+  const explicit = phase === "start" ? row?.[`tyre_wear_start_${wheel}`] : row?.[`tyre_wear_end_${wheel}`];
+  return tyreWearUsedFraction(num(explicit) ?? num(row?.[`tyre_wear_${wheel}`]) ?? num(phase === "start" ? row?.tyre_wear_start : row?.tyre_wear_end));
+}
+
+function buildPitStopReport(review: SessionReview, laps: Row[]): ChartRow[] {
+  const pitLaps = laps.filter((lap) => lap.in_pit === true || (num(lap.fuel_added) ?? 0) > 2);
+  const eventRows = (review.pit_events || []).map((event) => ({
+    event,
+    lap: chartNumber(event.lap_number ?? event.lap),
+    timestamp: chartNumber(event.timestamp),
+  }));
+  const sources = eventRows.length
+    ? eventRows
+    : pitLaps.map((lap) => ({ event: null, lap: lapNumber(lap), timestamp: chartNumber(lap.end_time ?? lap.start_time) }));
+
+  return sources.map((source, index) => {
+    const sourceLap = source.lap;
+    const pitLap = sourceLap != null
+      ? pitLaps.find((lap) => lapNumber(lap) === sourceLap) ?? laps.find((lap) => lapNumber(lap) === sourceLap)
+      : pitLaps[index] ?? null;
+    const pitLapNo = sourceLap ?? lapNumber(pitLap) ?? null;
+    const before = [...laps].reverse().find((lap) => {
+      const current = lapNumber(lap);
+      return current != null && pitLapNo != null && current < pitLapNo && lap.in_pit !== true;
+    });
+    const after = laps.find((lap) => {
+      const current = lapNumber(lap);
+      return current != null && pitLapNo != null && current > pitLapNo && lap.in_pit !== true;
+    });
+    const event = source.event;
+    const fuelBefore = lapFuelEnd(before) ?? lapFuelStart(pitLap);
+    const fuelAfter = lapFuelStart(after) ?? lapFuelEnd(pitLap);
+    const inferredFuelAdded = fuelBefore != null && fuelAfter != null && fuelAfter > fuelBefore ? fuelAfter - fuelBefore : null;
+    const fuelAdded = chartNumber(event?.fuel_added ?? pitLap?.fuel_added) ?? inferredFuelAdded;
+    const changed = wheels.filter((wheel) => {
+      const beforeWear = lapWear(before, wheel, "end");
+      const afterWear = lapWear(after, wheel, "start");
+      return beforeWear != null && afterWear != null && afterWear + 0.01 < beforeWear;
+    });
+    const wearBefore = avg(wheels.map((wheel) => lapWear(before, wheel, "end")));
+    const wearAfter = avg(wheels.map((wheel) => lapWear(after, wheel, "start")));
+    return {
+      stop: index + 1,
+      lap: pitLapNo,
+      timestamp: source.timestamp,
+      type: String(event?.type ?? "Pit stop"),
+      message: String(event?.message ?? event?.phase ?? (pitLap ? "Pit lap detected" : "Pit event")),
+      fuel_before: fuelBefore,
+      fuel_after: fuelAfter,
+      fuel_added: fuelAdded,
+      tyres_changed: changed.length ? changed.map((wheel) => wheel.toUpperCase()).join(", ") : wearBefore != null && wearAfter != null ? "None detected" : "Not available",
+      tyre_wear_before: wearBefore,
+      tyre_wear_after: wearAfter,
+    };
+  });
+}
+
+function fmt(value: number | null, digits = 1, suffix = "") {
+  return value == null || !Number.isFinite(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
+}
+
+function brakeAverages(samples: Row[], laps: Row[]) {
+  return wheels.map((wheel) => averageFromRows(samples, `brake_temp_${wheel}`) ?? averageFromRows(laps, `brake_temp_${wheel}`));
+}
+
+function stintDegradation(stints: ChartRow[]): number | null {
+  if (stints.length < 2) return null;
+  const first = num(stints[0].average_lap);
+  const last = num(stints[stints.length - 1].average_lap);
+  return first != null && last != null ? last - first : null;
+}
+
+function buildEngineeringFindings(input: {
+  sessionType: string | null | undefined;
+  paceTrend: RacePrepReport["pace"]["trend"];
+  consistency: RacePrepReport["pace"]["consistency"];
+  fuelValues: number[];
+  fuelStops: number | null;
+  fuelMargin: number | null;
+  fuelSavingRequiredPercent: number | null;
+  pitEventCount: number;
+  frontRearBalance: number | null;
+  leftRightBalance: number | null;
+  hottestTyre: Wheel | null;
+  coldestTyre: Wheel | null;
+  brakeTemps: Array<number | null>;
+  coverage: RacePrepReport["coverage"];
+  stints: ChartRow[];
+  tyreWarning: string | null;
+  tyrePlanSummary: string;
+}): EngineeringFinding[] {
+  const findings: EngineeringFinding[] = [];
+  const isRace = String(input.sessionType || "").toLowerCase().includes("race");
+  if (isRace) {
+    const expectedStops = input.fuelStops;
+    const actualStops = input.pitEventCount;
+    const stopDelta = expectedStops != null ? actualStops - expectedStops : null;
+    findings.push({
+      title: "Race strategy review",
+      severity: stopDelta == null ? "info" : Math.abs(stopDelta) >= 1 || (input.fuelMargin != null && input.fuelMargin < 0) ? "warning" : "info",
+      evidence: expectedStops == null ? `${actualStops} pit events; fuel model incomplete` : `${actualStops} pit events; model suggests ${expectedStops} fuel stop${expectedStops === 1 ? "" : "s"}`,
+      detail: stopDelta == null
+        ? "Fuel strategy cannot be audited until tank capacity and fuel consumption are both available."
+        : input.fuelMargin != null && input.fuelMargin < 0
+          ? `The current model shows a fuel shortage. Consider an extra stop, a longer fill, or at least ${fmt(input.fuelSavingRequiredPercent, 1, "%")} lift-and-coast.`
+          : stopDelta > 0
+            ? "The race used more stops than the fuel model suggests. Review whether traffic, tyre loss, damage, or safety-car timing justified the extra stop."
+            : stopDelta < 0
+              ? "The race used fewer stops than the model suggests. Keep this strategy only if the fuel margin and tyre degradation graphs support the longer stint."
+              : "Observed stop count matches the fuel model; strategy changes should come from tyre degradation, traffic, or pace loss rather than fuel count.",
+    });
+  } else {
+    findings.push({
+      title: "Session purpose",
+      severity: "info",
+      evidence: `${input.sessionType || "Non-race session"} telemetry`,
+      detail: "Treat this as a setup and run-quality report. Race strategy suggestions are limited because no completed race context is present.",
+    });
+  }
+
+  findings.push({
+    title: "Pace profile",
+    severity: input.paceTrend === "degrading" || input.consistency === "low" ? "warning" : "info",
+    evidence: `Trend ${input.paceTrend}; consistency ${input.consistency}`,
+    detail: input.paceTrend === "degrading"
+      ? "Lap times got slower across the run, so compare late-stint tyres, fuel saving, and traffic before using the average pace as the target."
+      : input.paceTrend === "improving"
+        ? "Lap times improved across the run, which suggests the best reference pace may be late-run rather than whole-session average."
+        : "Pace is stable enough to use the median and average as useful references.",
+  });
+
+  const fuelMin = min(input.fuelValues);
+  const fuelMax = max(input.fuelValues);
+  const fuelSpread = fuelMin != null && fuelMax != null ? fuelMax - fuelMin : null;
+  findings.push({
+    title: "Fuel variability",
+    severity: fuelSpread != null && fuelSpread > 0.25 ? "warning" : "info",
+    evidence: fuelSpread == null ? "Fuel per lap unavailable" : `Spread ${fmt(fuelSpread, 3, " L/lap")}`,
+    detail: fuelSpread != null && fuelSpread > 0.25
+      ? "Fuel use moved enough to affect stint planning. Check throttle time, traffic, lift-and-coast, and push laps."
+      : "Fuel use is consistent enough for the current race estimate.",
+  });
+
+  const axleBalance = input.frontRearBalance;
+  const sideBalance = input.leftRightBalance;
+  findings.push({
+    title: "Tyre wear balance",
+    severity: (Math.abs(axleBalance ?? 0) > 0.02 || Math.abs(sideBalance ?? 0) > 0.02) ? "warning" : "info",
+    evidence: `F/R ${fmt(axleBalance, 4)}; R/L ${fmt(sideBalance, 4)}`,
+    detail: Math.abs(axleBalance ?? 0) > Math.abs(sideBalance ?? 0)
+      ? (axleBalance != null && axleBalance > 0 ? "Rear wear is leading front wear." : "Front wear is leading rear wear.")
+      : Math.abs(sideBalance ?? 0) > 0.02
+        ? (sideBalance != null && sideBalance > 0 ? "Right-side wear is leading left-side wear." : "Left-side wear is leading right-side wear.")
+        : "Wear is broadly balanced across the car.",
+  });
+
+  const setupDetails: string[] = [];
+  if (axleBalance != null && Math.abs(axleBalance) > 0.02) setupDetails.push(axleBalance > 0 ? "rear wear is leading, so check rear traction, differential exit behavior, and rear pressures" : "front wear is leading, so check entry understeer, brake migration, and front pressures");
+  if (sideBalance != null && Math.abs(sideBalance) > 0.02) setupDetails.push(sideBalance > 0 ? "right-side wear is leading, so verify track loading and right-side pressure growth" : "left-side wear is leading, so verify track loading and left-side pressure growth");
+  const cleanBrakeTemps = input.brakeTemps.filter((value): value is number => value != null);
+  const brakeSpread = cleanBrakeTemps.length >= 2 ? Math.max(...cleanBrakeTemps) - Math.min(...cleanBrakeTemps) : null;
+  if (brakeSpread != null && brakeSpread > 80) setupDetails.push("brake temperature spread is high, so review bias, ducting, lockups, and track-side loading");
+  if (input.coverage.channelGroups.includes("Platform")) setupDetails.push("use ride-height traces to confirm platform stability before changing springs, ARBs, or packers");
+  if (setupDetails.length) {
+    findings.push({
+      title: "Setup change candidates",
+      severity: setupDetails.length > 1 ? "warning" : "info",
+      evidence: setupDetails.slice(0, 2).join("; "),
+      detail: input.tyreWarning || "Prioritize the largest repeatable tyre/brake/platform imbalance before changing the baseline setup.",
+    });
+  }
+
+  if (input.hottestTyre || input.coldestTyre) {
+    findings.push({
+      title: "Tyre temperature split",
+      severity: "info",
+      evidence: `Hottest ${input.hottestTyre ? wheelDisplay[input.hottestTyre] : "--"}; coldest ${input.coldestTyre ? wheelDisplay[input.coldestTyre] : "--"}`,
+      detail: "Use the tyre temperature graph to see whether the split is persistent or only a short phase of the run.",
+    });
+  }
+
+  if (cleanBrakeTemps.length >= 2) {
+    findings.push({
+      title: "Brake temperature spread",
+      severity: (brakeSpread ?? 0) > 80 ? "warning" : "info",
+      evidence: `Spread ${fmt(brakeSpread, 0, " C")}`,
+      detail: (brakeSpread ?? 0) > 80
+        ? "Brake temperatures are uneven enough to justify checking lockups, bias, ducting, and track-side loading."
+        : "Brake temperatures are not showing a large corner-to-corner split.",
+    });
+  } else {
+    findings.push({
+      title: "Brake data coverage",
+      severity: "info",
+      evidence: "Brake temperature channels unavailable",
+      detail: "Brake graphs stay hidden until the selected session includes brake temperature channels.",
+    });
+  }
+
+  findings.push({
+    title: "Platform data coverage",
+    severity: input.coverage.channelGroups.includes("Platform") ? "info" : "warning",
+    evidence: input.coverage.channelGroups.includes("Platform") ? "Ride-height channels available" : "Ride-height channels unavailable",
+    detail: input.coverage.channelGroups.includes("Platform")
+      ? "Ride-height graphs can be used to connect platform movement to speed, braking, and tyre behavior."
+      : "Platform analysis needs ride-height channels in the selected recording.",
+  });
+
+  const stintDelta = stintDegradation(input.stints);
+  if (stintDelta != null) {
+    findings.push({
+      title: "Stint degradation",
+      severity: stintDelta > 0.5 ? "warning" : "info",
+      evidence: `Last stint average ${stintDelta >= 0 ? "+" : ""}${fmt(stintDelta, 3, " s")} vs first stint`,
+      detail: stintDelta > 0.5 ? "Later stints are slower on average. Compare fuel load, tyres, and traffic before changing the baseline pace." : "Stint averages are close enough that there is no major stint-to-stint pace drop.",
+    });
+  }
+
+  if (isRace && input.tyrePlanSummary) {
+    findings.push({
+      title: "Tyre strategy",
+      severity: input.tyrePlanSummary.toLowerCase().includes("tight") ? "warning" : "info",
+      evidence: input.tyrePlanSummary,
+      detail: "Use the stint and tyre graphs to decide whether the next race should change tyres earlier, run partial changes, or extend the set.",
+    });
+  }
+
+  if (input.coverage.missingGroups.length) {
+    findings.push({
+      title: "Missing channel groups",
+      severity: "info",
+      evidence: input.coverage.missingGroups.join(", "),
+      detail: "Unavailable groups are intentionally shown as empty states so the report does not invent engineering conclusions.",
+    });
+  }
+  return findings;
 }
 
 function latestSessionDuration(session: SavedSession | null | undefined, samples: Row[], laps: Row[]): number | null {
@@ -328,6 +759,33 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
     ? `${wheelLabel[mostWorn]} has the highest wear. ${frontRearBalance != null && Math.abs(frontRearBalance) > 0.02 ? (frontRearBalance > 0 ? "Rear wear is higher than front wear." : "Front wear is higher than rear wear.") : "Wear balance is broadly even."}`
     : null;
   const finalRecommendation = finalExecutionText(fuelStops, fuelMargin, savingRequired, paceTargetLow, paceTargetHigh, tyreWarning, lapTrend(lapTimes), tyrePlan.summary);
+  const coverage = buildCoverage(samples, allLaps);
+  const charts = {
+    laps: buildLapSeries(allLaps, bestLap),
+    samples: buildSampleSeries(samples),
+    stints: buildStintSeries(allLaps),
+    events: buildEventSeries(review),
+    pitStops: buildPitStopReport(review, allLaps),
+  };
+  const engineeringFindings = buildEngineeringFindings({
+    sessionType: session?.session_type,
+    paceTrend: lapTrend(lapTimes),
+    consistency,
+    fuelValues,
+    fuelStops,
+    fuelMargin,
+    fuelSavingRequiredPercent: savingRequired,
+    pitEventCount: review.pit_events?.length || 0,
+    frontRearBalance,
+    leftRightBalance,
+    hottestTyre: bestWheel(tempAverages, Math.max),
+    coldestTyre: bestWheel(tempAverages, Math.min),
+    brakeTemps: brakeAverages(samples, allLaps),
+    coverage,
+    stints: charts.stints,
+    tyreWarning,
+    tyrePlanSummary: tyrePlan.summary,
+  });
 
   return {
     session: {
@@ -404,6 +862,9 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
       liftCoastOptions: liftOptions(fuelAverage),
       finalRecommendation,
     },
+    coverage,
+    charts,
+    engineeringFindings,
   };
 }
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RecommendationPanel } from "../components/RecommendationPanel";
 import { SectionTitle } from "../components/SectionTitle";
-import { formatRaceGap, formatRaceTime } from "../lib/timeFormat";
+import { formatRaceTime } from "../lib/timeFormat";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { CompetitorState, PlayerState, TelemetrySnapshot, TyreState, TyreTemps } from "../types/telemetry";
 
@@ -67,7 +67,7 @@ function lastAverage(history: LapHistory, car: CompetitorState | undefined, coun
 function trendLabel(delta: number | null, laps: number) {
   if (delta == null) return "--";
   const amount = Math.abs(delta) * laps;
-  return `${delta < 0 ? "Gained" : "Lost"} ${formatRaceGap(amount)}`;
+  return `${delta < 0 ? "Gained" : "Lost"} ${formatRaceTime(amount)}`;
 }
 
 function playerTrendLabel(delta: number | null) {

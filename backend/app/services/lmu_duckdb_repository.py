@@ -234,6 +234,53 @@ def _max(values: list[float | None]) -> float | None:
     return max(clean) if clean else None
 
 
+def _quantile(values: list[float], fraction: float) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * fraction
+    lower = math.floor(position)
+    upper = math.ceil(position)
+    if lower == upper:
+        return ordered[int(position)]
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+
+
+def _without_outliers(values: list[float | None]) -> list[float]:
+    clean = [value for value in values if value is not None and math.isfinite(value)]
+    if len(clean) < 4:
+        return clean
+
+    q1 = _quantile(clean, 0.25)
+    q3 = _quantile(clean, 0.75)
+    if q1 is not None and q3 is not None and q3 > q1:
+        iqr = q3 - q1
+        lower = max(0.0, q1 - (1.5 * iqr))
+        upper = q3 + (1.5 * iqr)
+        filtered = [value for value in clean if lower <= value <= upper]
+        return filtered or clean
+
+    median = _quantile(clean, 0.5)
+    if median is None:
+        return clean
+    deviations = [abs(value - median) for value in clean]
+    mad = _quantile(deviations, 0.5)
+    if not mad:
+        return clean
+    filtered = [value for value in clean if abs(value - median) / mad <= 3.5]
+    return filtered or clean
+
+
+def _tyre_wear_used(value: float | None) -> float | None:
+    if value is None or not math.isfinite(value):
+        return None
+    if 0 <= value <= 1:
+        return (1.0 - value) * 100.0
+    if 1 < value <= 100:
+        return 100.0 - value
+    return None
+
+
 def _session_id(path: Path) -> str:
     stat = path.stat()
     payload = f"{path.resolve()}|{stat.st_size}|{stat.st_mtime_ns}"
@@ -550,7 +597,7 @@ def _nearest_event(events: list[tuple[float, Any]], time_value: float, cursor: i
 def _row_limit_for_review(sample_limit: int) -> int:
     if sample_limit <= 0:
         return MAX_REVIEW_ROWS
-    return min(MAX_REVIEW_ROWS, max(5000, sample_limit * 4))
+    return min(MAX_REVIEW_ROWS, max(1200, sample_limit * 4))
 
 
 def _select_channel_rows(conn, layout: ChannelLayout, row_limit: int = MAX_REVIEW_ROWS) -> tuple[list[dict], list[str]]:
@@ -831,13 +878,25 @@ def _pit_events(rows: list[dict]) -> list[dict]:
 
 
 def _summary(rows: list[dict], laps: list[dict], info: TableInfo) -> dict:
-    lap_times = [_num(lap.get("lap_time")) for lap in laps if not lap.get("in_pit")]
-    fuel_used = [_num(lap.get("fuel_used")) for lap in laps]
+    completed_laps = [
+        lap for lap in laps
+        if not lap.get("in_pit") and (_num(lap.get("lap_time")) or 0) > 0
+    ]
+    lap_times = [_num(lap.get("lap_time")) for lap in completed_laps]
+    fuel_used = [_num(lap.get("fuel_used")) for lap in completed_laps]
+    fuel_used_positive = [value for value in fuel_used if value is not None and value > 0]
+    fuel_used_for_average = _without_outliers(fuel_used_positive)
+    five_lap_paces = [
+        _avg(lap_times[index:index + 5])
+        for index in range(0, max(0, len(lap_times) - 4))
+    ]
     duration = None
     if len(rows) >= 2:
         start = _num(rows[0].get("game_time"))
         end = _num(rows[-1].get("game_time"))
         duration = end - start if start is not None and end is not None and end >= start else None
+    tyre_remaining_values = [_num(row.get(f"tyre_wear_{wheel}")) for row in rows for wheel in WHEELS]
+    tyre_wear_used_values = [_tyre_wear_used(value) for value in tyre_remaining_values]
     return {
         "session_id": "external",
         "completed_at": None,
@@ -846,8 +905,11 @@ def _summary(rows: list[dict], laps: list[dict], info: TableInfo) -> dict:
         "total_distance_km": sum(value for value in (_num(lap.get("distance_km")) for lap in laps) if value is not None) or _distance_km(rows),
         "best_lap": min((value for value in lap_times if value is not None and value > 0), default=None),
         "average_lap": _avg(lap_times),
-        "total_fuel_used": sum(value for value in fuel_used if value is not None and value > 0) or None,
-        "average_tyre_wear": _avg([_num(row.get(f"tyre_wear_{wheel}")) for row in rows for wheel in WHEELS]),
+        "average_fuel_per_lap": _avg(fuel_used_for_average),
+        "average_five_lap_pace": _avg([value for value in five_lap_paces if value is not None]),
+        "total_fuel_used": sum(fuel_used_positive) or None,
+        "average_tyre_wear": _avg(tyre_wear_used_values),
+        "average_tyre_life_remaining": _avg(tyre_remaining_values),
         "average_tyre_temp": _avg([_num(row.get(f"tyre_temp_{wheel}")) for row in rows for wheel in WHEELS]),
         "average_tyre_pressure": _avg([_num(row.get(f"tyre_pressure_{wheel}")) for row in rows for wheel in WHEELS]),
         "average_brake_temp": _avg([_num(row.get(f"brake_temp_{wheel}")) for row in rows for wheel in WHEELS]),
@@ -864,6 +926,89 @@ def _downsample(rows: list[dict], limit: int) -> list[dict]:
         return rows
     step = math.ceil(len(rows) / limit)
     return rows[::step]
+
+
+def _downsample_evenly(rows: list[dict], limit: int) -> list[dict]:
+    if limit <= 0 or len(rows) <= limit:
+        return rows
+    step = (len(rows) - 1) / max(1, limit - 1)
+    indexes = {round(index * step) for index in range(limit)}
+    return [row for index, row in enumerate(rows) if index in indexes]
+
+
+def _default_trajectory_laps(session_id: str) -> list[str]:
+    with SessionLocal() as db:
+        rows = db.scalars(select(LmuDuckdbLapModel).where(LmuDuckdbLapModel.session_id == session_id)).all()
+    clean = [
+        lap for lap in rows
+        if lap.lap_time is not None and lap.lap_time > 0 and not lap.in_pit
+    ]
+    clean.sort(key=lambda lap: float(lap.lap_time or 0))
+    return [str(lap.lap_number) for lap in clean[:2]]
+
+
+def _dense_channel_values(conn, layout: ChannelLayout, target: str) -> tuple[list[Any], int]:
+    table = layout.mapped.get(target)
+    if not table:
+        return [], 1
+    columns = _table_columns(conn, layout.schema, table)
+    if "ts" in columns:
+        return [], 1
+    value_column = "value" if "value" in columns else _value_columns(columns)[0]
+    values = [row[0] for row in conn.execute(f"select {_quote_ident(value_column)} from {_quote_table(layout.schema, table)} order by rowid").fetchall()]
+    return values, _channel_freq(layout, table)
+
+
+def _trajectory_rows(conn, layout: ChannelLayout, lap_numbers: list[str], max_points: int) -> tuple[list[dict], list[str]]:
+    warnings: list[str] = []
+    if not {"game_time", "gps_latitude", "gps_longitude"}.issubset(layout.mapped):
+        return [], ["GPS Time, GPS Latitude, or GPS Longitude is missing."]
+    if "lap_number" not in layout.mapped:
+        return [], ["Lap Number is missing, so trajectory laps cannot be isolated."]
+
+    selected_laps = {str(lap) for lap in lap_numbers if str(lap) != ""}
+    if not selected_laps:
+        return [], ["No laps were selected for trajectory comparison."]
+
+    game_times, _base_freq = _dense_channel_values(conn, layout, "game_time")
+    if not game_times:
+        return [], ["GPS Time has no dense samples."]
+    start_time = _num(game_times[0]) or 0.0
+    dense_targets = ("gps_latitude", "gps_longitude", "throttle", "brake", "speed_kph", "lap_distance")
+    dense = {target: _dense_channel_values(conn, layout, target) for target in dense_targets}
+    lap_events = _event_values(conn, layout, "lap_number")
+    if not lap_events:
+        return [], ["Lap Number has no usable events."]
+
+    grouped: dict[str, list[dict]] = {lap: [] for lap in selected_laps}
+    lap_cursor = 0
+    for time_value_raw in game_times:
+        time_value = _num(time_value_raw)
+        if time_value is None:
+            continue
+        while lap_cursor + 1 < len(lap_events) and lap_events[lap_cursor + 1][0] <= time_value:
+            lap_cursor += 1
+        lap_raw = lap_events[lap_cursor][1] if lap_events and lap_events[lap_cursor][0] <= time_value else None
+        lap_num = _num(lap_raw)
+        lap = str(int(lap_num)) if lap_num is not None else ""
+        if lap not in selected_laps:
+            continue
+
+        row: dict[str, Any] = {"lap_number": int(lap), "game_time": time_value}
+        for target, (values, frequency) in dense.items():
+            if not values:
+                continue
+            index = max(0, int(math.floor((time_value - start_time) * float(frequency))))
+            if index < len(values):
+                row[target] = _num(values[index])
+        if row.get("gps_latitude") is not None and row.get("gps_longitude") is not None:
+            grouped[lap].append(row)
+
+    per_lap_limit = max(80, math.ceil(max_points / max(1, len(selected_laps))))
+    rows: list[dict] = []
+    for lap in lap_numbers:
+        rows.extend(_downsample_evenly(grouped.get(str(lap), []), per_lap_limit))
+    return rows, warnings
 
 
 def _find_session(folder: Path, session_id: str) -> Path | None:
@@ -1198,11 +1343,16 @@ def sync_folder(path: str | None = None) -> dict:
     warnings: list[str] = []
 
     with SessionLocal() as db:
-        cached_by_file_key = {row.file_key: row for row in db.scalars(select(LmuDuckdbSessionModel)).all()}
+        cached_by_file_key = {
+            file_key: {"signature": signature, "active": active}
+            for file_key, signature, active in db.execute(
+                select(LmuDuckdbSessionModel.file_key, LmuDuckdbSessionModel.signature, LmuDuckdbSessionModel.active)
+            ).all()
+        }
         for file_path in candidates:
             signature = signatures[str(file_path.resolve())]
             cached = cached_by_file_key.get(_file_key(file_path))
-            if cached and cached.signature == signature and cached.active:
+            if cached and cached["signature"] == signature and cached["active"]:
                 skipped += 1
                 continue
             try:
@@ -1294,3 +1444,29 @@ def review_session(path: str | None, session_id: str, sample_limit: int = 5000) 
     if file_path is None:
         raise KeyError(session_id)
     return _review_file(file_path, sample_limit=sample_limit)
+
+
+def trajectory_session(session_id: str, lap_a: str | None = None, lap_b: str | None = None, max_points: int = 1600) -> dict:
+    file_path = _find_session_by_id(session_id)
+    if file_path is None:
+        raise KeyError(session_id)
+    lap_numbers = [str(lap) for lap in (lap_a, lap_b) if lap not in (None, "")]
+    if not lap_numbers:
+        lap_numbers = _default_trajectory_laps(session_id)
+    else:
+        lap_numbers = list(dict.fromkeys(lap_numbers))
+    conn = _open(file_path)
+    try:
+        layout = _channel_layout(conn)
+        if layout is None:
+            points, warnings = [], ["No supported DuckDB channel layout was found."]
+        else:
+            points, warnings = _trajectory_rows(conn, layout, lap_numbers, max(200, min(5000, max_points)))
+    finally:
+        conn.close()
+    return {
+        "session_id": session_id,
+        "laps": lap_numbers,
+        "points": points,
+        "warnings": warnings,
+    }

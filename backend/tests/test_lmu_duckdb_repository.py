@@ -275,6 +275,24 @@ def test_sync_caches_new_sessions_and_skips_unchanged(monkeypatch, tmp_path) -> 
         assert db.query(LmuDuckdbSessionModel).filter_by(active=True).count() == 1
 
 
+def test_sync_reuses_cache_after_processing_changed_file(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(lmu_duckdb_repository, "SessionLocal", factory)
+    changed_path = tmp_path / "changed.duckdb"
+    unchanged_path = tmp_path / "unchanged.duckdb"
+    _make_channel_duckdb(changed_path)
+    _make_channel_duckdb(unchanged_path)
+    lmu_duckdb_repository.sync_folder(str(tmp_path))
+
+    changed_path.unlink()
+    _make_channel_duckdb(changed_path)
+    result = lmu_duckdb_repository.sync_folder(str(tmp_path))
+
+    assert result["processed"] == 1
+    assert result["skipped"] == 1
+    assert result["failed"] == 0
+
+
 def test_sync_marks_removed_files_inactive(monkeypatch, tmp_path) -> None:
     factory = _session_factory()
     monkeypatch.setattr(lmu_duckdb_repository, "SessionLocal", factory)

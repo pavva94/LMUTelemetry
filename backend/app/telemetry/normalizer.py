@@ -109,9 +109,13 @@ def completed_lap_time(value: Any) -> float | None:
     return lap_time if lap_time is not None and 20.0 <= lap_time <= 1200.0 else None
 
 
-def race_gap(value: Any) -> float | None:
+def race_gap(value: Any, *, allow_zero: bool = False) -> float | None:
     gap = safe_float(value)
-    return gap if gap is not None and 0.0 <= gap <= 86400.0 else None
+    if gap is None or gap < 0.0 or gap > 86400.0:
+        return None
+    if gap == 0.0 and not allow_zero:
+        return None
+    return gap
 
 
 def attr(obj: Any, *names: str, default: Any = None) -> Any:
@@ -143,12 +147,12 @@ def normalize_lmu_snapshot(raw: Any) -> TelemetrySnapshot:
     player_raw = vehicles[player_index] if 0 <= player_index < len(vehicles) else None
     telem_info = attr(telemetry_data, "telemInfo", default=None)
     player_telemetry = telem_info[player_index] if telem_info is not None and 0 <= player_index < len(telem_info) else telemetry_data
+    player = _normalize_player(player_raw, player_telemetry)
     competitors = [
         _normalize_competitor(v, telem_info[idx] if telem_info is not None and idx < len(telem_info) else None, idx == player_index)
         for idx, v in enumerate(vehicles[:104])
     ]
-    _apply_gap_context(competitors)
-    player = _normalize_player(player_raw, player_telemetry)
+    _apply_gap_context(competitors, player)
     _apply_player_gap_context(player, competitors)
     session = SessionState(
         track_name=decode_c_string(attr(scoring, "mTrackName", default="")),
@@ -271,8 +275,10 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         finish_status=finish_status_name(attr(telemetry, "mFinishStatus", default=None)),
         track_limits_steps=attr(vehicle, "mCutTrackWarnings", default=None),
         lap_invalidated=bool(attr(vehicle, "mLapInvalidated", default=False)),
-        gap_car_ahead=race_gap(attr(vehicle, "mTimeBehindNext", default=None)),
-        gap_car_behind=race_gap(attr(vehicle, "mTimeBehindPrev", default=None)),
+        gap_car_ahead=race_gap(attr(telemetry, "mTimeGapCarAhead", default=attr(vehicle, "mTimeBehindNext", default=None))),
+        gap_car_behind=race_gap(attr(telemetry, "mTimeGapCarBehind", default=None)),
+        gap_place_ahead=race_gap(attr(telemetry, "mTimeGapPlaceAhead", default=None)),
+        gap_place_behind=race_gap(attr(telemetry, "mTimeGapPlaceBehind", default=None)),
         tyre_state=tyres,
         hybrid_state=HybridState(
             battery_percent=state_of_charge if state_of_charge is not None else (battery_fraction * 100 if battery_fraction is not None else None),
@@ -343,13 +349,14 @@ def _normalize_tyres(vehicle: Any, telemetry: Any) -> TyreState:
 
 
 def _normalize_competitor(vehicle: Any, telemetry: Any, is_player: bool) -> CompetitorState:
+    position = attr(vehicle, "mPlace", default=None)
     return CompetitorState(
         vehicle_id=int(attr(vehicle, "mID", "mVehicleID", default=0) or 0),
         driver_name=decode_c_string(attr(vehicle, "mDriverName", default="")),
         vehicle_name=decode_c_string(attr(vehicle, "mVehicleName", default="")),
         vehicle_model=decode_c_string(attr(telemetry, "mVehicleModel", default="")) if telemetry is not None else None,
         vehicle_class=decode_c_string(attr(vehicle, "mVehicleClass", default="")),
-        position=attr(vehicle, "mPlace", default=None),
+        position=position,
         class_position=attr(vehicle, "mClassPosition", default=None),
         total_laps=attr(vehicle, "mTotalLaps", default=None),
         lap_distance=safe_float(attr(vehicle, "mLapDist", default=None)),
@@ -360,7 +367,7 @@ def _normalize_competitor(vehicle: Any, telemetry: Any, is_player: bool) -> Comp
         pitstops=attr(vehicle, "mNumPitstops", default=None),
         in_pits=bool(attr(vehicle, "mInPits", default=False)),
         pit_state=str(attr(vehicle, "mPitState", default="unknown")),
-        time_behind_leader=race_gap(attr(vehicle, "mTimeBehindLeader", default=None)),
+        time_behind_leader=race_gap(attr(vehicle, "mTimeBehindLeader", default=None), allow_zero=position == 1),
         time_behind_next=race_gap(attr(vehicle, "mTimeBehindNext", default=None)),
         laps_behind_leader=attr(vehicle, "mLapsBehindLeader", default=None),
         fuel_fraction=bounded_fraction((safe_float(attr(vehicle, "mFuelFraction", default=None)) or 0) / 255) if attr(vehicle, "mFuelFraction", default=None) is not None else None,
@@ -368,7 +375,7 @@ def _normalize_competitor(vehicle: Any, telemetry: Any, is_player: bool) -> Comp
     )
 
 
-def _apply_gap_context(competitors: list[CompetitorState]) -> None:
+def _apply_gap_context(competitors: list[CompetitorState], player_state: PlayerState | None = None) -> None:
     player = next((car for car in competitors if car.is_player), None)
     if player is None:
         return
@@ -381,9 +388,11 @@ def _apply_gap_context(competitors: list[CompetitorState]) -> None:
             car.gap_to_player = car.time_behind_leader - player_leader_gap
         elif player_position is not None and car.position is not None:
             if car.position == player_position - 1:
-                car.gap_to_player = -player.time_behind_next if player.time_behind_next is not None else None
+                gap_ahead = player_state.gap_car_ahead if player_state and player_state.gap_car_ahead is not None else player.time_behind_next
+                car.gap_to_player = -gap_ahead if gap_ahead is not None else None
             elif car.position == player_position + 1:
-                car.gap_to_player = car.time_behind_next
+                gap_behind = player_state.gap_car_behind if player_state and player_state.gap_car_behind is not None else car.time_behind_next
+                car.gap_to_player = gap_behind
 
 
 def _apply_player_gap_context(player: PlayerState | None, competitors: list[CompetitorState]) -> None:
@@ -395,7 +404,7 @@ def _apply_player_gap_context(player: PlayerState | None, competitors: list[Comp
         return
     ahead = next((car for car in competitors if car.position == player_position - 1), None)
     behind = next((car for car in competitors if car.position == player_position + 1), None)
-    if ahead and ahead.gap_to_player is not None:
+    if player.gap_car_ahead is None and ahead and ahead.gap_to_player is not None:
         player.gap_car_ahead = abs(ahead.gap_to_player)
-    if behind and behind.gap_to_player is not None:
+    if player.gap_car_behind is None and behind and behind.gap_to_player is not None:
         player.gap_car_behind = abs(behind.gap_to_player)

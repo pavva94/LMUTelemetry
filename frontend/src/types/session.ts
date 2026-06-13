@@ -24,8 +24,11 @@ export type AggregatedSessionSummary = {
   total_distance_km?: number | null;
   best_lap?: number | null;
   average_lap?: number | null;
+  average_fuel_per_lap?: number | null;
+  average_five_lap_pace?: number | null;
   total_fuel_used?: number | null;
   average_tyre_wear?: number | null;
+  average_tyre_life_remaining?: number | null;
   average_tyre_temp?: number | null;
   average_tyre_pressure?: number | null;
   average_brake_temp?: number | null;

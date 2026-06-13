@@ -42,26 +42,23 @@ Race model:
 - `fuelPerLap` comes from live strategy fuel model when positive.
 - Tank capacity priority: live player capacity, strategy capacity, current fuel.
 - `requiredFuel = raceLaps * fuelPerLap + fuel_safety_margin_liters`.
-- `tankLaps = tankLiters / fuelPerLap`.
-- `minStops = max(0, ceil(requiredFuel / tankLiters) - 1)`.
-- `currentFuelLaps = currentFuel / fuelPerLap`.
+- Candidate stop counts are simulated from zero stops through the configured maximum.
+- `stintLaps = raceLaps / (stops + 1)`.
+- Each stop subtracts stint fuel, checks the safety margin, and only adds fuel that fits in the remaining tank space.
 
 Plan cards:
 
-- Candidate stop counts are `minStops - 1`, `minStops`, and `minStops + 1`, with duplicates removed.
-- `estimated total = race_duration_seconds + stops * pit_loss_seconds`.
-- `fuelMargin = tankLiters * (stops + 1) - requiredFuel`.
-- `stintLaps = raceLaps / (stops + 1)`.
-- Risk is unknown if fuel margin cannot be calculated, high if margin is negative, medium if margin is below half a lap of fuel or tyre/traffic risk is high, otherwise low.
+- `estimated total = race_duration_seconds + pit service time + lift/coast time loss`.
+- Pit service time is pit lane loss plus tyre service and rounded 5 L refuel service.
+- `fuelMargin = finishFuelRemaining - fuel_safety_margin_liters`.
+- Risk is medium if the fuel margin is below half a lap of fuel or the source data is still below the required valid laps; tyre risk can also raise the risk.
 
 Lift-and-coast:
 
-- Target stop count is `minStops - 1`.
-- `availableFuel = tankLiters * (targetStops + 1)`.
-- `shortage = requiredFuel - availableFuel`.
-- `savePerLap = shortage / raceLaps` when shortage is positive.
+- The model first checks total fuel shortage, then simulates each stint.
+- If a stop count fails because a stint or refuel would not fit the tank, the model binary-searches the minimum save per lap up to `8%`.
 - `savePercent = savePerLap / fuelPerLap * 100`.
-- Pace cost estimate is `savePercent / 100 * normalLapTime * 0.12` to `* 0.30`.
+- Pace cost estimate is `savePercent / 100 * normalLapTime * 0.2 * raceLaps`.
 - Risk bands: `<=2%` low, `<=5%` medium, `<=8%` high but possible, above `8%` high and likely not enough.
 
 ## Pit Window

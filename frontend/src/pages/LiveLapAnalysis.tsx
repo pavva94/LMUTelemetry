@@ -17,7 +17,7 @@ import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
 import { damperRows, finite, sampleAt, splitInsights, tempColor, wheels, type Wheel } from "../lib/liveTelemetryEngine";
 import { formatRaceTime } from "../lib/timeFormat";
-import type { LiveLapAnalysis as LiveLapAnalysisPayload, LiveLapSample, TelemetryInsight } from "../types/liveLapAnalysis";
+import type { LiveLapAnalysis as LiveLapAnalysisPayload, LiveLapSample, LiveLapSummary, TelemetryInsight } from "../types/liveLapAnalysis";
 
 const colors: Record<Wheel, string> = { fl: "#6dd6ff", fr: "#ff8c69", rl: "#91e48f", rr: "#c7a8ff" };
 const wheelLabels: Record<Wheel, string> = { fl: "FL", fr: "FR", rl: "RL", rr: "RR" };
@@ -26,8 +26,15 @@ const signed = (value?: number | null) => value == null || Number.isNaN(value) ?
 const timeOf = (sample: LiveLapSample) => finite(sample.lap_time ?? sample.timestamp);
 
 function EmptyState({ detail }: { detail: string }) {
-  return <div className="empty-state"><strong>No valid live laps yet</strong><span>{detail}</span></div>;
+  return <div className="empty-state"><strong>No completed live laps yet</strong><span>{detail}</span></div>;
 }
+
+const lapStatus = (lap?: LiveLapSummary) => {
+  if (!lap) return "No lap selected";
+  return lap.valid_lap === false ? lap.reason || "Marked lap" : "Clean lap";
+};
+
+const lapOptionLabel = (lap: LiveLapSummary) => `Lap ${lap.lap_number} - ${formatRaceTime(lap.lap_time)} - ${lapStatus(lap)}`;
 
 function InsightIcon({ insight }: { insight: TelemetryInsight }) {
   if (insight.icon === "check") return <CheckCircle2 size={18} />;
@@ -38,7 +45,7 @@ function InsightIcon({ insight }: { insight: TelemetryInsight }) {
 function InsightCard({ title, insights, selectedTimestamp, onSelect }: { title: string; insights: TelemetryInsight[]; selectedTimestamp: number | null; onSelect: (insight: TelemetryInsight) => void }) {
   return (
     <section className="card span-6 lap-analysis-notepad-card">
-      <SectionTitle title={title} help="Rule-based findings from the selected valid live lap. Click a row to synchronize the deep-dive charts to that event." />
+      <SectionTitle title={title} help="Rule-based findings from the selected live lap. Click a row to synchronize the deep-dive charts to that event." />
       {insights.length ? (
         <div className="lap-insight-list">
           {insights.map((insight, index) => {
@@ -67,19 +74,27 @@ function ContextHeader({ payload, selectedLap, referenceLap, setSelectedLap, set
   setReferenceLap: (lap: number | null) => void;
 }) {
   const sessionLabel = [payload.session.session_type, payload.session.track_name, payload.session.vehicle_model || payload.session.vehicle_name].filter(Boolean).join(" - ") || "Live session";
+  const selectedSummary = payload.laps.find((lap) => lap.lap_number === selectedLap);
+  const referenceSummary = payload.laps.find((lap) => lap.lap_number === referenceLap);
+  const validCount = payload.laps.filter((lap) => lap.valid_lap !== false).length;
   return (
     <section className="card span-12 lap-analysis-sticky">
       <div className="lap-context-grid">
         <label>Session<input value={sessionLabel} readOnly /></label>
         <label>Lap<select value={selectedLap ?? ""} onChange={(event) => setSelectedLap(event.target.value ? Number(event.target.value) : null)}>
-          {payload.laps.map((lap) => <option value={lap.lap_number} key={lap.lap_number}>Lap {lap.lap_number} - {formatRaceTime(lap.lap_time)}</option>)}
+          {payload.laps.map((lap) => <option value={lap.lap_number} key={lap.lap_number}>{lapOptionLabel(lap)}</option>)}
         </select></label>
         <label>Ghost lap<select value={referenceLap ?? ""} onChange={(event) => setReferenceLap(event.target.value ? Number(event.target.value) : null)}>
-          {payload.laps.map((lap) => <option value={lap.lap_number} key={lap.lap_number}>Lap {lap.lap_number} - {formatRaceTime(lap.lap_time)}</option>)}
+          {payload.laps.map((lap) => <option value={lap.lap_number} key={lap.lap_number}>{lapOptionLabel(lap)}</option>)}
         </select></label>
         <div className="lap-metric"><span className="label">Peak combined G</span><strong>{fmt(payload.metrics.session_peak_combined_g, 2, "G")}</strong></div>
         <div className="lap-metric"><span className="label">K_US</span><strong>{fmt(payload.metrics.understeer_gradient, 4)}</strong></div>
         <div className="lap-metric"><span className="label">W_latGeom</span><strong>{fmt(payload.metrics.load_transfer_geom, 0, "N")}</strong></div>
+      </div>
+      <div className="lap-validity-note">
+        <span>{payload.laps.length} completed laps, {validCount} clean</span>
+        <span>Selected: {lapStatus(selectedSummary)}</span>
+        <span>Ghost: {lapStatus(referenceSummary)}</span>
       </div>
       <div className="table-wrap lap-sector-table">
         <table>
@@ -262,8 +277,14 @@ export function LiveLapAnalysis() {
         setPayload(data);
         setSelectedLap((current) => data.laps.some((lap) => lap.lap_number === current) ? current : data.selected_lap_number ?? null);
         setReferenceLap((current) => data.laps.some((lap) => lap.lap_number === current) ? current : data.reference_lap_number ?? null);
-        setSelectedTimestamp((current) => current ?? data.insights.find((item) => item.timestamp != null)?.timestamp ?? data.current_lap_data[0]?.lap_time ?? null);
-        setStatus(data.laps.length ? "Live valid lap analysis ready" : "Complete a valid lap to unlock analysis");
+        setSelectedTimestamp((current) => {
+          const stillInLap = current != null && data.current_lap_data.some((sample) => {
+            const time = timeOf(sample);
+            return time != null && Math.abs(time - current) < 0.05;
+          });
+          return stillInLap ? current : data.insights.find((item) => item.timestamp != null)?.timestamp ?? data.current_lap_data[0]?.lap_time ?? null;
+        });
+        setStatus(data.laps.length ? "Live lap analysis ready" : "Complete a lap to unlock analysis");
       }).catch((exc) => !cancelled && setStatus(exc instanceof Error ? exc.message : String(exc)));
     };
     load();

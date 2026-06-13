@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { formatRaceGap, formatRaceTime } from "../lib/timeFormat";
+import { formatRaceTime } from "../lib/timeFormat";
 import type { CompetitorState } from "../types/telemetry";
 import { SectionTitle } from "./SectionTitle";
 import { StatusBadge } from "./StatusBadge";
@@ -43,17 +43,17 @@ export function CompetitorTable({ competitors }: { competitors: CompetitorState[
   return (
     <section className="card span-12">
       <div className="row" style={{ alignItems: "end" }}>
-        <SectionTitle title="Competitors" help="Shows live race order, lap pace, gaps, stops, and threat estimates. Sort by gap or last lap to identify immediate traffic and strategy pressure." />
+        <SectionTitle title="Competitors" help="Shows live race order, lap pace, stops, and threat estimates. Sort by position or last lap to identify immediate traffic and strategy pressure." />
         <input style={{ maxWidth: 280 }} value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search cars" />
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>{head("Pos", "position")}</th><th>{head("Driver", "driver_name")}</th><th>{head("Car", "vehicle_model")}</th><th>{head("Class", "vehicle_class")}</th><th>{head("Last", "last_lap_time")}</th><th>{head("Best", "best_lap_time")}</th><th>{head("Gap to you", "gap_to_player")}</th><th>{head("Stops", "pitstops")}</th><th>{head("Pits", "in_pits")}</th><th>{head("Strategy", "estimated_strategy_group")}</th><th>{head("Threat", "threat_level")}</th></tr></thead>
+          <thead><tr><th>{head("Pos", "position")}</th><th>{head("Driver", "driver_name")}</th><th>{head("Car", "vehicle_model")}</th><th>{head("Class", "vehicle_class")}</th><th>{head("Last", "last_lap_time")}</th><th>{head("Best", "best_lap_time")}</th><th>{head("Stops", "pitstops")}</th><th>{head("Pits", "in_pits")}</th><th>{head("Strategy", "estimated_strategy_group")}</th><th>{head("Threat", "threat_level")}</th></tr></thead>
           <tbody>
             {rows.map((c) => (
               <tr key={c.vehicle_id}>
                 <td>{c.position}</td><td>{c.driver_name || (c.is_player ? "Player" : "--")}</td><td>{c.vehicle_model || c.vehicle_name || "--"}</td><td>{c.vehicle_class || "--"}</td>
-                <td>{formatRaceTime(c.last_lap_time)}</td><td>{formatRaceTime(c.best_lap_time)}</td><td>{formatRaceGap(c.gap_to_player)}</td><td>{c.pitstops ?? "--"}</td>
+                <td>{formatRaceTime(c.last_lap_time)}</td><td>{formatRaceTime(c.best_lap_time)}</td><td>{c.pitstops ?? "--"}</td>
                 <td>{c.in_pits ? "Yes" : "No"}</td><td>{c.estimated_strategy_group || "UNKNOWN"} estimated</td><td><StatusBadge value={c.threat_level} /></td>
               </tr>
             ))}

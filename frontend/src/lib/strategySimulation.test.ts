@@ -64,6 +64,37 @@ describe("strategy simulation", () => {
     expect(plans.some((plan) => plan.liftCoastSavePercent > 0 && plan.liftCoastSavePercent <= 5)).toBe(true);
   });
 
+  it("rejects stops that need more fuel than the tank can accept", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 84,
+      raceStartFuelLiters: 60,
+      tankCapacityLiters: 60,
+      fuelSafetyMarginLiters: 3,
+      maxStops: 1,
+    });
+
+    expect(plans).toHaveLength(0);
+  });
+
+  it("uses fuel saving when tank space, not total capacity, limits the stop count", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 78,
+      raceStartFuelLiters: 60,
+      tankCapacityLiters: 60,
+      fuelSafetyMarginLiters: 2,
+      maxStops: 1,
+    });
+    const oneStop = plans.find((plan) => plan.stops === 1);
+
+    expect(oneStop).toBeDefined();
+    if (!oneStop) throw new Error("Expected a one-stop plan");
+    expect(oneStop.liftCoastSavePercent).toBeGreaterThan(0);
+    expect(oneStop.stopsDetail[0].fuelRemainingLiters).toBeGreaterThanOrEqual(1);
+    expect(oneStop.stopsDetail[0].fuelRemainingLiters + oneStop.stopsDetail[0].fuelAddedLiters).toBeLessThanOrEqual(60);
+  });
+
   it("marks overlong tyre stints as high risk", () => {
     const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: 12, currentTyreWear: 0.65, tyreWearRatePerLap: 0.02, maxStops: 0 });
     expect(plans.some((plan) => plan.risk === "high" && (plan.projectedTyreWear || 0) > baseInput.maxTyreWear)).toBe(true);

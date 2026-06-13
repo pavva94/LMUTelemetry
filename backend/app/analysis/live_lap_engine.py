@@ -208,26 +208,54 @@ class LiveLapBuffer:
         return OrderedDict((lap, rows) for lap, rows in self._completed.items() if is_valid_lap(rows, self.config))
 
 
-def is_valid_lap(rows: list[dict], config: VehicleAnalysisConfig) -> bool:
-    if len(rows) < max(8, config.poll_hz * 20):
-        return False
-    if any(row.get("lap_invalidated") is True or row.get("in_pits") is True or row.get("yellow_flag") is True for row in rows):
-        return False
-    start = _time(rows[0])
-    end = _time(rows[-1])
+def lap_validation(rows: list[dict], config: VehicleAnalysisConfig) -> dict:
+    reasons: list[str] = []
+    min_samples = max(8, config.poll_hz * 20)
+    if len(rows) < min_samples:
+        reasons.append("Too few samples")
+    if any(row.get("lap_invalidated") is True for row in rows):
+        reasons.append("Lap invalidated")
+    if any(row.get("in_pits") is True for row in rows):
+        reasons.append("Pit lane")
+    if any(row.get("yellow_flag") is True for row in rows):
+        reasons.append("Yellow flag")
+    start = _time(rows[0]) if rows else None
+    end = _time(rows[-1]) if rows else None
     duration = end - start if start is not None and end is not None else None
-    return duration is not None and 40 <= duration <= 900
+    if duration is None:
+        reasons.append("Missing lap time")
+    elif duration < 40 or duration > 900:
+        reasons.append("Lap time outside range")
+    return {
+        "valid_lap": not reasons,
+        "reason_codes": [_reason_code(reason) for reason in reasons],
+        "reason": ", ".join(reasons) if reasons else None,
+    }
 
 
-def lap_summary(lap_number: int, rows: list[dict]) -> dict:
+def _reason_code(reason: str) -> str:
+    return reason.lower().replace(" ", "_")
+
+
+def is_valid_lap(rows: list[dict], config: VehicleAnalysisConfig) -> bool:
+    return bool(lap_validation(rows, config)["valid_lap"])
+
+
+def lap_summary(lap_number: int, rows: list[dict], config: VehicleAnalysisConfig | None = None) -> dict:
     start = _time(rows[0])
     end = _time(rows[-1])
-    return {
+    validation = lap_validation(rows, config) if config else {"valid_lap": True, "reason_codes": [], "reason": None}
+    summary = {
         "lap_number": lap_number,
         "lap_time": end - start if start is not None and end is not None else None,
         "sample_count": len(rows),
         "top_speed": _max([_num(row.get("speed_kph")) for row in rows]),
+        "lap_invalidated": any(row.get("lap_invalidated") is True for row in rows),
+        "in_pits": any(row.get("in_pits") is True for row in rows),
+        "yellow_flag": any(row.get("yellow_flag") is True for row in rows),
     }
+    summary.update(validation)
+    return summary
 
 
 def detect_corners(rows: list[dict]) -> list[dict]:
@@ -524,9 +552,10 @@ def _sector_time(rows: list[dict], sector: int) -> float | None:
 
 
 def analysis_payload(buffer: LiveLapBuffer, config: VehicleAnalysisConfig, selected_lap: int | None = None, reference_lap: int | None = None, session: dict | None = None) -> dict:
+    completed = buffer.completed_laps()
     valid = buffer.valid_laps()
-    summaries = [lap_summary(lap, rows) for lap, rows in valid.items()]
-    if not valid:
+    summaries = [lap_summary(lap, rows, config) for lap, rows in completed.items()]
+    if not completed:
         return {
             "session": session or {},
             "laps": [],
@@ -539,10 +568,12 @@ def analysis_payload(buffer: LiveLapBuffer, config: VehicleAnalysisConfig, selec
             "corners": [],
             "metrics": {"session_peak_combined_g": None, "understeer_gradient": None, "load_transfer_geom": None},
         }
-    fastest = min(summaries, key=lambda item: item.get("lap_time") if item.get("lap_time") is not None else math.inf)
-    selected = selected_lap if selected_lap in valid else next(reversed(valid.keys()))
-    reference = reference_lap if reference_lap in valid else int(fastest["lap_number"])
-    analyzed = analyze_lap(valid[selected], valid[reference], config)
+    valid_summaries = [summary for summary in summaries if summary.get("valid_lap")]
+    timed_summaries = valid_summaries or [summary for summary in summaries if summary.get("lap_time") is not None]
+    fastest = min(timed_summaries, key=lambda item: item.get("lap_time") if item.get("lap_time") is not None else math.inf) if timed_summaries else summaries[-1]
+    selected = selected_lap if selected_lap in completed else next(reversed(completed.keys()))
+    reference = reference_lap if reference_lap in completed else int(fastest["lap_number"])
+    analyzed = analyze_lap(completed[selected], completed[reference], config)
     analyzed.update({
         "session": session or {},
         "laps": summaries,

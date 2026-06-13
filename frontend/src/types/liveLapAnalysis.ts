@@ -3,6 +3,12 @@ export type LiveLapSummary = {
   lap_time?: number | null;
   sample_count?: number | null;
   top_speed?: number | null;
+  valid_lap?: boolean | null;
+  reason?: string | null;
+  reason_codes?: string[];
+  lap_invalidated?: boolean | null;
+  in_pits?: boolean | null;
+  yellow_flag?: boolean | null;
 };
 
 export type LiveLapSample = {

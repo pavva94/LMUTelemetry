@@ -75,3 +75,18 @@ def review_cached_session(session_id: str, limit: int = 5000):
         raise HTTPException(status_code=404, detail="session not found") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/sessions/{session_id}/trajectory")
+def trajectory_session(
+    session_id: str,
+    lap_a: str | None = None,
+    lap_b: str | None = None,
+    max_points: int = Query(1600, ge=200, le=5000),
+):
+    try:
+        return lmu_duckdb_repository.trajectory_session(session_id, lap_a=lap_a, lap_b=lap_b, max_points=max_points)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="session not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

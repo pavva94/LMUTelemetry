@@ -185,6 +185,71 @@ function candidateLabel(stops: number, maxTyres: number, liftSavePercent: number
   return `${stopText}, ${tyreText}${liftText}`;
 }
 
+function buildFuelPlan(input: StrategySimulationInput, stops: number, stintLaps: number, effectiveFuelPerLap: number) {
+  const stintFuelNeed = stintLaps * effectiveFuelPerLap;
+  const fuelSafetyMargin = Math.max(0, input.fuelSafetyMarginLiters);
+  const tankCapacityLiters = input.tankCapacityLiters ?? 0;
+  const stopsDetail: Array<Pick<StrategyStop, "lap" | "fuelRemainingLiters" | "fuelAddedLiters">> = [];
+  let fuelInTank = input.raceStartFuelLiters ?? 0;
+
+  if (fuelInTank + 0.01 < stintFuelNeed + (stops > 0 ? fuelSafetyMargin : 0)) return null;
+
+  for (let index = 0; index < stops; index += 1) {
+    fuelInTank -= stintFuelNeed;
+    if (fuelInTank < fuelSafetyMargin - 0.01) return null;
+
+    const stintsRemaining = stops - index;
+    const fuelNeededAfterStop = stintsRemaining * stintFuelNeed + fuelSafetyMargin;
+    const fuelAddedLiters = Math.max(0, Math.min(tankCapacityLiters, fuelNeededAfterStop) - fuelInTank);
+    if (fuelAddedLiters > tankCapacityLiters - fuelInTank + 0.01) return null;
+
+    stopsDetail.push({
+      lap: Math.round(stintLaps * (index + 1)),
+      fuelRemainingLiters: round(fuelInTank, 2),
+      fuelAddedLiters: round(fuelAddedLiters, 2),
+    });
+    fuelInTank += fuelAddedLiters;
+  }
+
+  fuelInTank -= stintFuelNeed;
+  if (fuelInTank < fuelSafetyMargin - 0.01) return null;
+
+  return {
+    stopsDetail,
+    finishFuelRemainingLiters: fuelInTank,
+    fuelAddedTotalLiters: stopsDetail.reduce((sum, stop) => sum + stop.fuelAddedLiters, 0),
+  };
+}
+
+function findFuelPlan(input: StrategySimulationInput, stops: number, raceLaps: number, stintLaps: number, baseFuelNeed: number) {
+  const maxLiftSavePerLap = input.fuelPerLap == null ? 0 : input.fuelPerLap * 0.08;
+  const fuelCapacityAvailable = (input.raceStartFuelLiters ?? 0) + stops * (input.tankCapacityLiters ?? 0);
+  const totalShortage = Math.max(0, baseFuelNeed - fuelCapacityAvailable);
+  let liftSavePerLap = totalShortage > 0 ? totalShortage / raceLaps : 0;
+
+  const planFor = (savePerLap: number) => {
+    const effectiveFuelPerLap = (input.fuelPerLap ?? 0) - savePerLap;
+    return effectiveFuelPerLap > 0 ? buildFuelPlan(input, stops, stintLaps, effectiveFuelPerLap) : null;
+  };
+
+  let fuelPlan = planFor(liftSavePerLap);
+  if (!fuelPlan) {
+    let low = liftSavePerLap;
+    let high = maxLiftSavePerLap;
+    if (!planFor(high)) return null;
+    for (let index = 0; index < 24; index += 1) {
+      const mid = (low + high) / 2;
+      if (planFor(mid)) high = mid;
+      else low = mid;
+    }
+    liftSavePerLap = high;
+    fuelPlan = planFor(liftSavePerLap);
+  }
+
+  if (!fuelPlan) return null;
+  return { liftSavePerLap, effectiveFuelPerLap: (input.fuelPerLap ?? 0) - liftSavePerLap, fuelPlan };
+}
+
 export function simulateStrategies(input: StrategySimulationInput): StrategyCandidate[] {
   if (
     !input.fuelPerLap ||
@@ -207,45 +272,34 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
     const stintLaps = raceLaps / stints;
 
     for (let maxTyres = 0; maxTyres <= 4; maxTyres += 1) {
-      const fuelCapacityAvailable = raceStartFuelLiters + stops * input.tankCapacityLiters;
-      const shortage = Math.max(0, baseFuelNeed - fuelCapacityAvailable);
-      const liftSavePerLap = shortage > 0 ? shortage / raceLaps : 0;
+      const fuelFit = findFuelPlan(input, stops, raceLaps, stintLaps, baseFuelNeed);
+      if (!fuelFit) continue;
+      const { liftSavePerLap, effectiveFuelPerLap, fuelPlan } = fuelFit;
       const liftSavePercent = input.fuelPerLap > 0 ? liftSavePerLap / input.fuelPerLap * 100 : 0;
       if (liftSavePercent > 8) continue;
-
-      const effectiveFuelPerLap = input.fuelPerLap - liftSavePerLap;
-      if (effectiveFuelPerLap <= 0) continue;
       const firstStintFuelNeed = stintLaps * effectiveFuelPerLap;
       if (firstStintFuelNeed > raceStartFuelLiters + 0.01) continue;
       const recommendedStartFuel = Math.min(input.tankCapacityLiters, firstStintFuelNeed + input.fuelSafetyMarginLiters);
-      const requiredAfterStart = Math.max(0, raceLaps * effectiveFuelPerLap + input.fuelSafetyMarginLiters - raceStartFuelLiters);
-      const fuelAddedPerStop = stops > 0 ? requiredAfterStart / stops : 0;
-      if (fuelAddedPerStop > input.tankCapacityLiters + 0.01) continue;
 
       const tyrePlan = tyreProjection(input, stops, stintLaps, maxTyres);
       const tyreWear = tyrePlan?.projectedTyreWear ?? null;
       const tyreOverLimit = tyreWear != null && tyreWear > input.maxTyreWear;
       if (tyreOverLimit && tyreWear > input.maxTyreWear + 0.12) continue;
 
-      const stopsDetail = Array.from({ length: stops }, (_, index) => {
-        const lap = Math.round(stintLaps * (index + 1));
-        const fuelRemainingLiters = Math.max(
-          0,
-          raceStartFuelLiters + index * fuelAddedPerStop - stintLaps * effectiveFuelPerLap * (index + 1),
-        );
+      const stopsDetail = fuelPlan.stopsDetail.map((fuelStop, index) => {
         const tyresToChange = tyrePlan?.stopTyres[index] ?? [];
         const stopTimeSeconds = stopServiceTime({
           pitLaneLossSeconds: input.pitLaneLossSeconds,
           tyresChanged: tyresToChange.length,
           tyreChangeSecondsPerTyre: input.tyreChangeSecondsPerTyre,
-          fuelAddedLiters: fuelAddedPerStop,
+          fuelAddedLiters: fuelStop.fuelAddedLiters,
           refuelSecondsPer5Liters: input.refuelSecondsPer5Liters,
         });
         const nextStintProjectedWear = tyrePlan?.stintWear[index + 1]?.endWear ?? null;
         return {
-          lap,
-          fuelRemainingLiters: round(fuelRemainingLiters, 2),
-          fuelAddedLiters: round(fuelAddedPerStop, 2),
+          lap: fuelStop.lap,
+          fuelRemainingLiters: fuelStop.fuelRemainingLiters,
+          fuelAddedLiters: fuelStop.fuelAddedLiters,
           tyresChanged: tyresToChange.length,
           tyresToChange,
           stopTimeSeconds: round(stopTimeSeconds, 2),
@@ -256,9 +310,8 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
       const pitTimeSeconds = stopsDetail.reduce((sum, stop) => sum + stop.stopTimeSeconds, 0);
       const liftTimeLoss = liftSavePercent > 0 ? (liftSavePercent / 100) * input.normalLapTime * 0.2 * raceLaps : 0;
       const totalTimeSeconds = input.raceDurationMinutes * 60 + pitTimeSeconds + liftTimeLoss;
-      const fuelUsed = raceLaps * effectiveFuelPerLap + input.fuelSafetyMarginLiters;
-      const fuelMarginLiters = fuelCapacityAvailable - fuelUsed;
-      const finishFuelRemainingLiters = fuelMarginLiters + input.fuelSafetyMarginLiters;
+      const finishFuelRemainingLiters = fuelPlan.finishFuelRemainingLiters;
+      const fuelMarginLiters = finishFuelRemainingLiters - input.fuelSafetyMarginLiters;
       const risks: StrategyRisk[] = [];
       if (liftSavePercent > 0) risks.push(liftCoastRisk(liftSavePercent));
       if (tyreOverLimit) risks.push("high");
@@ -269,7 +322,7 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
       const reasons = [
         `${round(stintLaps, 1)} lap average stint`,
         `finish with ${round(finishFuelRemainingLiters, 1)} L fuel remaining`,
-        stops > 0 ? `${round(fuelAddedPerStop, 1)} L fuel added per stop` : "no scheduled fuel stop",
+        stops > 0 ? `${round(fuelPlan.fuelAddedTotalLiters, 1)} L total fuel added` : "no scheduled fuel stop",
         `${round(recommendedStartFuel, 1)} L start fuel needed for stint 1`,
         input.raceStartNewTyres ? "race start assumes a new tyre set" : "race start uses observed tyre wear",
         tyreWear == null ? "tyre projection needs more wear data" : `max projected tyre wear ${round(tyreWear * 100, 0)}%`,
