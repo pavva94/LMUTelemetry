@@ -21,6 +21,7 @@ type GpsPoint = {
   speed: number | null;
   time: number | null;
 };
+type TrackSegment = { from: GpsPoint; to: GpsPoint; color: string; delta: number | null };
 
 const DEFAULT_FOLDER = "G:\\SteamLibrary\\steamapps\\common\\Le Mans Ultimate\\UserData\\Telemetry";
 const SCAN_LIMIT = 250;
@@ -108,6 +109,40 @@ function withoutOutliers(values: number[]) {
   if (!mad) return clean;
   const filtered = clean.filter((value) => Math.abs(value - median) / mad <= 3.5);
   return filtered.length ? filtered : clean;
+}
+
+function nearestByPosition(points: GpsPoint[], target: GpsPoint) {
+  if (!points.length) return null;
+  return points.reduce((best, point) => {
+    const bestDistance = ((best.x - target.x) ** 2) + ((best.y - target.y) ** 2);
+    const pointDistance = ((point.x - target.x) ** 2) + ((point.y - target.y) ** 2);
+    return pointDistance < bestDistance ? point : best;
+  }, points[0]);
+}
+
+function lapElapsed(point: GpsPoint, lapStart: number | null) {
+  return point.time != null && lapStart != null ? point.time - lapStart : null;
+}
+
+function deltaColor(delta: number | null) {
+  if (delta == null || !Number.isFinite(delta)) return "#6fa8ff";
+  if (Math.abs(delta) <= 0.05) return "#6fa8ff";
+  return delta < 0 ? "#69d28f" : "#ff6961";
+}
+
+function deltaSegments(primary: GpsPoint[], comparison: GpsPoint[]): TrackSegment[] {
+  const segments: TrackSegment[] = [];
+  const primaryStart = primary[0]?.time ?? null;
+  const comparisonStart = comparison[0]?.time ?? null;
+  for (let index = 0; index < primary.length - 1; index += 1) {
+    const point = primary[index];
+    const matched = nearestByPosition(comparison, point);
+    const primaryElapsed = lapElapsed(point, primaryStart);
+    const comparisonElapsed = matched ? lapElapsed(matched, comparisonStart) : null;
+    const delta = primaryElapsed != null && comparisonElapsed != null ? primaryElapsed - comparisonElapsed : null;
+    segments.push({ from: point, to: primary[index + 1], color: deltaColor(delta), delta });
+  }
+  return segments;
 }
 
 function hasLineData(rows: Row[], lines: Array<[string, string]>) {
@@ -208,7 +243,7 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
   const [trajectoryRows, setTrajectoryRows] = useState<Row[]>([]);
   const [trajectoryStatus, setTrajectoryStatus] = useState("");
   const dragRef = useRef<{ x: number; y: number; panX: number; panY: number } | null>(null);
-  const width = 1000;
+  const width = 760;
   const height = 620;
 
   useEffect(() => {
@@ -249,8 +284,7 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
 
   const mapData = useMemo(() => {
     const selected = new Set([lapA, lapB].filter(Boolean));
-    const sourceRows = trajectoryRows.length ? trajectoryRows : samples;
-    const raw = sourceRows
+    const raw = trajectoryRows
       .filter((sample) => selected.has(String(sample.lap_number ?? "")))
       .map((sample) => ({
         lap: String(sample.lap_number ?? ""),
@@ -263,50 +297,62 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
       }))
       .filter((sample): sample is Omit<GpsPoint, "x" | "y" | "lapLabel"> => sample.lat != null && sample.lon != null);
     if (!raw.length) return { byLap: {} as Record<string, GpsPoint[]>, count: 0 };
-    const lats = raw.map((point) => point.lat);
-    const lons = raw.map((point) => point.lon);
-    const minLat = Math.min(...lats);
-    const maxLat = Math.max(...lats);
-    const minLon = Math.min(...lons);
-    const maxLon = Math.max(...lons);
-    const lonSpan = Math.max(maxLon - minLon, 0.000001);
-    const latSpan = Math.max(maxLat - minLat, 0.000001);
+    const rawLats = raw.map((point) => point.lat);
+    const rawLons = raw.map((point) => point.lon);
+    const coordinatesAreRadians = Math.max(...rawLats.map(Math.abs)) <= Math.PI / 2 && Math.max(...rawLons.map(Math.abs)) <= Math.PI;
+    const latDegrees = coordinatesAreRadians ? rawLats.map((value) => value * 180 / Math.PI) : rawLats;
+    const lonDegrees = coordinatesAreRadians ? rawLons.map((value) => value * 180 / Math.PI) : rawLons;
+    const centerLat = latDegrees.reduce((sum, value) => sum + value, 0) / latDegrees.length;
+    const centerLon = lonDegrees.reduce((sum, value) => sum + value, 0) / lonDegrees.length;
+    const metersPerDegreeLat = 111_132;
+    const metersPerDegreeLon = Math.max(1, 111_320 * Math.cos(centerLat * Math.PI / 180));
+    const local = raw.map((point, index) => ({
+      ...point,
+      mx: (lonDegrees[index] - centerLon) * metersPerDegreeLon,
+      my: (latDegrees[index] - centerLat) * metersPerDegreeLat,
+    }));
+    const xs = local.map((point) => point.mx);
+    const ys = local.map((point) => point.my);
+    const minX = Math.min(...xs);
+    const maxX = Math.max(...xs);
+    const minY = Math.min(...ys);
+    const maxY = Math.max(...ys);
+    const xSpan = Math.max(maxX - minX, 1);
+    const ySpan = Math.max(maxY - minY, 1);
     const innerW = width - 80;
     const innerH = height - 80;
-    const scale = Math.min(innerW / lonSpan, innerH / latSpan);
-    const drawW = lonSpan * scale;
-    const drawH = latSpan * scale;
+    const scale = Math.min(innerW / xSpan, innerH / ySpan);
+    const drawW = xSpan * scale;
+    const drawH = ySpan * scale;
     const offsetX = (width - drawW) / 2;
     const offsetY = (height - drawH) / 2;
-    const byLapRaw = raw.reduce<Record<string, typeof raw>>((acc, point) => {
+    const byLapRaw = local.reduce<Record<string, typeof local>>((acc, point) => {
       (acc[point.lap] ||= []).push(point);
       return acc;
     }, {});
     const byLap: Record<string, GpsPoint[]> = {};
     Object.entries(byLapRaw).forEach(([lap, lapPoints]) => {
+      const orderedPoints = [...lapPoints].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
       const denominator = Math.max(1, lapPoints.length - 1);
-      byLap[lap] = lapPoints.map((point, index) => ({
+      byLap[lap] = orderedPoints.map((point, index) => ({
         ...point,
         lapLabel: `Lap ${point.lap}`,
         progress: index / denominator,
-        x: offsetX + (point.lon - minLon) * scale,
-        y: offsetY + drawH - (point.lat - minLat) * scale,
+        x: offsetX + (point.mx - minX) * scale,
+        y: offsetY + drawH - (point.my - minY) * scale,
       }));
     });
     return {
       byLap,
       count: Object.values(byLap).reduce((sum, points) => sum + points.length, 0),
     };
-  }, [samples, trajectoryRows, lapA, lapB]);
+  }, [trajectoryRows, lapA, lapB]);
 
   const pairedHover = useMemo(() => {
     if (!selectedPoint) return null;
     const otherLap = selectedPoint.lap === lapA ? lapB : lapA;
     const candidates = mapData.byLap[otherLap] || [];
-    if (!candidates.length) return null;
-    return candidates.reduce((best, point) => (
-      Math.abs(point.progress - selectedPoint.progress) < Math.abs(best.progress - selectedPoint.progress) ? point : best
-    ), candidates[0]);
+    return nearestByPosition(candidates, selectedPoint);
   }, [selectedPoint, lapA, lapB, mapData.byLap]);
 
   const activePoints = [selectedPoint, pairedHover].filter((point): point is GpsPoint => Boolean(point));
@@ -325,18 +371,27 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
     [lapB]: { stroke: "#e6b450", marker: "#ffedba" },
   };
   const hintX = selectedPoint ? Math.max(14, Math.min(width - 274, selectedPoint.x + 14)) : 0;
-  const hintY = selectedPoint ? Math.max(14, Math.min(height - 98, selectedPoint.y - 48)) : 0;
+  const hintY = selectedPoint ? Math.max(14, Math.min(height - 122, selectedPoint.y - 60)) : 0;
+  const primaryPoints = mapData.byLap[lapA] || [];
+  const comparisonPoints = mapData.byLap[lapB] || [];
+  const selectableStep = Math.max(1, Math.ceil(primaryPoints.length / 180));
+  const segmentData = deltaSegments(primaryPoints, comparisonPoints);
+  const selectedDelta = selectedPoint && pairedHover
+    ? (() => {
+      const primaryStart = primaryPoints[0]?.time ?? null;
+      const comparisonStart = comparisonPoints[0]?.time ?? null;
+      const selectedElapsed = lapElapsed(selectedPoint, primaryStart);
+      const pairedElapsed = lapElapsed(pairedHover, comparisonStart);
+      return selectedElapsed != null && pairedElapsed != null ? selectedElapsed - pairedElapsed : null;
+    })()
+    : null;
 
-  const inputColor = (point: GpsPoint) => {
-    const throttle = point.throttle == null ? 0 : Math.abs(point.throttle) <= 1 ? point.throttle * 100 : point.throttle;
-    const brake = point.brake == null ? 0 : Math.abs(point.brake) <= 1 ? point.brake * 100 : point.brake;
-    if (brake > throttle && brake > 4) return "#ff6961";
-    if (throttle > 4) return "#69d28f";
-    return "#aeb8c2";
-  };
+  if (!lapOptions.length) {
+    return <EmptyState detail="No completed laps were found for GPS comparison." />;
+  }
 
-  if (!lapOptions.length || !samples.some((sample) => pointNumber(sample, "gps_latitude") != null && pointNumber(sample, "gps_longitude") != null)) {
-    return <EmptyState detail="GPS Latitude and GPS Longitude were not found in the loaded review samples." />;
+  if (!mapData.count) {
+    return <EmptyState detail={trajectoryStatus || "Loading GPS trajectory for the selected laps."} />;
   }
 
   return (
@@ -362,13 +417,16 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
           <span key={lap} style={{ borderColor: lapStyles[lap]?.stroke }}>{`Lap ${lap} / ${formatRaceTime(lapMeta[lap]?.time ?? null)} / ${text(lapMeta[lap]?.samples)} samples`}</span>
         ))}
         {trajectoryStatus && <span>{trajectoryStatus}</span>}
-        <span className="gps-input-key throttle">Throttle</span>
-        <span className="gps-input-key brake">Brake</span>
+        <span>{mapData.count} GPS points</span>
+        <span className="gps-delta-key faster">Primary faster</span>
+        <span className="gps-delta-key similar">Similar</span>
+        <span className="gps-delta-key slower">Primary slower</span>
       </div>
       <div className="gps-map-shell">
         <svg
           className="gps-compare-map"
           viewBox={viewBox}
+          preserveAspectRatio="xMidYMid meet"
           role="img"
           onWheel={(event) => {
             event.preventDefault();
@@ -390,34 +448,66 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
           onPointerUp={() => { dragRef.current = null; }}
           onPointerLeave={() => { dragRef.current = null; }}
         >
-          <rect x="0" y="0" width={width} height={height} fill="#0f1419" />
+          <rect x="0" y="0" width={width} height={height} fill="transparent" />
+          <defs>
+            <filter id="gps-track-glow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="0" stdDeviation="4" floodColor="#000000" floodOpacity="0.55" />
+            </filter>
+          </defs>
           {Object.entries(mapData.byLap).map(([lap, points]) => (
             <g key={lap}>
               <polyline
                 points={points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ")}
                 fill="none"
-                stroke={lapStyles[lap]?.stroke || "#d9e3ea"}
-                strokeWidth={lap === lapA ? 4 : 3}
+                stroke="#05080b"
+                strokeWidth={lap === lapA ? 13 : 10}
                 strokeLinecap="round"
                 strokeLinejoin="round"
-                opacity={lap === lapA ? 0.92 : 0.76}
+                opacity={lap === lapA ? 0.94 : 0.78}
+                filter="url(#gps-track-glow)"
               />
-              {points.map((point, index) => (
+              <polyline
+                points={points.map((point) => `${point.x.toFixed(2)},${point.y.toFixed(2)}`).join(" ")}
+                fill="none"
+                stroke={lapStyles[lap]?.stroke || "#d9e3ea"}
+                strokeWidth={lap === lapA ? 5.5 : 4}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={lap === lapA ? 0.95 : 0.74}
+                strokeDasharray={lap === lapA ? undefined : "12 9"}
+              />
+            </g>
+          ))}
+          {segmentData.map((segment, index) => (
+            <line
+              key={`delta-segment-${index}`}
+              x1={segment.from.x}
+              y1={segment.from.y}
+              x2={segment.to.x}
+              y2={segment.to.y}
+              stroke={segment.color}
+              strokeWidth="4.2"
+              strokeLinecap="round"
+              opacity="0.96"
+              pointerEvents="none"
+            />
+          ))}
+          {primaryPoints.map((point, index) => (
+            index % selectableStep === 0 || index === primaryPoints.length - 1 ? (
                 <circle
-                  key={`${lap}-${index}`}
+                  key={`hit-${point.lap}-${index}`}
                   cx={point.x}
                   cy={point.y}
-                  r={lap === lapA ? 4.4 : 3.8}
-                  fill={inputColor(point)}
-                  stroke={lapStyles[lap]?.marker || "#fff"}
-                  strokeWidth="0.8"
-                  opacity="0.86"
-                  pointerEvents={lap === lapA ? "auto" : "none"}
-                  className={lap === lapA ? "gps-selectable-point" : undefined}
+                  r="10"
+                  fill="transparent"
+                  stroke="#ffffff"
+                  strokeWidth="1"
+                  opacity="0"
+                  pointerEvents="auto"
+                  className="gps-selectable-point"
                   onClick={() => setSelectedPoint(point)}
                 />
-              ))}
-            </g>
+            ) : null
           ))}
           {selectedPoint && pairedHover && (
             <line
@@ -444,9 +534,10 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
             />
           ))}
           {selectedPoint && pairedHover && (
-            <foreignObject x={hintX} y={hintY} width="260" height="84" pointerEvents="none">
+            <foreignObject x={hintX} y={hintY} width="260" height="108" pointerEvents="none">
               <div className="gps-point-hint">
                 <strong>{Math.round(selectedPoint.progress * 100)}% lap distance</strong>
+                <span>Delta {selectedDelta == null ? "--" : `${selectedDelta > 0 ? "+" : ""}${selectedDelta.toFixed(3)}s`}</span>
                 <span>Throttle diff {percentDelta(selectedPoint.throttle, pairedHover.throttle)}</span>
                 <span>Brake diff {percentDelta(selectedPoint.brake, pairedHover.brake)}</span>
               </div>
@@ -764,7 +855,7 @@ export function LmuDuckdbReview() {
       </section>
       {available.gps && (
         <section className="card span-12">
-          <SectionTitle title="Lap Trajectory Compare" help="Compares two GPS lap traces from the selected DuckDB session. The selectors default to the two fastest laps; select one point on the primary trace to see throttle and brake deltas at the matching point on the comparison lap." />
+          <SectionTitle title="Lap Trajectory Compare" help="Compares two GPS lap traces from the selected DuckDB session. Green means the primary lap reached that point sooner than the comparison lap, red means it was slower, and blue means the delta is very similar." />
           <LapTrajectoryMap sessionId={selectedId} samples={samples} laps={laps} />
         </section>
       )}

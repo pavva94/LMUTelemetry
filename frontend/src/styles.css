@@ -173,13 +173,16 @@ select { width: 100%; border: 1px solid #33414d; background: #0f1419; color: #ff
 .gps-compare-toolbar button { min-height: 38px; }
 .gps-legend { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; color: #aeb8c2; font-size: 12px; }
 .gps-legend span { display: inline-flex; align-items: center; min-height: 26px; padding: 4px 8px; border: 1px solid #33414d; border-radius: 6px; background: #0f1419; }
-.gps-input-key::before { content: ""; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: #aeb8c2; }
-.gps-input-key.throttle::before { background: #69d28f; }
-.gps-input-key.brake::before { background: #ff6961; }
-.gps-map-shell { position: relative; min-height: 520px; border: 1px solid #27313a; border-radius: 8px; overflow: hidden; background: #0f1419; }
-.gps-compare-map { display: block; width: 100%; min-height: 520px; touch-action: none; cursor: grab; }
+.gps-delta-key::before { content: ""; width: 9px; height: 9px; margin-right: 6px; border-radius: 50%; background: #6fa8ff; }
+.gps-delta-key.faster::before { background: #69d28f; }
+.gps-delta-key.similar::before { background: #6fa8ff; }
+.gps-delta-key.slower::before { background: #ff6961; }
+.gps-map-shell { position: relative; display: grid; place-items: center; min-height: 560px; border: 1px solid #27313a; border-radius: 8px; overflow: hidden; background: radial-gradient(circle at 50% 45%, #182029 0, #10161d 48%, #0b0f14 100%); }
+.gps-map-shell::before { content: ""; position: absolute; inset: 0; pointer-events: none; background-image: linear-gradient(rgba(255,255,255,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,.035) 1px, transparent 1px); background-size: 44px 44px; mask-image: radial-gradient(circle, rgba(0,0,0,.9), transparent 78%); }
+.gps-compare-map { position: relative; z-index: 1; display: block; width: min(100%, 900px); height: 540px; touch-action: none; cursor: grab; }
 .gps-compare-map:active { cursor: grabbing; }
-.gps-selectable-point { cursor: pointer; }
+.gps-selectable-point { cursor: pointer; transition: opacity .15s ease; }
+.gps-selectable-point:hover { opacity: .28; }
 .gps-point-hint { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid #d9e3ea; border-radius: 6px; background: rgba(12, 15, 18, .92); color: #d9e3ea; font-size: 12px; box-shadow: 0 10px 28px rgba(0,0,0,.32); }
 .gps-point-hint strong { font-size: 13px; color: #fff; }
 .lap-analysis-page { align-items: start; }
@@ -240,6 +243,7 @@ label input[type="checkbox"] { width: auto; margin-right: 8px; }
 @media (max-width: 640px) {
   .lap-context-grid { grid-template-columns: 1fr; }
   .gps-compare-toolbar { grid-template-columns: 1fr; }
-  .gps-map-shell, .gps-compare-map { min-height: 380px; }
+  .gps-map-shell { min-height: 400px; }
+  .gps-compare-map { height: 380px; }
   .tire-matrix { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 }
