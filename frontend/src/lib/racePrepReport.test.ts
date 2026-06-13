@@ -154,4 +154,27 @@ describe("race prep report", () => {
     expect(report.tyres.wear.fl.delta).toBeCloseTo(0.05);
     expect(report.tyres.wear.rr.perLap).toBeCloseTo(0.025);
   });
+
+  it("normalizes DuckDB tyre wear remaining percent into used wear", () => {
+    const review: SessionReview = {
+      session: { id: "duck", track_name: "Monza", session_type: "Practice", vehicle_model: "Ferrari" },
+      recommendations: [],
+      pit_events: [],
+      telemetry_samples: [
+        { game_time: 1, tyre_wear_fl: 99.8, tyre_wear_fr: 99.7, tyre_wear_rl: 99.6, tyre_wear_rr: 99.5, tyre_pressure_fl: 170, tyre_temp_fl: 80 },
+        { game_time: 2, tyre_wear_fl: 99.1, tyre_wear_fr: 99.0, tyre_wear_rl: 98.9, tyre_wear_rr: 98.8, tyre_pressure_fl: 171, tyre_temp_fl: 81 },
+      ],
+      laps: [
+        { lap_number: 1, lap_time: 91, fuel_used: 4, valid_lap: true, in_pit: false },
+        { lap_number: 2, lap_time: 92, fuel_used: 4, valid_lap: true, in_pit: false },
+      ],
+    };
+
+    const report = buildRacePrepReport(review);
+
+    expect(report.tyres.wear.fl.start).toBeCloseTo(0.002);
+    expect(report.tyres.wear.fl.end).toBeCloseTo(0.009);
+    expect(report.tyres.wear.fl.delta).toBeCloseTo(0.007);
+    expect(report.tyres.mostWorn).toBe("fl");
+  });
 });

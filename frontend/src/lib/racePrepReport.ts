@@ -153,18 +153,28 @@ function statForRows(rows: Row[], key: string, aggregateAverage?: number | null)
   return { average: aggregateAverage ?? null, min: aggregateAverage ?? null, max: aggregateAverage ?? null, trend: "unavailable" };
 }
 
+function tyreWearUsedFraction(value: number | null): number | null {
+  if (value == null) return null;
+  if (value >= 0 && value <= 1) return value;
+  if (value > 1 && value <= 100) return 1 - value / 100;
+  return null;
+}
+
 function firstLastWithValue(samples: Row[], key: string, lapRows: Row[] = []): [number | null, number | null] {
   const values = samples
     .filter((sample) => isUsableTyreSample(sample, key))
     .map((sample) => num(sample[key]))
+    .map((value) => key.includes("wear") ? tyreWearUsedFraction(value) : value)
     .filter((value): value is number => validTyreChannelValue(key, value));
   if (!values.length && key.includes("tyre_wear_")) {
     const wheel = key.replace("tyre_wear_", "");
     const starts = lapRows
       .map((lap) => num(lap[`tyre_wear_start_${wheel}`]) ?? num(lap.tyre_wear_start))
+      .map(tyreWearUsedFraction)
       .filter((value): value is number => validTyreChannelValue(key, value));
     const ends = lapRows
       .map((lap) => num(lap[`tyre_wear_end_${wheel}`]) ?? num(lap.tyre_wear_end))
+      .map(tyreWearUsedFraction)
       .filter((value): value is number => validTyreChannelValue(key, value));
     if (starts.length || ends.length) return [starts[0] ?? null, ends[ends.length - 1] ?? null];
   }
@@ -287,7 +297,7 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
     const [start, end] = firstLastWithValue(samples, `tyre_wear_${wheel}`, allLaps);
     const lapDeltas = allLaps
       .map((lap) => num(lap[`tyre_wear_delta_${wheel}`]) ?? num(lap.tyre_wear_delta))
-      .filter((value): value is number => value != null && value >= 0);
+      .filter((value): value is number => value != null && value >= 0 && value <= 1);
     const delta = lapDeltas.length ? lapDeltas.reduce((sum, value) => sum + Math.abs(value), 0) : start != null && end != null ? Math.abs(end - start) : null;
     wear[wheel] = { start, end, delta, perLap: delta != null && cleanLaps.length ? delta / cleanLaps.length : null };
   }

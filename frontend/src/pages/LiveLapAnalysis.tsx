@@ -168,6 +168,52 @@ function HandlingDiagram({ current, selectedTimestamp, kus }: { current: LiveLap
   );
 }
 
+function PowerOutputChart({ current, ghost, selectedTimestamp }: { current: LiveLapSample[]; ghost: LiveLapSample[]; selectedTimestamp: number | null }) {
+  const currentData = current.map((sample) => ({
+    rpm: finite(sample.rpm),
+    power_kw: finite(sample.power_kw),
+    power_hp: finite(sample.power_hp),
+    t: timeOf(sample),
+  })).filter((row) => row.rpm != null && row.rpm > 0 && (row.power_hp != null || row.power_kw != null));
+  if (!currentData.length) return null;
+
+  const useHp = currentData.some((row) => row.power_hp != null);
+  const powerKey = useHp ? "power_hp" : "power_kw";
+  const unit = useHp ? "hp" : "kW";
+  const ghostData = ghost.map((sample) => ({
+    rpm: finite(sample.rpm),
+    power_kw: finite(sample.power_kw),
+    power_hp: finite(sample.power_hp),
+  })).filter((row) => row.rpm != null && row.rpm > 0 && row[powerKey] != null);
+  const selected = sampleAt(current, selectedTimestamp);
+  const selectedPower = selected ? finite(selected[powerKey]) : null;
+  const selectedRpm = selected ? finite(selected.rpm) : null;
+
+  return (
+    <section className="card span-6 lap-chart-card">
+      <SectionTitle title="Power Output" help="Derived engine power over RPM when live RPM and engine torque channels are available." />
+      <ResponsiveContainer width="100%" height={310}>
+        <ScatterChart>
+          <CartesianGrid stroke="#27313a" />
+          <XAxis type="number" dataKey="rpm" name="RPM" stroke="#8896a3" domain={["dataMin - 250", "dataMax + 250"]} tickFormatter={(value) => Number(value).toFixed(0)} />
+          <YAxis type="number" dataKey={powerKey} name={`Power (${unit})`} stroke="#8896a3" domain={["dataMin - 25", "dataMax + 25"]} tickFormatter={(value) => Number(value).toFixed(0)} />
+          <Tooltip
+            contentStyle={{ background: "#141a20", border: "1px solid #27313a" }}
+            formatter={(value, name) => {
+              const numeric = Number(value);
+              if (name === "rpm") return [numeric.toFixed(0), "RPM"];
+              return [numeric.toFixed(useHp ? 0 : 1), `Power (${unit})`];
+            }}
+          />
+          <Scatter name="Ghost power" data={ghostData} fill="#7f8c98" opacity={0.18} />
+          <Scatter name={`Power (${unit})`} data={currentData} fill="#e6b450" />
+          {selectedRpm != null && selectedPower != null && <Scatter name="Event" data={[{ rpm: selectedRpm, [powerKey]: selectedPower }]} fill="#ff6961" />}
+        </ScatterChart>
+      </ResponsiveContainer>
+    </section>
+  );
+}
+
 function SuspensionPlatform({ current, ghost, selectedTimestamp }: { current: LiveLapSample[]; ghost: LiveLapSample[]; selectedTimestamp: number | null }) {
   const rows = current.map((sample) => ({ x: timeOf(sample), ...sample }));
   const ghostRows = ghost.map((sample) => ({ x: timeOf(sample), ...sample }));
@@ -242,6 +288,7 @@ export function LiveLapAnalysis() {
       <FrictionCircle current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
       <TireHealthMatrix samples={payload.current_lap_data} selectedTimestamp={selectedTimestamp} />
       <HandlingDiagram current={payload.current_lap_data} selectedTimestamp={selectedTimestamp} kus={payload.metrics.understeer_gradient} />
+      <PowerOutputChart current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
       <SuspensionPlatform current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
     </div>
   );

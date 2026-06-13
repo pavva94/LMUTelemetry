@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.telemetry.mock_collector import MockTelemetryCollector
-from app.telemetry.normalizer import _normalize_competitor, _normalize_tyres, completed_lap_time, kelvin_to_celsius, normalize_lmu_snapshot, session_type_name, tyre_wear_used_fraction, vector_speed_kph
+from app.telemetry.normalizer import _normalize_competitor, _normalize_tyres, completed_lap_time, kelvin_to_celsius, normalize_lmu_snapshot, session_type_name, tyre_wear_used_fraction, vector_speed_kph, yellow_flag_state_name
 
 
 def test_mock_collector_emits_valid_snapshot() -> None:
@@ -28,6 +28,12 @@ def test_session_type_name_maps_lmu_session_ranges() -> None:
     assert session_type_name(9) == "Warmup"
     assert session_type_name(10) == "Race"
     assert session_type_name(13) == "Race 4"
+
+
+def test_yellow_flag_state_name_decodes_null_byte_as_clear() -> None:
+    assert yellow_flag_state_name(b"\x00") == "0"
+    assert yellow_flag_state_name(None) == "0"
+    assert yellow_flag_state_name("fcy") == "fcy"
 
 
 def test_tyre_normalizer_ignores_zero_channels_and_reads_temperature_fallback() -> None:

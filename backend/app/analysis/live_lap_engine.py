@@ -56,6 +56,22 @@ def _sample_at(rows: list[dict], timestamp: float | None) -> dict | None:
     return min(rows, key=lambda row: abs((_time(row) or 0.0) - timestamp))
 
 
+def _is_yellow_flag(value: Any) -> bool:
+    text = str(value or "").strip().lower()
+    if text in {"", "0", "none", "green", "clear", "false", "unknown", "b'\\x00'", 'b"\\x00"'}:
+        return False
+    try:
+        return float(text) > 0
+    except ValueError:
+        return True
+
+
+def _engine_power_kw(rpm: float | None, torque_nm: float | None) -> float | None:
+    if rpm is None or torque_nm is None or rpm <= 0 or torque_nm <= 0:
+        return None
+    return torque_nm * rpm * 2 * math.pi / 60000
+
+
 def _wheel_speed_kph(row: dict, wheel: str, config: VehicleAnalysisConfig) -> float | None:
     ground = _num(row.get(f"wheel_ground_speed_{wheel}"))
     if ground is not None:
@@ -113,6 +129,9 @@ def normalize_snapshot(snapshot: TelemetrySnapshot, config: VehicleAnalysisConfi
     if lap_time is None:
         lap_time = session.current_time
     tyre = player.tyre_state
+    rpm = _num(player.rpm)
+    torque_nm = _num(player.engine_torque)
+    power_kw = _engine_power_kw(rpm, torque_nm)
     row: dict[str, Any] = {
         "timestamp": session.current_time,
         "lap_time": lap_time,
@@ -127,7 +146,11 @@ def normalize_snapshot(snapshot: TelemetrySnapshot, config: VehicleAnalysisConfi
         "g_force_vert": player.g_force_vert,
         "lap_invalidated": player.lap_invalidated,
         "in_pits": player_comp.in_pits if player_comp else False,
-        "yellow_flag": bool(str(session.yellow_flag_state or "").lower() not in {"", "0", "none", "green"}),
+        "yellow_flag": _is_yellow_flag(session.yellow_flag_state),
+        "rpm": rpm,
+        "engine_torque_nm": torque_nm,
+        "power_kw": power_kw,
+        "power_hp": power_kw * 1.34102209 if power_kw is not None else None,
     }
     for wheel in WHEELS:
         row[f"ride_height_{wheel}_mm"] = _ride_mm(row={f"ride_height_{wheel}": getattr(player, f"ride_height_{wheel}")}, key=f"ride_height_{wheel}")

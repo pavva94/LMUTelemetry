@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from app.analysis.live_lap_engine import VehicleAnalysisConfig, analyze_lap, analysis_payload, is_valid_lap, LiveLapBuffer
+import pytest
+
+from app.analysis.live_lap_engine import VehicleAnalysisConfig, analyze_lap, analysis_payload, is_valid_lap, LiveLapBuffer, normalize_snapshot
+from app.schemas.telemetry import PlayerState, SessionState, TelemetrySnapshot
+from app.core.utils import utc_now
 
 
 def make_lap(
@@ -115,3 +119,21 @@ def test_payload_uses_fastest_valid_lap_as_reference() -> None:
     payload = analysis_payload(buffer, config)
     assert payload["reference_lap_number"] == 2
     assert payload["selected_lap_number"] == 2
+
+
+def test_live_snapshot_treats_null_byte_yellow_flag_as_clear() -> None:
+    snapshot = TelemetrySnapshot(
+        timestamp=utc_now(),
+        connected=True,
+        session=SessionState(current_time=12.0, yellow_flag_state="b'\\x00'"),
+        player=PlayerState(lap_number=1, current_lap_time=12.0, rpm=6000.0, engine_torque=500.0),
+    )
+
+    row = normalize_snapshot(snapshot, VehicleAnalysisConfig())
+
+    assert row is not None
+    assert row["yellow_flag"] is False
+    assert row["rpm"] == 6000.0
+    assert row["engine_torque_nm"] == 500.0
+    assert row["power_kw"] == pytest.approx(314.159, rel=0.001)
+    assert row["power_hp"] == pytest.approx(421.2, rel=0.001)

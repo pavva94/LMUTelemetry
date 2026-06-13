@@ -56,6 +56,16 @@ def session_type_name(value: Any) -> str:
         return str(value or "Unknown")
 
 
+def yellow_flag_state_name(value: Any) -> str:
+    if isinstance(value, (bytes, bytearray)):
+        raw = bytes(value)
+        if len(raw) == 1:
+            return str(raw[0])
+        decoded = decode_c_string(raw).strip()
+        return decoded or "0"
+    return str(value if value is not None else "0")
+
+
 def finish_status_name(value: Any) -> str | None:
     names = {0: None, 1: "finished", 2: "dnf", 3: "dq"}
     try:
@@ -149,7 +159,7 @@ def normalize_lmu_snapshot(raw: Any) -> TelemetrySnapshot:
         time_remaining=safe_float(attr(scoring, "mEndET", default=0)) - safe_float(attr(scoring, "mCurrentET", default=0)),
         max_laps=attr(scoring, "mMaxLaps", default=None),
         num_vehicles=len(competitors),
-        yellow_flag_state=str(attr(scoring, "mYellowFlagState", default="unknown")),
+        yellow_flag_state=yellow_flag_state_name(attr(scoring, "mYellowFlagState", default=0)),
         current_lap=player.lap_number if player else None,
     )
     environment = EnvironmentState(

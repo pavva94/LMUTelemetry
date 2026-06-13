@@ -11,6 +11,10 @@ export type LiveLapSample = {
   lap_number?: number | null;
   current_sector?: number | null;
   speed_kph?: number | null;
+  rpm?: number | null;
+  engine_torque_nm?: number | null;
+  power_kw?: number | null;
+  power_hp?: number | null;
   brake_pct?: number | null;
   throttle_pct?: number | null;
   steering_angle?: number | null;

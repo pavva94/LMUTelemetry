@@ -45,6 +45,7 @@ type PlannerModel = {
 const fmt = (value: number | null | undefined, digits = 1, suffix = "") =>
   value == null || !Number.isFinite(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
 const pct = (value: number | null | undefined) => value == null || !Number.isFinite(value) ? "--" : `${Math.round(value * 100)}%`;
+const DEFAULT_TANK_CAPACITY_LITERS = 90;
 const wheels: Wheel[] = ["fl", "fr", "rl", "rr"];
 const wheelLabels: Record<Wheel, string> = { fl: "FL", fr: "FR", rl: "RL", rr: "RR" };
 
@@ -53,9 +54,23 @@ function validLapTime(value?: number | null) {
 }
 
 function liveNormalLapTime(telemetry?: TelemetrySnapshot | null, fallback?: number | null) {
+  const player = telemetry?.player;
   const playerCar = telemetry?.competitors.find((car) => car.is_player);
-  const direct = validLapTime(playerCar?.last_lap_time) ?? validLapTime(playerCar?.estimated_lap_time) ?? validLapTime(playerCar?.best_lap_time);
-  if (direct != null) return { value: direct, source: playerCar?.last_lap_time ? "player last lap" : playerCar?.estimated_lap_time ? "player estimate" : "player best lap" };
+  const direct =
+    validLapTime(player?.last_lap_time) ??
+    validLapTime(playerCar?.last_lap_time) ??
+    validLapTime(playerCar?.estimated_lap_time) ??
+    validLapTime(player?.best_lap_time) ??
+    validLapTime(playerCar?.best_lap_time);
+  if (direct != null) {
+    const source =
+      validLapTime(player?.last_lap_time) != null || validLapTime(playerCar?.last_lap_time) != null
+        ? "player last lap"
+        : validLapTime(playerCar?.estimated_lap_time) != null
+          ? "player estimate"
+          : "player best lap";
+    return { value: direct, source };
+  }
   return { value: fallback && fallback > 0 ? fallback : null, source: "manual input" };
 }
 
@@ -77,6 +92,11 @@ function riskBadge(risk: StrategyRisk) {
 function numberFrom(value: unknown, fallback: number) {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function positiveNumberFrom(value: unknown, fallback: number) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : fallback;
 }
 
 function booleanFrom(value: unknown, fallback: boolean) {
@@ -104,6 +124,13 @@ function formatTimeInput(value?: number | null) {
   return value != null && Number.isFinite(value) ? formatRaceTime(value) : "";
 }
 
+function tyreWearUsedFraction(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return null;
+  if (value >= 0 && value <= 1) return value;
+  if (value > 1 && value <= 100) return 1 - value / 100;
+  return null;
+}
+
 function tyreWearText(values?: Record<Wheel, number> | null) {
   if (!values) return "--";
   return wheels.map((wheel) => `${wheelLabels[wheel]} ${pct(values[wheel])}`).join(" / ");
@@ -125,12 +152,13 @@ function tyreChangeWearText(stop: StrategyCandidate["stopsDetail"][number]) {
 }
 
 function seededForm(strategy: StrategyState | null, telemetry?: TelemetrySnapshot | null, current?: FormState): FormState {
-  const tank = numberFrom(telemetry?.player?.fuel_capacity_liters ?? strategy?.fuel.fuel_capacity_liters, current?.tank_capacity_liters ?? 90);
+  const fallbackTank = positiveNumberFrom(current?.tank_capacity_liters, DEFAULT_TANK_CAPACITY_LITERS);
+  const tank = positiveNumberFrom(telemetry?.player?.fuel_capacity_liters ?? strategy?.fuel.fuel_capacity_liters, fallbackTank);
   const assumptions = strategy?.assumptions || {};
   return {
     race_duration_minutes: liveRaceDurationMinutes(telemetry) ?? numberFrom(assumptions.race_duration_minutes, current?.race_duration_minutes ?? 120),
     normal_lap_time: numberFrom(assumptions.normal_lap_time, current?.normal_lap_time ?? 214),
-    race_start_fuel_liters: numberFrom(assumptions.race_start_fuel_liters, tank),
+    race_start_fuel_liters: positiveNumberFrom(assumptions.race_start_fuel_liters, tank),
     race_start_new_tyres: booleanFrom(assumptions.race_start_new_tyres, current?.race_start_new_tyres ?? true),
     tank_capacity_liters: tank,
     fuel_safety_margin_liters: numberFrom(assumptions.fuel_safety_margin_liters, current?.fuel_safety_margin_liters ?? 2),
@@ -147,9 +175,16 @@ function seededForm(strategy: StrategyState | null, telemetry?: TelemetrySnapsho
 function modelFromLive(strategy: StrategyState | null, telemetry?: TelemetrySnapshot | null, current?: FormState): PlannerModel {
   const liveLap = liveNormalLapTime(telemetry, current?.normal_lap_time ?? strategy?.assumptions?.normal_lap_time as number | undefined);
   const fuelPerLap = Number(strategy?.fuel.fuel_per_lap_liters);
-  const currentWear = Number(strategy?.tyres.average_wear ?? telemetry?.player?.tyre_state?.average_wear);
+  const rawCurrentWear = Number(strategy?.tyres.average_wear ?? telemetry?.player?.tyre_state?.average_wear);
   const wearRate = Number(strategy?.tyres.wear_rate_per_lap);
+  const observedWearLaps = Number(strategy?.tyres.observed_laps || 0);
+  const currentWear = Number.isFinite(rawCurrentWear) && rawCurrentWear > 0
+    ? rawCurrentWear
+    : Number.isFinite(wearRate) && wearRate > 0 && observedWearLaps > 0
+      ? wearRate * observedWearLaps
+      : rawCurrentWear;
   const tyreState = telemetry?.player?.tyre_state;
+  const wheelWearFallback = Number.isFinite(currentWear) ? currentWear : null;
   return {
     label: liveLap.source,
     source: "live",
@@ -157,36 +192,41 @@ function modelFromLive(strategy: StrategyState | null, telemetry?: TelemetrySnap
     fuelPerLap: Number.isFinite(fuelPerLap) && fuelPerLap > 0 ? fuelPerLap : null,
     fuelObservedLaps: Number(strategy?.fuel.valid_laps_observed || 0),
     fuelRequiredLaps: Number(strategy?.fuel.valid_laps_required || 3),
-    tankCapacityLiters: numberFrom(telemetry?.player?.fuel_capacity_liters ?? strategy?.fuel.fuel_capacity_liters, current?.tank_capacity_liters ?? 90),
+    tankCapacityLiters: positiveNumberFrom(
+      telemetry?.player?.fuel_capacity_liters ?? strategy?.fuel.fuel_capacity_liters,
+      positiveNumberFrom(current?.tank_capacity_liters, DEFAULT_TANK_CAPACITY_LITERS),
+    ),
     currentTyreWear: Number.isFinite(currentWear) ? currentWear : null,
     currentTyreWearByWheel: {
-      fl: tyreState?.wear_fl,
-      fr: tyreState?.wear_fr,
-      rl: tyreState?.wear_rl,
-      rr: tyreState?.wear_rr,
+      fl: tyreState?.wear_fl && tyreState.wear_fl > 0 ? tyreState.wear_fl : wheelWearFallback,
+      fr: tyreState?.wear_fr && tyreState.wear_fr > 0 ? tyreState.wear_fr : wheelWearFallback,
+      rl: tyreState?.wear_rl && tyreState.wear_rl > 0 ? tyreState.wear_rl : wheelWearFallback,
+      rr: tyreState?.wear_rr && tyreState.wear_rr > 0 ? tyreState.wear_rr : wheelWearFallback,
     },
     tyreWearRatePerLap: Number.isFinite(wearRate) && wearRate > 0 ? wearRate : null,
   };
 }
 
-function modelFromSession(review: SessionReview | null, sessionLabel: string): PlannerModel | null {
+function modelFromSession(review: SessionReview | null, sessionLabel: string, current?: FormState): PlannerModel | null {
   if (!review) return null;
   const cleanLaps = validSessionLaps(review);
   const lapTimes = cleanLaps.map((lap) => toFiniteNumber(lap.lap_time)).filter((value): value is number => value != null);
   const fuelValues = cleanLaps.map((lap) => toFiniteNumber(lap.fuel_used)).filter((value): value is number => value != null && value > 0);
   const sampleTank = average(review.telemetry_samples.map((sample) => toFiniteNumber(sample.fuel_capacity_liters)).filter((value): value is number => value != null && value > 0));
-  const lapWearRates = cleanLaps
-    .map((lap) => toFiniteNumber(lap.tyre_wear_delta))
-    .filter((value): value is number => value != null && value > 0 && value < 0.2);
   const wheelWear: Partial<Record<Wheel, number | null>> = {};
+  const wheelRates: number[] = [];
   for (const wheel of wheels) {
     const ends = cleanLaps
-      .map((lap) => toFiniteNumber(lap[`tyre_wear_end_${wheel}`]) ?? toFiniteNumber(lap.tyre_wear_end))
+      .map((lap) => tyreWearUsedFraction(toFiniteNumber(lap[`tyre_wear_end_${wheel}`]) ?? toFiniteNumber(lap.tyre_wear_end)))
       .filter((value): value is number => value != null);
     wheelWear[wheel] = ends[ends.length - 1] ?? null;
+    for (const [previous, currentWear] of ends.slice(1).map((value, index) => [ends[index], value] as const)) {
+      const delta = currentWear - previous;
+      if (delta > 0 && delta < 0.2) wheelRates.push(delta);
+    }
   }
   const wheelWearValues = wheels.map((wheel) => wheelWear[wheel]).filter((value): value is number => value != null);
-  const averageWear = wheelWearValues.length ? average(wheelWearValues) : toFiniteNumber(review.summary?.average_tyre_wear);
+  const averageWear = wheelWearValues.length ? average(wheelWearValues) : tyreWearUsedFraction(toFiniteNumber(review.summary?.average_tyre_wear));
   return {
     label: sessionLabel,
     source: "session",
@@ -194,10 +234,10 @@ function modelFromSession(review: SessionReview | null, sessionLabel: string): P
     fuelPerLap: average(fuelValues),
     fuelObservedLaps: fuelValues.length,
     fuelRequiredLaps: 3,
-    tankCapacityLiters: sampleTank,
+    tankCapacityLiters: sampleTank ?? DEFAULT_TANK_CAPACITY_LITERS,
     currentTyreWear: averageWear,
     currentTyreWearByWheel: wheelWear,
-    tyreWearRatePerLap: average(lapWearRates),
+    tyreWearRatePerLap: average(wheelRates),
   };
 }
 
@@ -301,6 +341,8 @@ function StrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
 
 export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategyState | null; telemetry?: TelemetrySnapshot | null }) {
   const seededSession = useRef<string | null>(null);
+  const appliedSessionModel = useRef<string | null>(null);
+  const appliedLiveModel = useRef<string | null>(null);
   const [form, setForm] = useState<FormState>(() => seededForm(strategy, telemetry));
   const [manualLapText, setManualLapText] = useState(() => formatTimeInput(seededForm(strategy, telemetry).normal_lap_time));
   const [sessions, setSessions] = useState<SavedSession[]>([]);
@@ -334,9 +376,15 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   useEffect(() => {
     if (!selectedSessionId) {
       setSessionReview(null);
+      setModelSource("live");
+      appliedSessionModel.current = null;
       return;
     }
     let cancelled = false;
+    setSessionReview(null);
+    appliedSessionModel.current = null;
+    setModelSource("session");
+    setSourceStatus("Loading DuckDB session");
     api.reviewCachedLmuDuckdbSession(selectedSessionId)
       .then((review) => {
         if (!cancelled) {
@@ -367,7 +415,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   };
   const liveModel = useMemo(() => modelFromLive(strategy, telemetry, form), [strategy, telemetry, form]);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId);
-  const sessionModel = useMemo(() => modelFromSession(sessionReview, selectedSession ? `${selectedSession.session_type || "Session"} - ${selectedSession.track_name || "Unknown track"}` : "DuckDB session"), [sessionReview, selectedSession]);
+  const sessionModel = useMemo(() => modelFromSession(sessionReview, selectedSession ? `${selectedSession.session_type || "Session"} - ${selectedSession.track_name || "Unknown track"}` : "DuckDB session", form), [form, sessionReview, selectedSession]);
   const activeModel = modelSource === "session" && sessionModel ? sessionModel : liveModel;
 
   const applyModelToForm = (model: PlannerModel, clearDirty: boolean) => {
@@ -388,6 +436,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     setForm(next);
     setManualLapText(formatTimeInput(next.normal_lap_time));
     setDirtyFields(new Set());
+    appliedLiveModel.current = null;
     setSourceStatus("Using live data directly");
   };
   const useSelectedSession = () => {
@@ -400,10 +449,30 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     setSourceStatus(`Using ${sessionModel.label}`);
   };
 
+  useEffect(() => {
+    if (modelSource !== "session" || !selectedSessionId || !sessionModel) return;
+    const signature = `${selectedSessionId}:${sessionModel.normalLapTime ?? ""}:${sessionModel.fuelPerLap ?? ""}`;
+    if (appliedSessionModel.current === signature) return;
+    applyModelToForm(sessionModel, true);
+    appliedSessionModel.current = signature;
+    setSourceStatus(`Using ${sessionModel.label}`);
+  }, [modelSource, selectedSessionId, sessionModel]);
+
+  useEffect(() => {
+    if (modelSource !== "live" || dirtyFields.size > 0) return;
+    const signature = `${liveModel.normalLapTime ?? ""}:${liveModel.fuelPerLap ?? ""}:${liveModel.tankCapacityLiters ?? ""}:${liveModel.currentTyreWear ?? ""}:${liveModel.tyreWearRatePerLap ?? ""}`;
+    if (appliedLiveModel.current === signature) return;
+    applyModelToForm(liveModel, false);
+    appliedLiveModel.current = signature;
+  }, [dirtyFields.size, liveModel, modelSource]);
+
   const fuelPerLap = activeModel.fuelPerLap;
   const currentWear = activeModel.currentTyreWear;
   const wearRate = activeModel.tyreWearRatePerLap;
   const tyreWearByWheel = activeModel.currentTyreWearByWheel;
+  const fuelSafetyMarginLiters = fuelPerLap != null && Number.isFinite(fuelPerLap) && fuelPerLap > 0
+    ? fuelPerLap * Math.max(0, form.fuel_safety_margin_laps)
+    : 0;
   const raceStartWear = form.race_start_new_tyres
     ? { fl: 0, fr: 0, rl: 0, rr: 0 }
     : { fl: tyreWearByWheel.fl, fr: tyreWearByWheel.fr, rl: tyreWearByWheel.rl, rr: tyreWearByWheel.rr };
@@ -416,7 +485,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     tankCapacityLiters: form.tank_capacity_liters > 0 ? form.tank_capacity_liters : null,
     raceStartFuelLiters: form.race_start_fuel_liters > 0 ? Math.min(form.race_start_fuel_liters, form.tank_capacity_liters) : null,
     raceStartNewTyres: form.race_start_new_tyres,
-    fuelSafetyMarginLiters: form.fuel_safety_margin_liters,
+    fuelSafetyMarginLiters: fuelSafetyMarginLiters,
     pitLaneLossSeconds: form.pit_loss_seconds,
     tyreChangeSecondsPerTyre: form.tyre_change_seconds_per_tyre,
     refuelSecondsPer5Liters: form.refuel_seconds_per_5_liters,
@@ -424,7 +493,14 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     currentTyreWearByWheel: raceStartWear,
     tyreWearRatePerLap: wearRate != null && Number.isFinite(wearRate) && wearRate > 0 ? wearRate : null,
     maxTyreWear: form.max_tyre_wear,
-  }), [activeModel.fuelObservedLaps, activeModel.fuelRequiredLaps, currentWear, form, fuelPerLap, raceStartWear.fl, raceStartWear.fr, raceStartWear.rl, raceStartWear.rr, wearRate]);
+  }), [activeModel.fuelObservedLaps, activeModel.fuelRequiredLaps, currentWear, form, fuelPerLap, fuelSafetyMarginLiters, raceStartWear.fl, raceStartWear.fr, raceStartWear.rl, raceStartWear.rr, wearRate]);
+  const missingPlanInputs = [
+    fuelPerLap == null || !Number.isFinite(fuelPerLap) || fuelPerLap <= 0 ? "fuel per lap" : null,
+    form.tank_capacity_liters <= 0 ? "tank capacity" : null,
+    form.race_start_fuel_liters <= 0 ? "race start fuel" : null,
+    form.normal_lap_time <= 0 ? "normal lap time" : null,
+    form.race_duration_minutes <= 0 ? "race duration" : null,
+  ].filter((item): item is string => item != null);
   const bestPlan = plans[0];
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? bestPlan;
   const activePlanId = selectedPlan?.id ?? null;
@@ -432,7 +508,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     ["race_duration_minutes", "Race duration", "min", 1],
     ["race_start_fuel_liters", "Race start fuel", "L", 0.1],
     ["tank_capacity_liters", "Tank capacity", "L", 0.1],
-    ["fuel_safety_margin_liters", "Fuel margin", "L", 0.1],
+    ["fuel_safety_margin_laps", "Fuel margin", "laps", 0.1],
     ["pit_loss_seconds", "Pit lane driving loss", "sec", 0.1],
     ["tyre_change_seconds_per_tyre", "Change one tyre", "sec", 0.1],
     ["refuel_seconds_per_5_liters", "Load 5L fuel", "sec", 0.1],
@@ -495,7 +571,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           tyre_change_seconds_per_tyre: form.tyre_change_seconds_per_tyre,
           refuel_seconds_per_5_liters: form.refuel_seconds_per_5_liters,
           safety_car_pit_loss_seconds: form.safety_car_pit_loss_seconds,
-          fuel_safety_margin_liters: form.fuel_safety_margin_liters,
+          fuel_safety_margin_liters: fuelSafetyMarginLiters,
           fuel_safety_margin_laps: form.fuel_safety_margin_laps,
           max_tyre_wear: form.max_tyre_wear,
         })}>Save assumptions</button>
@@ -507,6 +583,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
         <div className="motec-value-grid">
           <div><span className="label">Model source</span><strong>{activeModel.source === "session" ? "DuckDB session" : "Live"}</strong><span className="subvalue">{activeModel.label}</span></div>
           <div><span className="label">Fuel use</span><strong>{fmt(Number.isFinite(fuelPerLap ?? NaN) ? fuelPerLap : null, 3, " L/lap")}</strong><span className="subvalue">{activeModel.fuelObservedLaps}/{activeModel.fuelRequiredLaps} valid laps</span></div>
+          <div><span className="label">Fuel margin</span><strong>{fmt(form.fuel_safety_margin_laps, 1, " laps")}</strong><span className="subvalue">{fmt(fuelSafetyMarginLiters, 2, " L")} from model fuel use</span></div>
           <div><span className="label">Tyre wear</span><strong>{pct(Number.isFinite(currentWear) ? currentWear : null)}</strong><span className="subvalue">{fmt(wearRate != null && Number.isFinite(wearRate) ? wearRate * 100 : null, 2, "% / lap")}</span></div>
           <div><span className="label">Race start fuel</span><strong>{fmt(Math.min(form.race_start_fuel_liters, form.tank_capacity_liters), 1, " L")}</strong><span className="subvalue">editable, capped by tank</span></div>
           <div><span className="label">Race start tyres</span><strong>{form.race_start_new_tyres ? "New set" : "Observed wear"}</strong><span className="subvalue">{form.race_start_new_tyres ? "starts projection at 0%" : "uses model wear"}</span></div>
@@ -523,7 +600,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           key={plan.id}
         />
       )) : (
-        <section className="card span-12"><div className="empty-state"><strong>No viable strategy yet</strong><span>Complete valid fuel laps or adjust race fuel, tank capacity, and lap time assumptions.</span></div></section>
+        <section className="card span-12"><div className="empty-state"><strong>No viable strategy yet</strong><span>{missingPlanInputs.length ? `Missing ${missingPlanInputs.join(", ")}.` : "Try more stops, more start fuel, or a longer fuel-saving strategy."}</span></div></section>
       )}
 
       <section className="card span-12">
