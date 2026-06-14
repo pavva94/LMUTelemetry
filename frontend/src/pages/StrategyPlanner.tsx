@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { SectionTitle } from "../components/SectionTitle";
+import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { average, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
 import { simulateStrategies, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
 import { formatRaceTime } from "../lib/timeFormat";
-import type { SavedSession, SessionReview } from "../types/session";
+import type { LmuDuckdbSession } from "../types/lmuDuckdb";
+import type { SessionReview } from "../types/session";
 import type { StrategyState } from "../types/strategy";
 import type { TelemetrySnapshot } from "../types/telemetry";
 
@@ -346,8 +348,9 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const appliedLiveModel = useRef<string | null>(null);
   const [form, setForm] = useState<FormState>(() => seededForm(strategy, telemetry));
   const [manualLapText, setManualLapText] = useState(() => formatTimeInput(seededForm(strategy, telemetry).normal_lap_time));
-  const [sessions, setSessions] = useState<SavedSession[]>([]);
+  const [sessions, setSessions] = useState<LmuDuckdbSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
+  const [sessionSearch, setSessionSearch] = useState("");
   const [sessionReview, setSessionReview] = useState<SessionReview | null>(null);
   const [modelSource, setModelSource] = useState<ModelSource>("live");
   const [dirtyFields, setDirtyFields] = useState<Set<keyof FormState>>(() => new Set());
@@ -425,7 +428,11 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   };
   const liveModel = useMemo(() => modelFromLive(strategy, telemetry, form), [strategy, telemetry, form]);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId);
-  const sessionModel = useMemo(() => modelFromSession(sessionReview, selectedSession ? `${selectedSession.session_type || "Session"} - ${selectedSession.track_name || "Unknown track"}` : "DuckDB session", form), [form, sessionReview, selectedSession]);
+  const visibleSessions = useMemo(() => filterDuckdbSessions(sessions, sessionSearch, selectedSessionId), [sessionSearch, selectedSessionId, sessions]);
+  const sessionModel = useMemo(() => {
+    const parts = duckdbSessionParts(selectedSession);
+    return modelFromSession(sessionReview, selectedSession ? `${parts.sessionType} - ${parts.track}` : "DuckDB session", form);
+  }, [form, sessionReview, selectedSession]);
   const activeModel = modelSource === "session" && sessionModel ? sessionModel : liveModel;
 
   const applyModelToForm = (model: PlannerModel, clearDirty: boolean) => {
@@ -533,15 +540,16 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
         <div className="input-grid strategy-input-grid">
           <label>
             <span className="label">Model source</span>
+            <input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search live, type, track, car, file, laps" />
             <select value={selectedSessionId} onChange={(event) => setSelectedSessionId(event.target.value)}>
               <option value="">Live/current session</option>
-              {sessions.map((session) => (
+              {visibleSessions.map((session) => (
                 <option key={session.id} value={session.id}>
-                  {session.session_type || "Session"} - {session.track_name || "Unknown track"} - {session.vehicle_model || session.vehicle_name || "Unknown car"} - {session.created_at || session.id}
+                  {duckdbSessionLabel(session)}
                 </option>
               ))}
             </select>
-            <span className="subvalue">{sourceStatus}</span>
+            <span className="subvalue">{sourceStatus}{sessionSearch.trim() ? ` - ${visibleSessions.length}/${sessions.length} matches` : ""}</span>
           </label>
           <label>
             <span className="label">Manual lap time</span>

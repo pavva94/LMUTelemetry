@@ -3,6 +3,7 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { SectionTitle } from "../components/SectionTitle";
+import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { chartLabelFormatter, chartValueFormatter, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSession } from "../types/lmuDuckdb";
@@ -31,15 +32,17 @@ const fmt = (value?: number | null, digits = 1, suffix = "") =>
   value == null || Number.isNaN(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
 const dateText = (value?: string | null) => value ? new Date(value).toLocaleString() : "--";
-const carName = (session?: LmuDuckdbSession | null) => session?.vehicle_model || session?.vehicle_name || null;
+const carName = (session?: LmuDuckdbSession | null) => duckdbSessionParts(session).car;
 const fileSize = (bytes?: number | null) => {
   if (bytes == null) return "--";
   if (bytes >= 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
   if (bytes >= 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   return `${Math.max(1, Math.round(bytes / 1024))} KB`;
 };
-const sessionTitle = (session?: LmuDuckdbSession | null) =>
-  [session?.session_type, session?.track_name, carName(session)].filter(Boolean).join(" - ") || session?.file_name || "DuckDB session";
+const sessionTitle = (session?: LmuDuckdbSession | null) => {
+  const parts = duckdbSessionParts(session);
+  return session ? `${parts.sessionType} - ${parts.track} - ${parts.car}` : "DuckDB session";
+};
 const percentDelta = (a?: number | null, b?: number | null) => {
   if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b)) return "--";
   const scale = Math.max(Math.abs(a), Math.abs(b)) <= 1 ? 100 : 1;
@@ -617,6 +620,7 @@ export function LmuDuckdbReview() {
   const [folder, setFolder] = useState(DEFAULT_FOLDER);
   const [sessions, setSessions] = useState<LmuDuckdbSession[]>([]);
   const [selectedId, setSelectedId] = useState("");
+  const [sessionSearch, setSessionSearch] = useState("");
   const [review, setReview] = useState<Review | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
@@ -714,6 +718,8 @@ export function LmuDuckdbReview() {
   }, [selectedId]);
 
   const selectedSession = ((review?.session?.id === selectedId ? review.session : null) || sessions.find((session) => session.id === selectedId) || null) as LmuDuckdbSession | null;
+  const selectedParts = duckdbSessionParts(selectedSession);
+  const visibleSessions = useMemo(() => filterDuckdbSessions(sessions, sessionSearch, selectedId), [sessionSearch, selectedId, sessions]);
   const metadataRows = Object.entries(selectedSession?.metadata || {}).slice(0, 16);
   const samples = (review?.telemetry_samples || []) as Row[];
   const laps = (review?.laps || []) as Row[];
@@ -789,10 +795,16 @@ export function LmuDuckdbReview() {
   return (
     <div className="duckdb-workspace">
       <LoadingOverlay show={busy || reviewLoading} title={reviewLoading ? "Loading DuckDB session" : "Loading DuckDB sessions"} detail={reviewLoading ? "Opening the selected native telemetry file and preparing review charts." : "Loading cached telemetry sessions from the local index."} />
-      <aside className="duckdb-browser">
+      <section className="duckdb-browser">
         <SectionTitle title="Session Review" help="Read-only review of cached Le Mans Ultimate DuckDB sessions. Raw chart samples are loaded from the selected DuckDB file on demand." />
         <div className="duckdb-path-grid">
           <label>Telemetry folder<input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder={DEFAULT_FOLDER} /></label>
+          <label>Search sessions<input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search type, track, car, file, laps" /></label>
+          <label>Session<select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} disabled={!sessions.length}>
+            {sessions.length ? visibleSessions.map((session) => (
+              <option key={session.id} value={session.id}>{duckdbSessionLabel(session)}</option>
+            )) : <option value="">No cached DuckDB sessions</option>}
+          </select></label>
           <button disabled={busy || !folder.trim()} onClick={() => void useFolder()}>Use folder</button>
           <button className="primary" disabled={busy} onClick={() => void loadPage(0)}>Refresh list</button>
           <input value={status} readOnly />
@@ -804,17 +816,13 @@ export function LmuDuckdbReview() {
         </div>
         {total != null && <div className="muted duckdb-count">{sessions.length ? `${currentOffset + 1}-${currentOffset + sessions.length}` : "0"} of {total}</div>}
         {sessions.length ? (
-          <div className="duckdb-session-list">
-            {sessions.map((session) => (
-              <button key={session.id} className={selectedId === session.id ? "active" : ""} onClick={() => setSelectedId(session.id)}>
-                <strong>{sessionTitle(session)}</strong>
-                <span>{text(session.file_name)}</span>
-                <small>{dateText(session.created_at)} / {fileSize(session.file_size_bytes)}</small>
-              </button>
-            ))}
+          <div className="duckdb-selected-session">
+            <strong>{sessionTitle(selectedSession)}</strong>
+            <span>{text(selectedSession?.file_name)} / {dateText(selectedSession?.created_at)} / {fileSize(selectedSession?.file_size_bytes)}</span>
+            {sessionSearch.trim() && <small>{visibleSessions.length}/{sessions.length} matches</small>}
           </div>
         ) : <EmptyState detail="No sessions cached yet. Set and sync the LMU DuckDB folder from User Profile." />}
-      </aside>
+      </section>
 
       <main className="duckdb-analysis page grid">
       <section className="card span-12">
@@ -822,9 +830,9 @@ export function LmuDuckdbReview() {
           <Metric label="Database" value={sessionTitle(selectedSession)} />
           <Metric label="File" value={text(selectedSession?.file_name)} />
           <Metric label="Size" value={fileSize(selectedSession?.file_size_bytes)} />
-          <Metric label="Track" value={text(selectedSession?.track_name)} />
-          <Metric label="Session" value={text(selectedSession?.session_type)} />
-          <Metric label="Car" value={text(carName(selectedSession))} />
+          <Metric label="Track" value={text(selectedParts.track)} />
+          <Metric label="Session" value={text(selectedParts.sessionType)} />
+          <Metric label="Car" value={text(selectedParts.car)} />
           <Metric label="Laps" value={summary.laps} />
           <Metric label="Samples" value={summary.samples} sub={summary.storedSamples ? `${summary.storedSamples} native rows` : "mapped review samples"} />
           <Metric label="Best lap" value={formatRaceTime(summary.bestLap)} />

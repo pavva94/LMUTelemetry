@@ -14,6 +14,7 @@ export type SavedSession = {
   started_at_game_time?: number | null;
   ended_at_game_time?: number | null;
   sample_count?: number | null;
+  lap_count?: number | null;
   latest_lap_number?: number | null;
   latest_game_time?: number | null;
 };

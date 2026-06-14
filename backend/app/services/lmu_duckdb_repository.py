@@ -1176,6 +1176,7 @@ def save_settings(path: str) -> dict:
 def _session_model_to_dict(session: LmuDuckdbSessionModel) -> dict:
     metadata = {}
     warnings = []
+    summary = {}
     try:
         metadata = json.loads(session.metadata_json or "{}")
     except Exception:
@@ -1184,6 +1185,11 @@ def _session_model_to_dict(session: LmuDuckdbSessionModel) -> dict:
         warnings = json.loads(session.warnings_json or "[]")
     except Exception:
         pass
+    try:
+        summary = json.loads(session.summary_json or "{}")
+    except Exception:
+        pass
+    lap_count = _num(summary.get("lap_count"))
     return {
         "id": session.id,
         "created_at": session.created_at,
@@ -1199,6 +1205,7 @@ def _session_model_to_dict(session: LmuDuckdbSessionModel) -> dict:
         "final_class_position": session.final_class_position,
         "classified_status": session.classified_status,
         "sample_count": session.sample_count,
+        "lap_count": int(lap_count) if lap_count is not None else None,
         "latest_lap_number": session.latest_lap_number,
         "latest_game_time": session.latest_game_time,
         "file_name": session.file_name,

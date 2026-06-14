@@ -124,18 +124,16 @@ select { width: 100%; border: 1px solid #33414d; background: #0f1419; color: #ff
 .range-filter + .range-filter { margin-top: 4px; }
 .svg-clickable { cursor: pointer; }
 .motec-workspace { display: grid; grid-template-columns: 210px 1fr; min-height: calc(100vh - 64px); }
-.duckdb-workspace { display: grid; grid-template-columns: minmax(280px, 340px) minmax(0, 1fr); min-height: calc(100vh - 64px); }
-.duckdb-browser { border-right: 1px solid #222a32; background: #0f1419; padding: 14px; overflow-y: auto; max-height: calc(100vh - 64px); }
+.duckdb-workspace { display: grid; grid-template-columns: minmax(0, 1fr); min-height: calc(100vh - 64px); }
+.duckdb-browser { border-bottom: 1px solid #222a32; background: #0f1419; padding: 14px; }
 .duckdb-analysis { min-width: 0; }
-.duckdb-path-grid { display: grid; grid-template-columns: 1fr; gap: 9px; align-items: end; }
-.duckdb-pager { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.duckdb-path-grid { display: grid; grid-template-columns: minmax(220px, 1.1fr) minmax(180px, .7fr) minmax(300px, 1.4fr) auto auto minmax(220px, 1fr); gap: 9px; align-items: end; }
+.duckdb-pager { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .duckdb-count { margin-bottom: 10px; font-size: 12px; }
-.duckdb-session-list { display: grid; gap: 7px; }
-.duckdb-session-list button { display: grid; gap: 3px; width: 100%; border: 1px solid #27313a; background: #111820; color: #d9e3ea; border-radius: 6px; padding: 9px; text-align: left; cursor: pointer; }
-.duckdb-session-list button.active, .duckdb-session-list button:hover { border-color: #e6b450; background: #1a2027; }
-.duckdb-session-list strong, .duckdb-session-list span { overflow-wrap: anywhere; }
-.duckdb-session-list span { color: #aeb8c2; font-size: 12px; }
-.duckdb-session-list small { color: #84909b; font-size: 11px; }
+.duckdb-selected-session { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: baseline; border: 1px solid #27313a; background: #111820; border-radius: 6px; padding: 9px 10px; color: #d9e3ea; }
+.duckdb-selected-session strong, .duckdb-selected-session span { overflow-wrap: anywhere; }
+.duckdb-selected-session span { color: #aeb8c2; font-size: 12px; }
+.duckdb-selected-session small { color: #84909b; font-size: 11px; }
 .channel-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .motec-worksheets { border-right: 1px solid #222a32; background: #0f1419; padding: 12px; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
 .motec-worksheets button { border: 0; color: #aeb8c2; background: transparent; padding: 9px 10px; border-radius: 6px; text-align: left; cursor: pointer; }
@@ -238,7 +236,7 @@ label input[type="checkbox"] { width: auto; margin-right: 8px; }
   .input-grid { grid-template-columns: 1fr 1fr; }
   .lap-context-grid { grid-template-columns: 1fr 1fr; }
   .duckdb-workspace { grid-template-columns: 1fr; }
-  .duckdb-browser { max-height: 420px; border-right: 0; border-bottom: 1px solid #222a32; }
+  .duckdb-browser { border-right: 0; border-bottom: 1px solid #222a32; }
   .duckdb-path-grid { grid-template-columns: 1fr; }
   .gps-compare-toolbar { grid-template-columns: 1fr 1fr; }
   .speed-gear { grid-template-columns: 1fr 1fr; }

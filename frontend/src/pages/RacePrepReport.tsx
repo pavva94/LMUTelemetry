@@ -3,10 +3,12 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { SectionTitle } from "../components/SectionTitle";
+import { duckdbSessionLabel, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { buildRacePrepReport, type RacePrepReport as RacePrepReportModel, type Wheel } from "../lib/racePrepReport";
 import { formatRaceTime } from "../lib/timeFormat";
-import type { SavedSession, SessionReview } from "../types/session";
+import type { LmuDuckdbSession } from "../types/lmuDuckdb";
+import type { SessionReview } from "../types/session";
 import type { StrategyState } from "../types/strategy";
 
 type Props = {
@@ -58,8 +60,9 @@ function ChannelBadges({ labels }: { labels: string[] }) {
 }
 
 export function RacePrepReport({ strategy }: Props) {
-  const [sessions, setSessions] = useState<SavedSession[]>([]);
+  const [sessions, setSessions] = useState<LmuDuckdbSession[]>([]);
   const [selected, setSelected] = useState("current");
+  const [sessionSearch, setSessionSearch] = useState("");
   const [review, setReview] = useState<SessionReview | null>(null);
   const [status, setStatus] = useState("Loading sessions");
   const [sessionListLoading, setSessionListLoading] = useState(true);
@@ -112,6 +115,7 @@ export function RacePrepReport({ strategy }: Props) {
       defaultRaceDurationMinutes: Number(strategy?.assumptions?.race_duration_minutes || 120),
     });
   }, [review, strategy]);
+  const visibleSessions = useMemo(() => filterDuckdbSessions(sessions, sessionSearch, selected === "current" ? undefined : selected), [sessionSearch, selected, sessions]);
 
   return (
     <div className="page grid">
@@ -119,14 +123,19 @@ export function RacePrepReport({ strategy }: Props) {
       <section className="card span-12">
         <SectionTitle title="Session Report" help="Reviews the current live session or a synced LMU DuckDB session with pace, fuel, tyre, environment, and engineering evidence." />
         <div className="section-toolbar report-toolbar">
-          <label><span className="label">Session</span><select value={selected} onChange={(event) => setSelected(event.target.value)}>
+          <label>
+            <span className="label">Session</span>
+            <input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search live, type, track, car, file, laps" />
+            <select value={selected} onChange={(event) => setSelected(event.target.value)}>
             <option value="current">Current live session</option>
-            {sessions.map((session) => (
+            {visibleSessions.map((session) => (
               <option key={session.id} value={session.id}>
-                {session.session_type || "Session"} - {session.track_name || "Unknown track"} - {session.vehicle_model || session.vehicle_name || "Unknown car"} - {session.created_at || session.id}
+                {duckdbSessionLabel(session)}
               </option>
             ))}
-          </select></label>
+          </select>
+          <span className="subvalue">{sessionSearch.trim() ? `${visibleSessions.length}/${sessions.length} matches` : "Live/current remains available"}</span>
+          </label>
           <span className="badge blue">{status}</span>
         </div>
       </section>
