@@ -83,6 +83,31 @@ Confidence:
 - 2 observed wear laps: medium.
 - 3+ observed wear laps: high.
 
+## Pace Model
+
+Live pace uses completed lap summaries from the event detector. Accepted pace laps require:
+
+- Lap time is between `40s` and `900s`.
+- Lap is marked valid.
+- Player was not in pit lane.
+- Session was not under yellow, FCY, or safety-car state.
+- Lap is not a major outlier versus recent clean laps.
+
+Pace fields:
+
+- `last_lap_time`: most recent accepted clean lap.
+- `last_7_lap_average`: average of the latest 7 accepted clean laps, or fewer until 7 exist.
+- `last_10_lap_average`: average of the latest 10 accepted clean laps, or fewer until 10 exist.
+- `weighted_recent_pace`: 60% last-7 average, 30% last-10 average, and 10% last clean lap once 10 laps exist. With 7-9 laps, it uses 75% last-7 average and 25% last lap. Before that it uses available clean-lap average or the normal-lap assumption fallback.
+- `pace_trend_seconds_per_lap`: recent window minus longer window. Positive means recent pace is slower.
+- `pace_degradation_per_lap`: positive trend only, used as an extra degradation signal.
+
+Confidence:
+
+- 0-6 clean laps: low.
+- 7-9 clean laps: medium.
+- 10+ clean laps: high.
+
 ## Stint Model
 
 The stint model tracks pit transitions:
@@ -176,4 +201,3 @@ Recommendation priority order:
 Duplicate suppression:
 
 - If the same action type was issued on the current or previous lap, the engine returns hold strategy with `action_recently_issued`.
-

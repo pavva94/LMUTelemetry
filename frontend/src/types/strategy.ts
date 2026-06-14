@@ -24,9 +24,22 @@ export type TyreStrategyState = {
   reason_codes: string[];
 };
 
+export type PaceState = {
+  last_lap_time?: number;
+  last_7_lap_average?: number;
+  last_10_lap_average?: number;
+  weighted_recent_pace?: number;
+  pace_trend_seconds_per_lap?: number;
+  pace_degradation_per_lap?: number;
+  sample_laps?: number;
+  confidence?: string;
+  reason_codes: string[];
+};
+
 export type StrategyState = {
   fuel: FuelState;
   tyres: TyreStrategyState;
+  pace?: PaceState;
   stint: {
     current_stint_lap?: number;
     last_pit_lap?: number;

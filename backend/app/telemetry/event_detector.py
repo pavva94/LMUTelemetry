@@ -26,9 +26,11 @@ class EventDetector:
         if current_lap and previous_lap and current_lap > previous_lap:
             fuel_end = player.fuel_liters if player else None
             wear_end = player.tyre_state.average_wear if player and player.tyre_state else None
+            official_lap_time = player.last_lap_time if player and player.last_lap_time else None
+            boundary_lap_time = (session.current_time - self.previous.session.current_time) if session and self.previous and self.previous.session else None
             lap = LapSummary(
                 lap_number=previous_lap,
-                lap_time=(session.current_time - self.previous.session.current_time) if session and self.previous and self.previous.session else None,
+                lap_time=official_lap_time or boundary_lap_time,
                 fuel_start=self._lap_fuel_start,
                 fuel_end=fuel_end,
                 fuel_used=(self._lap_fuel_start - fuel_end) if self._lap_fuel_start is not None and fuel_end is not None else None,

@@ -24,11 +24,14 @@ const liveItems = [
   ["one-lap", "Standings", Timer],
   ["race-history", "Race History", History],
   ["xy-plotter", "X-Y Plotter", LineChart],
-  ["planner", "Strategy Planner", Activity],
-  ["race-prep", "Session Report", FileText],
   ["lap-analysis", "Lap Analysis", Microscope],
   ["pit", "Pit Window", Flag],
   ["settings", "Settings", Settings],
+] as const;
+
+const planItems = [
+  ["planner", "Strategy Planner", Activity],
+  ["race-prep", "Session Report", FileText],
 ] as const;
 
 const csvItems = [
@@ -42,11 +45,12 @@ const profileItems = [
 
 const modes = [
   ["live", "Live Mode", "Real-time telemetry", Gauge, liveItems],
+  ["plan", "Plan Mode", "Strategy and session reports", FileText, planItems],
   ["csv", "CSV Analysis", "Offline MoTeC-style tools", FileSpreadsheet, csvItems],
   ["profile", "User Profile", "DuckDB career and review", UserRound, profileItems],
 ] as const;
 
-const items = [...liveItems, ...csvItems, ...profileItems] as const;
+const items = [...liveItems, ...planItems, ...csvItems, ...profileItems] as const;
 
 export type PageKey = (typeof items)[number][0];
 type ModeKey = (typeof modes)[number][0];
@@ -71,6 +75,7 @@ const pageDescriptions: Record<PageKey, string> = {
 
 const firstPageByMode: Record<ModeKey, PageKey> = {
   live: "live",
+  plan: "planner",
   csv: "motec",
   profile: "profile",
 };
@@ -92,7 +97,7 @@ export function Layout({
 }) {
   const activeMode = modeForPage(page);
   const [, modeLabel, , , activeItems] = activeMode;
-  const isOfflineMode = activeMode[0] === "csv" || activeMode[0] === "profile";
+  const isOfflineMode = activeMode[0] === "csv" || activeMode[0] === "profile" || activeMode[0] === "plan";
   return (
     <div className="app-shell">
       <aside className="sidebar">

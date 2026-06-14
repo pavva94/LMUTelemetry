@@ -17,6 +17,7 @@ from app.schemas.telemetry import CompetitorState, TelemetrySnapshot
 from app.services.session_logger import SessionLogger
 from app.strategy.competitor_model import CompetitorModel
 from app.strategy.fuel_model import FuelModel
+from app.strategy.pace_model import PaceModel
 from app.strategy.pit_window_model import PitWindowModel
 from app.strategy.recommendation_engine import RecommendationEngine
 from app.strategy.stint_model import StintModel
@@ -61,6 +62,7 @@ class TelemetryService:
         self.tyre_model = TyreModel(self.assumptions)
         self.stint_model = StintModel()
         self.pit_window_model = PitWindowModel(self.assumptions)
+        self.pace_model = PaceModel(self.assumptions)
         self.competitor_model = CompetitorModel()
         self.recommendation_engine = RecommendationEngine(self.assumptions)
         self.event_detector = EventDetector()
@@ -119,6 +121,7 @@ class TelemetryService:
         self.fuel_model.assumptions = assumptions
         self.tyre_model.assumptions = assumptions
         self.pit_window_model.assumptions = assumptions
+        self.pace_model.assumptions = assumptions
         self.recommendation_engine.assumptions = assumptions
         return self.strategy_state
 
@@ -127,6 +130,7 @@ class TelemetryService:
         self.tyre_model = TyreModel(self.assumptions)
         self.stint_model = StintModel()
         self.pit_window_model = PitWindowModel(self.assumptions)
+        self.pace_model = PaceModel(self.assumptions)
         self.competitor_model = CompetitorModel()
         self.recommendation_engine = RecommendationEngine(self.assumptions)
         self.event_detector = EventDetector()
@@ -299,14 +303,15 @@ class TelemetryService:
         snapshot.pause_reason = None
         self.latest_snapshot = snapshot
         self._maybe_rotate_session(snapshot)
-        self.event_detector.update(snapshot)
+        events = self.event_detector.update(snapshot)
         fuel = self.fuel_model.update(snapshot)
         tyres = self.tyre_model.update(snapshot)
+        pace = self.pace_model.update(events.get("lap_completed"))
         stint = self.stint_model.update(snapshot, fuel, tyres)
         pit_window = self.pit_window_model.update(snapshot, fuel, tyres, stint)
         competitors = self.competitor_model.update(snapshot)
         recommendation = self.recommendation_engine.update(snapshot, fuel, tyres, stint, pit_window, competitors)
-        strategy = StrategyState(fuel=fuel, tyres=tyres, stint=stint, pit_window=pit_window, assumptions=self.assumptions)
+        strategy = StrategyState(fuel=fuel, tyres=tyres, pace=pace, stint=stint, pit_window=pit_window, assumptions=self.assumptions)
         recommendation.explanation = self.assistant.explain_recommendation(recommendation, strategy)
         self.strategy_state = strategy
         self.competitors = competitors

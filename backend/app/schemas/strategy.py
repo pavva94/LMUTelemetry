@@ -44,6 +44,18 @@ class TyreStrategyState(BaseModel):
     reason_codes: list[str] = Field(default_factory=list)
 
 
+class PaceState(BaseModel):
+    last_lap_time: float | None = None
+    last_7_lap_average: float | None = None
+    last_10_lap_average: float | None = None
+    weighted_recent_pace: float | None = None
+    pace_trend_seconds_per_lap: float | None = None
+    pace_degradation_per_lap: float | None = None
+    sample_laps: int = 0
+    confidence: str = "low"
+    reason_codes: list[str] = Field(default_factory=list)
+
+
 class StintState(BaseModel):
     current_stint_lap: int | None = None
     last_pit_lap: int | None = None
@@ -67,6 +79,7 @@ class PitWindowState(BaseModel):
 class StrategyState(BaseModel):
     fuel: FuelState = Field(default_factory=FuelState)
     tyres: TyreStrategyState = Field(default_factory=TyreStrategyState)
+    pace: PaceState = Field(default_factory=PaceState)
     stint: StintState = Field(default_factory=StintState)
     pit_window: PitWindowState = Field(default_factory=PitWindowState)
     assumptions: StrategyAssumptions = Field(default_factory=StrategyAssumptions)

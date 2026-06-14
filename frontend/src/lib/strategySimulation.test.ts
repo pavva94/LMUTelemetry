@@ -146,4 +146,58 @@ describe("strategy simulation", () => {
     expect(plan?.stintWear).toHaveLength(2);
     expect(plan?.stintWear[0].remainingWear.rr).toBeLessThan(plan?.stintWear[1].remainingWear.rr ?? 0);
   });
+
+  it("uses recent weighted pace to change projected race laps", () => {
+    const steadyFuel = { ...baseInput, normalLapTime: 120, fuelPerLap: 0.5, tankCapacityLiters: 200, raceStartFuelLiters: 200, maxStops: 0 };
+    const base = simulateStrategies(steadyFuel)[0];
+    const slower = simulateStrategies({
+      ...steadyFuel,
+      paceEvidence: { weightedRecentPace: 130, confidence: "high", source: "test pace" },
+    })[0];
+
+    expect(slower.raceLaps).toBeLessThan(base.raceLaps);
+    expect(slower.calculationBreakdown.simulationPaceSeconds).toBe(130);
+  });
+
+  it("prefers a shorter tyre stint when degradation cost is high", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 60,
+      normalLapTime: 120,
+      fuelPerLap: 1,
+      tankCapacityLiters: 200,
+      raceStartFuelLiters: 200,
+      pitLaneLossSeconds: 5,
+      tyreChangeSecondsPerTyre: 1,
+      refuelSecondsPer5Liters: 0,
+      currentTyreWear: 0.2,
+      currentTyreWearByWheel: { fl: 0.2, fr: 0.2, rl: 0.2, rr: 0.2 },
+      tyreWearRatePerLap: 0.02,
+      tyrePaceDegradationPerLap: 0.5,
+      maxStops: 1,
+    });
+
+    expect(plans[0]?.stops).toBe(1);
+    expect(plans[0]?.tyreDegradationLossSeconds).toBeLessThan(plans.find((plan) => plan.stops === 0)?.tyreDegradationLossSeconds ?? Infinity);
+  });
+
+  it("exposes a calculation breakdown that sums to total time", () => {
+    const plan = simulateStrategies({
+      ...baseInput,
+      paceEvidence: { weightedRecentPace: 121, paceTrendSecondsPerLap: 0.2, confidence: "high", source: "test pace" },
+      trafficPenaltySeconds: 3,
+      maxStops: 1,
+    })[0];
+    const breakdown = plan.calculationBreakdown;
+    const total =
+      breakdown.baseRaceTimeSeconds +
+      breakdown.pitTimeSeconds +
+      breakdown.projectedPaceLossSeconds +
+      breakdown.tyreDegradationLossSeconds +
+      breakdown.liftCoastLossSeconds +
+      breakdown.trafficLossSeconds;
+
+    expect(plan.totalTimeSeconds).toBeCloseTo(total, 1);
+    expect(breakdown.totalTimeSeconds).toBe(plan.totalTimeSeconds);
+  });
 });

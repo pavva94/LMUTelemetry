@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { SectionTitle } from "../components/SectionTitle";
 import { StatusBadge } from "../components/StatusBadge";
-import { simulateStrategies, type StrategyCandidate, type StrategyRisk, type Wheel } from "../lib/strategySimulation";
+import { simulateStrategies, type PaceEvidence, type StrategyCandidate, type StrategyRisk, type Wheel } from "../lib/strategySimulation";
 import { formatRaceTime } from "../lib/timeFormat";
 import type { StrategyState } from "../types/strategy";
 import type { TelemetrySnapshot } from "../types/telemetry";
@@ -18,11 +18,27 @@ function validLapTime(value?: number | null) {
   return value != null && Number.isFinite(value) && value >= 40 && value <= 900 ? value : null;
 }
 
-function liveNormalLapTime(telemetry?: TelemetrySnapshot | null, fallback?: number | null) {
+function liveNormalLapTime(telemetry?: TelemetrySnapshot | null, fallback?: number | null, pace?: StrategyState["pace"]) {
+  if (validLapTime(pace?.weighted_recent_pace) != null) return { value: pace?.weighted_recent_pace ?? null, source: "weighted recent pace" };
   const playerCar = telemetry?.competitors.find((car) => car.is_player);
   const direct = validLapTime(playerCar?.last_lap_time) ?? validLapTime(playerCar?.estimated_lap_time) ?? validLapTime(playerCar?.best_lap_time);
   if (direct != null) return { value: direct, source: playerCar?.last_lap_time ? "player last lap" : playerCar?.estimated_lap_time ? "player estimate" : "player best lap" };
   return { value: fallback && fallback > 0 ? fallback : null, source: "strategy assumption" };
+}
+
+function paceEvidenceFromStrategy(strategy: StrategyState | null, fallback: number | null): PaceEvidence {
+  const pace = strategy?.pace;
+  return {
+    lastLapTime: validLapTime(pace?.last_lap_time),
+    last7LapAverage: validLapTime(pace?.last_7_lap_average),
+    last10LapAverage: validLapTime(pace?.last_10_lap_average),
+    weightedRecentPace: validLapTime(pace?.weighted_recent_pace) ?? validLapTime(fallback),
+    paceTrendSecondsPerLap: Number.isFinite(pace?.pace_trend_seconds_per_lap) ? pace?.pace_trend_seconds_per_lap : null,
+    paceDegradationPerLap: Number.isFinite(pace?.pace_degradation_per_lap) ? pace?.pace_degradation_per_lap : null,
+    sampleLaps: pace?.sample_laps ?? 0,
+    confidence: pace?.confidence || "low",
+    source: pace?.weighted_recent_pace ? "live clean lap history" : "strategy assumption",
+  };
 }
 
 function liveRemainingSeconds(telemetry: TelemetrySnapshot | null | undefined, lapTime: number | null, fallbackMinutes?: number) {
@@ -93,8 +109,12 @@ function LivePlanCard({
         <span>{plan.stops} stop{plan.stops === 1 ? "" : "s"} from now - up to {plan.maxTyresChangedPerStop} tyre{plan.maxTyresChangedPerStop === 1 ? "" : "s"} when needed</span>
       </div>
       <div className="header-grid two">
+        <div><span className="label">Driving time</span><strong>{formatRaceTime(plan.baseRaceTimeSeconds)}</strong><span className="subvalue">{fmt(plan.calculationBreakdown.simulationPaceSeconds, 3, " s/lap")}</span></div>
         <div><span className="label">Next stop</span><strong>{firstStop ? `Lap ${absoluteStopLap(currentLap, firstStop.lap)}` : "None"}</strong><span className="subvalue">{firstStop ? `in ${firstStop.lap} lap${firstStop.lap === 1 ? "" : "s"}` : "fuel and tyres can finish"}</span></div>
         <div><span className="label">Pit time</span><strong>{fmt(plan.pitTimeSeconds, 1, " s")}</strong></div>
+        <div><span className="label">Pace loss</span><strong>{fmt(plan.projectedPaceLossSeconds + plan.tyreDegradationLossSeconds, 1, " s")}</strong><span className="subvalue">trend {fmt(plan.projectedPaceLossSeconds, 1, " s")} / tyres {fmt(plan.tyreDegradationLossSeconds, 1, " s")}</span></div>
+        <div><span className="label">Traffic loss</span><strong>{fmt(plan.trafficLossSeconds, 1, " s")}</strong></div>
+        <div><span className="label">Confidence</span><strong>{plan.confidence}</strong></div>
         <div><span className="label">Fuel to add</span><strong>{firstStop ? fmt(firstStop.fuelAddedLiters, 1, " L") : "0 L"}</strong><span className="subvalue">{firstStop ? `${fmt(firstStop.fuelRemainingLiters, 1, " L")} left before stop` : `${fmt(plan.finishFuelRemainingLiters, 1, " L")} at finish`}</span></div>
         <div><span className="label">Tyres</span><strong>{firstStop ? tyreChangeWearText(firstStop) : "None"}</strong></div>
         <div><span className="label">Finish fuel</span><strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")}</strong></div>
@@ -170,7 +190,8 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
   const tyres = player?.tyre_state;
   const currentLap = Number(player?.lap_number ?? telemetry?.session?.current_lap);
   const absoluteCurrentLap = Number.isFinite(currentLap) ? currentLap : null;
-  const lapTime = liveNormalLapTime(telemetry, Number(assumptions.normal_lap_time));
+  const lapTime = liveNormalLapTime(telemetry, Number(assumptions.normal_lap_time), strategy?.pace);
+  const paceEvidence = paceEvidenceFromStrategy(strategy, lapTime.value);
   const remaining = liveRemainingSeconds(telemetry, lapTime.value, Number(assumptions.race_duration_minutes));
   const fuelPerLap = Number(strategy?.fuel.fuel_per_lap_liters);
   const currentWear = Number(strategy?.tyres.average_wear ?? tyres?.average_wear);
@@ -181,9 +202,11 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
   const plans = useMemo(() => simulateStrategies({
     raceDurationMinutes: remaining.value != null ? remaining.value / 60 : 0,
     normalLapTime: lapTime.value || Number(assumptions.normal_lap_time) || 0,
+    paceEvidence,
     fuelPerLap: Number.isFinite(fuelPerLap) && fuelPerLap > 0 ? fuelPerLap : null,
     fuelObservedLaps: Number(strategy?.fuel.valid_laps_observed || 0),
     fuelRequiredLaps: Number(strategy?.fuel.valid_laps_required || 3),
+    fuelConfidence: strategy?.fuel.confidence,
     tankCapacityLiters: Number.isFinite(tankCapacity) && tankCapacity > 0 ? tankCapacity : null,
     raceStartFuelLiters: Number.isFinite(currentFuel) && currentFuel > 0 ? currentFuel : null,
     fuelSafetyMarginLiters: Number(assumptions.fuel_safety_margin_liters ?? 2),
@@ -198,21 +221,40 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
       rr: tyres?.wear_rr,
     },
     tyreWearRatePerLap: Number.isFinite(wearRate) && wearRate > 0 ? wearRate : null,
+    tyrePaceDegradationPerLap: Number(strategy?.tyres.pace_degradation_per_lap) || paceEvidence.paceDegradationPerLap,
+    tyreConfidence: strategy?.tyres.confidence,
     maxTyreWear: Number(assumptions.max_tyre_wear ?? 0.75),
+    trafficPenaltySeconds: pit?.traffic_risk_after_stop === "high" ? 8 : pit?.traffic_risk_after_stop === "medium" ? 4 : 0,
+    safetyCarActive: Boolean(pit?.safety_car_pit_recommendation),
+    safetyCarPitLossSeconds: Number(assumptions.safety_car_pit_loss_seconds ?? 16),
   }), [
     assumptions.fuel_safety_margin_liters,
     assumptions.max_tyre_wear,
     assumptions.normal_lap_time,
     assumptions.pit_loss_seconds,
     assumptions.refuel_seconds_per_5_liters,
+    assumptions.safety_car_pit_loss_seconds,
     assumptions.tyre_change_seconds_per_tyre,
     currentFuel,
     currentWear,
     fuelPerLap,
     lapTime.value,
+    paceEvidence.lastLapTime,
+    paceEvidence.last7LapAverage,
+    paceEvidence.last10LapAverage,
+    paceEvidence.weightedRecentPace,
+    paceEvidence.paceTrendSecondsPerLap,
+    paceEvidence.paceDegradationPerLap,
+    paceEvidence.sampleLaps,
+    paceEvidence.confidence,
+    pit?.safety_car_pit_recommendation,
+    pit?.traffic_risk_after_stop,
     remaining.value,
     strategy?.fuel.valid_laps_observed,
     strategy?.fuel.valid_laps_required,
+    strategy?.fuel.confidence,
+    strategy?.tyres.confidence,
+    strategy?.tyres.pace_degradation_per_lap,
     tankCapacity,
     tyres?.wear_fl,
     tyres?.wear_fr,
@@ -243,7 +285,19 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
           <div><span className="label">Tyres to change</span><strong>{firstStop ? tyreChangeWearText(firstStop) : "None"}</strong></div>
           <div><span className="label">Stop time</span><strong>{firstStop ? fmt(firstStop.stopTimeSeconds, 1, " s") : "0 s"}</strong></div>
           <div><span className="label">Remaining</span><strong>{formatRaceTime(remaining.value)}</strong><span className="subvalue">{remaining.source}</span></div>
-          <div><span className="label">Live lap</span><strong>{formatRaceTime(lapTime.value)}</strong><span className="subvalue">{lapTime.source}</span></div>
+          <div><span className="label">Pace model</span><strong>{formatRaceTime(paceEvidence.weightedRecentPace)}</strong><span className="subvalue">{paceEvidence.source}</span></div>
+        </div>
+      </section>
+
+      <section className="card span-12">
+        <SectionTitle title="Pace Model" help="Shows the clean recent lap evidence used by the live strategy simulation." />
+        <div className="motec-value-grid">
+          <div><span className="label">Last clean lap</span><strong>{formatRaceTime(paceEvidence.lastLapTime)}</strong></div>
+          <div><span className="label">Last 7 average</span><strong>{formatRaceTime(paceEvidence.last7LapAverage)}</strong></div>
+          <div><span className="label">Last 10 average</span><strong>{formatRaceTime(paceEvidence.last10LapAverage)}</strong></div>
+          <div><span className="label">Weighted pace</span><strong>{formatRaceTime(paceEvidence.weightedRecentPace)}</strong><span className="subvalue">{paceEvidence.source}</span></div>
+          <div><span className="label">Trend</span><strong>{fmt(paceEvidence.paceTrendSecondsPerLap, 3, " s/lap")}</strong><span className="subvalue">positive means slowing</span></div>
+          <div><span className="label">Confidence</span><strong>{paceEvidence.confidence || "low"}</strong><span className="subvalue">{paceEvidence.sampleLaps ?? 0} clean laps</span></div>
         </div>
       </section>
 
@@ -253,11 +307,38 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
           <div><span className="label">Current lap</span><strong>{text(absoluteCurrentLap)}</strong><span className="subvalue">absolute race lap</span></div>
           <div><span className="label">Current fuel</span><strong>{fmt(currentFuel, 1, " L")}</strong><span className="subvalue">{fmt(tankCapacity, 1, " L")} tank</span></div>
           <div><span className="label">Fuel use</span><strong>{fmt(Number.isFinite(fuelPerLap) ? fuelPerLap : null, 3, " L/lap")}</strong><span className="subvalue">{strategy?.fuel.valid_laps_observed ?? 0}/{strategy?.fuel.valid_laps_required ?? 3} valid laps</span></div>
-          <div><span className="label">Tyre wear</span><strong>{pct(Number.isFinite(currentWear) ? currentWear : null)}</strong><span className="subvalue">{fmt(Number.isFinite(wearRate) ? wearRate * 100 : null, 2, "% / lap")}</span></div>
+          <div><span className="label">Tyre wear</span><strong>{pct(Number.isFinite(currentWear) ? currentWear : null)}</strong><span className="subvalue">{tyreWearText({ fl: tyres?.wear_fl ?? currentWear, fr: tyres?.wear_fr ?? currentWear, rl: tyres?.wear_rl ?? currentWear, rr: tyres?.wear_rr ?? currentWear })}</span></div>
+          <div><span className="label">Wear rate</span><strong>{fmt(Number.isFinite(wearRate) ? wearRate * 100 : null, 2, "% / lap")}</strong><span className="subvalue">max {pct(Number(assumptions.max_tyre_wear ?? 0.75))}</span></div>
+          <div><span className="label">Pit model</span><strong>{fmt(Number(assumptions.pit_loss_seconds ?? 28), 1, " s")}</strong><span className="subvalue">tyre {fmt(Number(assumptions.tyre_change_seconds_per_tyre ?? 3), 1, " s")} / fuel {fmt(Number(assumptions.refuel_seconds_per_5_liters ?? 1.2), 1, " s per 5L")}</span></div>
+          <div><span className="label">Safety car</span><strong>{pit?.safety_car_pit_recommendation ? "Active pit gain" : "Not applied"}</strong><span className="subvalue">{fmt(Number(assumptions.safety_car_pit_loss_seconds ?? 16), 1, " s")} pit loss if active</span></div>
           <div><span className="label">Fuel margin now</span><strong>{fmt(strategy?.fuel.fuel_delta_to_finish, 1, " L")}</strong><span className="subvalue">{strategy?.fuel.confidence || "low"} confidence</span></div>
           <div><span className="label">Traffic risk</span><strong>{text(pit?.traffic_risk_after_stop)}</strong><span className="subvalue">rejoin P{pit?.projected_rejoin_position ?? "--"}</span></div>
         </div>
       </section>
+
+      {selectedPlan && (
+        <section className="card span-12">
+          <SectionTitle title="Live Calculation Breakdown" help="Shows every selected-plan input and penalty used to rank the live pit call." />
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Input</th><th>Value</th><th>Used for</th></tr></thead>
+              <tbody>
+                <tr><td>Weighted pace</td><td>{formatRaceTime(selectedPlan.calculationBreakdown.simulationPaceSeconds)}</td><td>Remaining laps and base driving time</td></tr>
+                <tr><td>Remaining race laps</td><td>{fmt(selectedPlan.raceLaps, 2)}</td><td>Fuel and stint projection</td></tr>
+                <tr><td>Base driving time</td><td>{formatRaceTime(selectedPlan.baseRaceTimeSeconds)}</td><td>Total time baseline</td></tr>
+                <tr><td>Pit/service time</td><td>{fmt(selectedPlan.pitTimeSeconds, 1, " s")}</td><td>Pit lane, tyres, and refuelling</td></tr>
+                <tr><td>Recent pace trend loss</td><td>{fmt(selectedPlan.projectedPaceLossSeconds, 1, " s")}</td><td>Penalty for slowing recent pace</td></tr>
+                <tr><td>Tyre degradation loss</td><td>{fmt(selectedPlan.tyreDegradationLossSeconds, 1, " s")}</td><td>Penalty for extending worn-tyre stints</td></tr>
+                <tr><td>Lift/coast loss</td><td>{fmt(selectedPlan.liftCoastLossSeconds, 1, " s")}</td><td>Fuel-saving pace cost</td></tr>
+                <tr><td>Traffic loss</td><td>{fmt(selectedPlan.trafficLossSeconds, 1, " s")}</td><td>Projected rejoin traffic</td></tr>
+                <tr><td>Fuel model</td><td>{fmt(selectedPlan.calculationBreakdown.fuelUseLitersPerLap, 3, " L/lap")}</td><td>Fuel range and stop fuel</td></tr>
+                <tr><td>Finish fuel</td><td>{fmt(selectedPlan.finishFuelRemainingLiters, 1, " L")}</td><td>Reserve and risk</td></tr>
+                <tr><td>Confidence</td><td>{selectedPlan.confidence}</td><td>Fuel, tyre, pace, and risk quality</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
 
       {plans.length ? plans.map((plan, index) => (
         <LivePlanCard

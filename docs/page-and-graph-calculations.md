@@ -41,6 +41,8 @@ Race model:
 - `raceLaps = race_duration_minutes * 60 / normalLapTime`.
 - `fuelPerLap` comes from live strategy fuel model when positive.
 - Tank capacity priority: live player capacity, strategy capacity, current fuel.
+- Pace priority: backend `strategy.pace.weighted_recent_pace`, then recent 7/10-lap windows, then manual/assumption lap time.
+- Strategy cards show the selected simulator breakdown: base driving time, pit/service time, recent pace trend loss, tyre degradation loss, lift/coast loss, traffic loss, fuel margin, and confidence.
 - `requiredFuel = raceLaps * fuelPerLap + fuel_safety_margin_liters`.
 - Candidate stop counts are simulated from zero stops through the configured maximum.
 - `stintLaps = raceLaps / (stops + 1)`.
@@ -64,6 +66,9 @@ Lift-and-coast:
 ## Pit Window
 
 Source: `strategy.pit_window`.
+
+- Live pit options use the shared strategy simulator with backend pace evidence, current fuel, tank capacity, tyre wear by wheel, wear rate, pit service assumptions, safety-car pit loss, and traffic risk.
+- The page displays the pace model and live calculation breakdown so the optimal call can be audited from the exact inputs and penalties.
 
 - Earliest, latest, optimal, traffic risk, and rejoin position are backend model outputs.
 - Possible pit-lap table shows 8 candidate laps beginning at current stint lap.
