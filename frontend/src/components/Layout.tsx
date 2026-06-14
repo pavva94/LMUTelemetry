@@ -1,6 +1,7 @@
 import {
   Activity,
   BarChart3,
+  ChevronRight,
   CircleDot,
   Flag,
   FileText,
@@ -11,9 +12,9 @@ import {
   LineChart,
   FileSpreadsheet,
   Settings,
+  Signal,
   Timer,
   UserRound,
-  Wrench,
 } from "lucide-react";
 
 const liveItems = [
@@ -96,40 +97,60 @@ export function Layout({
   children: React.ReactNode;
 }) {
   const activeMode = modeForPage(page);
-  const [, modeLabel, , , activeItems] = activeMode;
+  const [, modeLabel, modeDescription, ActiveModeIcon, activeItems] = activeMode;
+  const activePage = items.find(([key]) => key === page);
+  const activePageLabel = activePage?.[1] || "Dashboard";
   const isOfflineMode = activeMode[0] === "csv" || activeMode[0] === "profile" || activeMode[0] === "plan";
+  const statusText = isOfflineMode ? "Offline analysis" : connected ? "Live socket" : "Reconnecting";
+  const statusClass = isOfflineMode ? "blue" : connected ? "green" : "red";
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <h1 className="brand">LMU Race Strategy Assistant</h1>
+        <div className="brand-block">
+          <div className="brand-mark" aria-hidden="true">
+            <Flag size={18} />
+          </div>
+          <div>
+            <h1 className="brand">LMU Race Control</h1>
+            <span className="brand-subtitle">Telemetry command center</span>
+          </div>
+        </div>
         <div className="mode-menu" aria-label="Main modes">
           {modes.map(([key, label, description, Icon]) => (
-            <button key={key} className={activeMode[0] === key ? "active" : ""} onClick={() => setPage(firstPageByMode[key])}>
+            <button key={key} className={activeMode[0] === key ? "active" : ""} onClick={() => setPage(firstPageByMode[key])} aria-current={activeMode[0] === key ? "page" : undefined}>
               <Icon size={18} />
               <span>
                 <strong>{label}</strong>
                 <small>{description}</small>
               </span>
+              <ChevronRight className="mode-chevron" size={15} aria-hidden="true" />
             </button>
           ))}
         </div>
-        <div className="nav-section-title">{modeLabel}</div>
+        <div className="nav-section-title">
+          <span>{modeLabel}</span>
+          <small>{activeItems.length} panels</small>
+        </div>
         <nav className="nav">
           {activeItems.map(([key, label, Icon]) => (
-            <button key={key} className={page === key ? "active" : ""} onClick={() => setPage(key)}>
-              <Icon size={16} style={{ verticalAlign: "text-bottom", marginRight: 8 }} />{label}
+            <button key={key} className={page === key ? "active" : ""} onClick={() => setPage(key)} aria-current={page === key ? "page" : undefined}>
+              <Icon size={16} />
+              <span>{label}</span>
             </button>
           ))}
         </nav>
       </aside>
       <main className="main">
         <header className="topbar">
-          <div>
-            <strong>{items.find(([key]) => key === page)?.[1]}</strong>
-            <span className="topbar-mode">{modeLabel}</span>
+          <div className="topbar-title">
+            <span className="mode-flag"><ActiveModeIcon size={16} /> {modeLabel}</span>
+            <strong>{activePageLabel}</strong>
             <span className="topbar-description">{pageDescriptions[page]}</span>
           </div>
-          <span className={isOfflineMode ? "badge blue" : connected ? "badge green" : "badge red"}>{isOfflineMode ? "Offline analysis" : connected ? "Live socket" : "Reconnecting"}</span>
+          <div className="topbar-status" aria-label={`Current mode: ${modeDescription}`}>
+            <span className={`socket-light ${statusClass}`} aria-hidden="true" />
+            <span className={`badge ${statusClass}`}><Signal size={13} />{statusText}</span>
+          </div>
         </header>
         {children}
       </main>
