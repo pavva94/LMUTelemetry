@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
+import { LoadingOverlay } from "../components/LoadingOverlay";
 import { SectionTitle } from "../components/SectionTitle";
 import { chartLabelFormatter, chartValueFormatter, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceTime } from "../lib/timeFormat";
@@ -120,6 +121,35 @@ function nearestByPosition(points: GpsPoint[], target: GpsPoint) {
   }, points[0]);
 }
 
+function pointDistance(a: GpsPoint, b: GpsPoint) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function shouldCloseLap(points: GpsPoint[]) {
+  if (points.length < 3) return false;
+  const first = points[0];
+  const last = points[points.length - 1];
+  const bounds = points.reduce((acc, point) => ({
+    minX: Math.min(acc.minX, point.x),
+    maxX: Math.max(acc.maxX, point.x),
+    minY: Math.min(acc.minY, point.y),
+    maxY: Math.max(acc.maxY, point.y),
+  }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
+  const diagonal = Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+  return pointDistance(first, last) <= Math.max(24, diagonal * 0.12);
+}
+
+function pathSegments(points: GpsPoint[]) {
+  const segments: Array<{ from: GpsPoint; to: GpsPoint }> = [];
+  for (let index = 0; index < points.length - 1; index += 1) {
+    segments.push({ from: points[index], to: points[index + 1] });
+  }
+  if (shouldCloseLap(points)) {
+    segments.push({ from: points[points.length - 1], to: points[0] });
+  }
+  return segments;
+}
+
 function lapElapsed(point: GpsPoint, lapStart: number | null) {
   return point.time != null && lapStart != null ? point.time - lapStart : null;
 }
@@ -134,13 +164,13 @@ function deltaSegments(primary: GpsPoint[], comparison: GpsPoint[]): TrackSegmen
   const segments: TrackSegment[] = [];
   const primaryStart = primary[0]?.time ?? null;
   const comparisonStart = comparison[0]?.time ?? null;
-  for (let index = 0; index < primary.length - 1; index += 1) {
-    const point = primary[index];
+  for (const segment of pathSegments(primary)) {
+    const point = segment.from;
     const matched = nearestByPosition(comparison, point);
     const primaryElapsed = lapElapsed(point, primaryStart);
     const comparisonElapsed = matched ? lapElapsed(matched, comparisonStart) : null;
     const delta = primaryElapsed != null && comparisonElapsed != null ? primaryElapsed - comparisonElapsed : null;
-    segments.push({ from: point, to: primary[index + 1], color: deltaColor(delta), delta });
+    segments.push({ from: point, to: segment.to, color: deltaColor(delta), delta });
   }
   return segments;
 }
@@ -380,11 +410,18 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
     ? (() => {
       const primaryStart = primaryPoints[0]?.time ?? null;
       const comparisonStart = comparisonPoints[0]?.time ?? null;
-      const selectedElapsed = lapElapsed(selectedPoint, primaryStart);
-      const pairedElapsed = lapElapsed(pairedHover, comparisonStart);
-      return selectedElapsed != null && pairedElapsed != null ? selectedElapsed - pairedElapsed : null;
+      const primaryPoint = selectedPoint.lap === lapA ? selectedPoint : pairedHover;
+      const comparisonPoint = selectedPoint.lap === lapA ? pairedHover : selectedPoint;
+      const primaryElapsed = lapElapsed(primaryPoint, primaryStart);
+      const comparisonElapsed = lapElapsed(comparisonPoint, comparisonStart);
+      return primaryElapsed != null && comparisonElapsed != null ? primaryElapsed - comparisonElapsed : null;
     })()
     : null;
+  const selectMapPoint = (point: GpsPoint) => setSelectedPoint(point);
+  const hitSegments = [
+    ...pathSegments(primaryPoints).map((segment) => ({ ...segment, point: segment.from })),
+    ...pathSegments(comparisonPoints).map((segment) => ({ ...segment, point: segment.from })),
+  ];
 
   if (!lapOptions.length) {
     return <EmptyState detail="No completed laps were found for GPS comparison." />;
@@ -492,6 +529,27 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
               pointerEvents="none"
             />
           ))}
+          {hitSegments.map((segment, index) => (
+            <line
+              key={`delta-hit-${index}`}
+              x1={segment.from.x}
+              y1={segment.from.y}
+              x2={segment.to.x}
+              y2={segment.to.y}
+              stroke="transparent"
+              strokeWidth="22"
+              strokeLinecap="round"
+              pointerEvents="stroke"
+              className="gps-delta-hit"
+              onPointerEnter={() => selectMapPoint(segment.point)}
+              onPointerMove={() => selectMapPoint(segment.point)}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                selectMapPoint(segment.point);
+              }}
+              onClick={() => selectMapPoint(segment.point)}
+            />
+          ))}
           {primaryPoints.map((point, index) => (
             index % selectableStep === 0 || index === primaryPoints.length - 1 ? (
                 <circle
@@ -505,7 +563,13 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
                   opacity="0"
                   pointerEvents="auto"
                   className="gps-selectable-point"
-                  onClick={() => setSelectedPoint(point)}
+                  onPointerEnter={() => selectMapPoint(point)}
+                  onPointerMove={() => selectMapPoint(point)}
+                  onPointerDown={(event) => {
+                    event.stopPropagation();
+                    selectMapPoint(point);
+                  }}
+                  onClick={() => selectMapPoint(point)}
                 />
             ) : null
           ))}
@@ -560,6 +624,7 @@ export function LmuDuckdbReview() {
   const [total, setTotal] = useState<number | null>(null);
   const [status, setStatus] = useState("Paste the LMU telemetry folder and scan");
   const [busy, setBusy] = useState(false);
+  const [reviewLoading, setReviewLoading] = useState(false);
 
   const loadPage = async (offset = 0) => {
     setBusy(true);
@@ -623,8 +688,13 @@ export function LmuDuckdbReview() {
   }, []);
 
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedId) {
+      setReviewLoading(false);
+      return;
+    }
     let mounted = true;
+    setReview(null);
+    setReviewLoading(true);
     setStatus("Loading selected DuckDB session");
     api.reviewCachedLmuDuckdbSession(selectedId, 300)
       .then((data) => {
@@ -634,7 +704,10 @@ export function LmuDuckdbReview() {
         setWarnings((current) => Array.from(new Set([...current, ...extraWarnings])));
         setStatus("DuckDB session loaded");
       })
-      .catch((exc) => mounted && setStatus(exc instanceof Error ? exc.message : String(exc)));
+      .catch((exc) => mounted && setStatus(exc instanceof Error ? exc.message : String(exc)))
+      .finally(() => {
+        if (mounted) setReviewLoading(false);
+      });
     return () => {
       mounted = false;
     };
@@ -715,6 +788,7 @@ export function LmuDuckdbReview() {
 
   return (
     <div className="duckdb-workspace">
+      <LoadingOverlay show={busy || reviewLoading} title={reviewLoading ? "Loading DuckDB session" : "Loading DuckDB sessions"} detail={reviewLoading ? "Opening the selected native telemetry file and preparing review charts." : "Loading cached telemetry sessions from the local index."} />
       <aside className="duckdb-browser">
         <SectionTitle title="Session Review" help="Read-only review of cached Le Mans Ultimate DuckDB sessions. Raw chart samples are loaded from the selected DuckDB file on demand." />
         <div className="duckdb-path-grid">

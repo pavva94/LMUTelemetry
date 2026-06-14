@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
+import { LoadingOverlay } from "../components/LoadingOverlay";
 import { formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSettings } from "../types/lmuDuckdb";
 import type { ProfileLap, ProfileSummary } from "../types/profile";
@@ -32,15 +33,21 @@ export function UserProfile() {
   const [folder, setFolder] = useState(DEFAULT_FOLDER);
   const [settings, setSettings] = useState<LmuDuckdbSettings | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [loadingOverview, setLoadingOverview] = useState(true);
 
-  const loadOverview = () =>
-    api.profileOverview()
-      .then((overview) => {
-        setSummary(overview.summary);
-        setBestLaps(overview.best_laps);
-        setError("");
-      })
-      .catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
+  const loadOverview = async () => {
+    setLoadingOverview(true);
+    try {
+      const overview = await api.profileOverview();
+      setSummary(overview.summary);
+      setBestLaps(overview.best_laps);
+      setError("");
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setLoadingOverview(false);
+    }
+  };
 
   useEffect(() => {
     api.lmuDuckdbSettings()
@@ -80,6 +87,7 @@ export function UserProfile() {
 
   return (
     <div className="page grid">
+      <LoadingOverlay show={syncing || loadingOverview} title={syncing ? "Syncing DuckDB sessions" : "Loading profile"} detail={syncing ? "Scanning the LMU telemetry folder and refreshing the local cache." : "Reading cached DuckDB profile totals and best laps."} />
       {error && <section className="card span-12"><div className="error-box">{error}</div></section>}
       <section className="card span-12">
         <h2>LMU DuckDB Source</h2>

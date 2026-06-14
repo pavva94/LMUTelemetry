@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
+import { LoadingOverlay } from "../components/LoadingOverlay";
 import { SectionTitle } from "../components/SectionTitle";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { buildRacePrepReport, type RacePrepReport as RacePrepReportModel, type Wheel } from "../lib/racePrepReport";
@@ -61,19 +62,24 @@ export function RacePrepReport({ strategy }: Props) {
   const [selected, setSelected] = useState("current");
   const [review, setReview] = useState<SessionReview | null>(null);
   const [status, setStatus] = useState("Loading sessions");
+  const [sessionListLoading, setSessionListLoading] = useState(true);
+  const [reportLoading, setReportLoading] = useState(false);
 
   useEffect(() => {
+    setSessionListLoading(true);
     api.lmuDuckdbSessions(250)
       .then((payload) => {
         setSessions(payload.sessions);
         setStatus(payload.total ? "DuckDB sessions loaded" : "No synced DuckDB sessions");
       })
-      .catch((exc) => setStatus(exc instanceof Error ? exc.message : "Could not load DuckDB sessions"));
+      .catch((exc) => setStatus(exc instanceof Error ? exc.message : "Could not load DuckDB sessions"))
+      .finally(() => setSessionListLoading(false));
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     const load = () => {
+      setReportLoading(true);
       const request = selected === "current" ? api.review() : api.reviewCachedLmuDuckdbSession(selected);
       request
         .then((data) => {
@@ -82,7 +88,10 @@ export function RacePrepReport({ strategy }: Props) {
             setStatus(selected === "current" ? "Current live session report" : "DuckDB session report");
           }
         })
-        .catch((exc) => !cancelled && setStatus(exc instanceof Error ? exc.message : "Could not load report data"));
+        .catch((exc) => !cancelled && setStatus(exc instanceof Error ? exc.message : "Could not load report data"))
+        .finally(() => {
+          if (!cancelled) setReportLoading(false);
+        });
     };
     load();
     if (selected !== "current") {
@@ -106,6 +115,7 @@ export function RacePrepReport({ strategy }: Props) {
 
   return (
     <div className="page grid">
+      <LoadingOverlay show={sessionListLoading || (reportLoading && (selected !== "current" || !review))} title={reportLoading ? "Loading session report" : "Loading session list"} detail={selected === "current" ? "Preparing the current live session report." : "Reading the selected DuckDB session and building the report."} />
       <section className="card span-12">
         <SectionTitle title="Session Report" help="Reviews the current live session or a synced LMU DuckDB session with pace, fuel, tyre, environment, and engineering evidence." />
         <div className="section-toolbar report-toolbar">

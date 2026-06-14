@@ -95,6 +95,38 @@ def _make_channel_duckdb(path):
         conn.close()
 
 
+def _make_outlier_duckdb(path):
+    conn = duckdb.connect(str(path))
+    try:
+        conn.execute(
+            """
+            create table telemetry (
+                "GPS Time" double,
+                "Lap" integer,
+                "Ground Speed" double,
+                "Fuel Level" double
+            )
+            """
+        )
+        rows = [
+            (0.0, 1, 180.0, 80.0),
+            (100.0, 1, 210.0, 78.0),
+            (100.0, 2, 181.0, 78.0),
+            (201.0, 2, 211.0, 76.0),
+            (201.0, 3, 182.0, 76.0),
+            (303.0, 3, 212.0, 74.0),
+            (303.0, 4, 183.0, 74.0),
+            (405.0, 4, 213.0, 72.0),
+            (405.0, 5, 184.0, 72.0),
+            (508.0, 5, 214.0, 70.0),
+            (508.0, 6, 9999.0, 70.0),
+            (513.0, 6, 9999.0, 20.0),
+        ]
+        conn.executemany("insert into telemetry values (?, ?, ?, ?)", rows)
+    finally:
+        conn.close()
+
+
 def test_scan_folder_returns_duckdb_sessions(tmp_path) -> None:
     db_path = tmp_path / "session.duckdb"
     _make_duckdb(db_path)
@@ -123,6 +155,20 @@ def test_review_session_maps_channels_and_laps(tmp_path) -> None:
     assert review["laps"][0]["fuel_used"] == 1.5
     assert review["laps"][0]["tyre_wear_end_fl"] == 98.0
     assert review["telemetry_samples"][0]["speed_kph"] == 100.0
+
+
+def test_review_summary_filters_lap_and_speed_outliers(tmp_path) -> None:
+    db_path = tmp_path / "outliers.duckdb"
+    _make_outlier_duckdb(db_path)
+    session_id = lmu_duckdb_repository.scan_folder(str(tmp_path))["sessions"][0]["id"]
+
+    review = lmu_duckdb_repository.review_session(str(tmp_path), session_id, sample_limit=20)
+
+    assert review["summary"]["best_lap"] == pytest.approx(100.0)
+    assert review["summary"]["average_lap"] == pytest.approx(101.6)
+    assert review["summary"]["top_speed"] == pytest.approx(214.0)
+    assert review["summary"]["average_fuel_per_lap"] == pytest.approx(2.0)
+    assert review["summary"]["total_fuel_used"] == pytest.approx(10.0)
 
 
 def test_review_session_reads_lmu_table_per_channel_schema(tmp_path) -> None:

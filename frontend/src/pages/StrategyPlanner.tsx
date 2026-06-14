@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
+import { LoadingOverlay } from "../components/LoadingOverlay";
 import { SectionTitle } from "../components/SectionTitle";
 import { average, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
 import { simulateStrategies, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
@@ -352,14 +353,18 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const [dirtyFields, setDirtyFields] = useState<Set<keyof FormState>>(() => new Set());
   const [sourceStatus, setSourceStatus] = useState("Live data");
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
+  const [sessionListLoading, setSessionListLoading] = useState(true);
+  const [sessionLoading, setSessionLoading] = useState(false);
 
   useEffect(() => {
+    setSessionListLoading(true);
     api.lmuDuckdbSessions(250)
       .then((payload) => {
         setSessions(payload.sessions);
         setSourceStatus(payload.total ? "DuckDB sessions loaded" : "No synced DuckDB sessions");
       })
-      .catch(() => setSourceStatus("DuckDB sessions unavailable; sync the folder in User Profile"));
+      .catch(() => setSourceStatus("DuckDB sessions unavailable; sync the folder in User Profile"))
+      .finally(() => setSessionListLoading(false));
   }, []);
 
   useEffect(() => {
@@ -378,12 +383,14 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
       setSessionReview(null);
       setModelSource("live");
       appliedSessionModel.current = null;
+      setSessionLoading(false);
       return;
     }
     let cancelled = false;
     setSessionReview(null);
     appliedSessionModel.current = null;
     setModelSource("session");
+    setSessionLoading(true);
     setSourceStatus("Loading DuckDB session");
     api.reviewCachedLmuDuckdbSession(selectedSessionId)
       .then((review) => {
@@ -392,7 +399,10 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           setSourceStatus("DuckDB session loaded");
         }
       })
-      .catch((exc) => !cancelled && setSourceStatus(exc instanceof Error ? exc.message : "Could not load DuckDB session"));
+      .catch((exc) => !cancelled && setSourceStatus(exc instanceof Error ? exc.message : "Could not load DuckDB session"))
+      .finally(() => {
+        if (!cancelled) setSessionLoading(false);
+      });
     return () => {
       cancelled = true;
     };
@@ -517,6 +527,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
 
   return (
     <div className="page grid">
+      <LoadingOverlay show={sessionListLoading || sessionLoading} title={sessionLoading ? "Loading DuckDB session" : "Loading session list"} detail={sessionLoading ? "Reading the selected session and calculating strategy inputs." : "Loading cached DuckDB sessions for the planner."} />
       <section className="card span-12">
         <SectionTitle title="Race Assumptions" help="Editable practice-to-race model. Pit lane driving loss excludes tyre and fuel service; tyre and refuel times are added separately." />
         <div className="input-grid strategy-input-grid">

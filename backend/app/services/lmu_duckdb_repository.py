@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import gc
 import json
 import math
 from dataclasses import dataclass
@@ -271,6 +272,35 @@ def _without_outliers(values: list[float | None]) -> list[float]:
     return filtered or clean
 
 
+def _without_outlier_items(items: list[dict], field: str, minimum: float | None = None, maximum: float | None = None) -> list[dict]:
+    values = []
+    keyed: list[tuple[dict, float]] = []
+    for item in items:
+        value = _num(item.get(field))
+        if value is None:
+            continue
+        if minimum is not None and value < minimum:
+            continue
+        if maximum is not None and value > maximum:
+            continue
+        values.append(value)
+        keyed.append((item, value))
+    clean_values = _without_outliers(values)
+    if not clean_values:
+        return []
+    remaining: dict[float, int] = {}
+    for value in clean_values:
+        remaining[value] = remaining.get(value, 0) + 1
+    filtered = []
+    for item, value in keyed:
+        count = remaining.get(value, 0)
+        if count <= 0:
+            continue
+        filtered.append(item)
+        remaining[value] = count - 1
+    return filtered
+
+
 def _tyre_wear_used(value: float | None) -> float | None:
     if value is None or not math.isfinite(value):
         return None
@@ -345,6 +375,11 @@ def _file_session(path: Path, info: TableInfo | ChannelLayout | None, warnings: 
 def _open(path: Path):
     _require_duckdb()
     return duckdb.connect(str(path), read_only=True)
+
+
+def _close(conn) -> None:
+    conn.close()
+    gc.collect()
 
 
 def _tables(conn) -> list[tuple[str, str]]:
@@ -639,13 +674,16 @@ def _select_channel_rows(conn, layout: ChannelLayout, row_limit: int = MAX_REVIE
         if not targets:
             return
         selected = ", ".join(_quote_ident(column) for _field, column in fields)
-        query = (
-            f"select rowid + 1 as rn, {selected} "
-            f"from {_quote_table(layout.schema, table)} "
-            f"where rowid + 1 between ? and ?"
-        )
-        target_set = set(targets)
-        fetched = {int(row[0]): row[1:] for row in conn.execute(query, [targets[0], targets[-1]]).fetchall() if int(row[0]) in target_set}
+        fetched: dict[int, tuple[Any, ...]] = {}
+        for index in range(0, len(targets), 900):
+            chunk = targets[index:index + 900]
+            placeholders = ", ".join(str(target) for target in chunk)
+            query = (
+                f"select rowid + 1 as rn, {selected} "
+                f"from {_quote_table(layout.schema, table)} "
+                f"where rowid + 1 in ({placeholders})"
+            )
+            fetched.update({int(row[0]): row[1:] for row in conn.execute(query).fetchall()})
         for row in rows:
             target_rn = max(1, int(math.floor((row["game_time"] - start_time) * float(freq)) + 1))
             values = fetched.get(target_rn)
@@ -882,8 +920,9 @@ def _summary(rows: list[dict], laps: list[dict], info: TableInfo) -> dict:
         lap for lap in laps
         if not lap.get("in_pit") and (_num(lap.get("lap_time")) or 0) > 0
     ]
-    lap_times = [_num(lap.get("lap_time")) for lap in completed_laps]
-    fuel_used = [_num(lap.get("fuel_used")) for lap in completed_laps]
+    clean_completed_laps = _without_outlier_items(completed_laps, "lap_time", minimum=40.0, maximum=900.0)
+    lap_times = [_num(lap.get("lap_time")) for lap in clean_completed_laps]
+    fuel_used = [_num(lap.get("fuel_used")) for lap in clean_completed_laps]
     fuel_used_positive = [value for value in fuel_used if value is not None and value > 0]
     fuel_used_for_average = _without_outliers(fuel_used_positive)
     five_lap_paces = [
@@ -897,6 +936,7 @@ def _summary(rows: list[dict], laps: list[dict], info: TableInfo) -> dict:
         duration = end - start if start is not None and end is not None and end >= start else None
     tyre_remaining_values = [_num(row.get(f"tyre_wear_{wheel}")) for row in rows for wheel in WHEELS]
     tyre_wear_used_values = [_tyre_wear_used(value) for value in tyre_remaining_values]
+    speed_values = _without_outliers([_num(row.get("speed_kph")) for row in rows])
     return {
         "session_id": "external",
         "completed_at": None,
@@ -908,12 +948,12 @@ def _summary(rows: list[dict], laps: list[dict], info: TableInfo) -> dict:
         "average_fuel_per_lap": _avg(fuel_used_for_average),
         "average_five_lap_pace": _avg([value for value in five_lap_paces if value is not None]),
         "total_fuel_used": sum(fuel_used_positive) or None,
-        "average_tyre_wear": _avg(tyre_wear_used_values),
-        "average_tyre_life_remaining": _avg(tyre_remaining_values),
-        "average_tyre_temp": _avg([_num(row.get(f"tyre_temp_{wheel}")) for row in rows for wheel in WHEELS]),
-        "average_tyre_pressure": _avg([_num(row.get(f"tyre_pressure_{wheel}")) for row in rows for wheel in WHEELS]),
-        "average_brake_temp": _avg([_num(row.get(f"brake_temp_{wheel}")) for row in rows for wheel in WHEELS]),
-        "top_speed": _max([_num(row.get("speed_kph")) for row in rows]),
+        "average_tyre_wear": _avg(_without_outliers(tyre_wear_used_values)),
+        "average_tyre_life_remaining": _avg(_without_outliers(tyre_remaining_values)),
+        "average_tyre_temp": _avg(_without_outliers([_num(row.get(f"tyre_temp_{wheel}")) for row in rows for wheel in WHEELS])),
+        "average_tyre_pressure": _avg(_without_outliers([_num(row.get(f"tyre_pressure_{wheel}")) for row in rows for wheel in WHEELS])),
+        "average_brake_temp": _avg(_without_outliers([_num(row.get(f"brake_temp_{wheel}")) for row in rows for wheel in WHEELS])),
+        "top_speed": _max(speed_values),
         "latest_lap_number": max((int(lap["lap_number"]) for lap in laps), default=None),
         "sample_count": info.count,
     }
@@ -1263,22 +1303,10 @@ def scan_folder(path: str, limit: int = DEFAULT_SCAN_LIMIT, offset: int = 0) -> 
     offset = max(0, offset)
     candidates = _scan_candidates(folder)
     page = candidates[offset:offset + limit]
-    sessions = []
-    warnings = []
-    for file_path in page:
-        metadata: dict[str, str] = {}
-        try:
-            conn = _open(file_path)
-            try:
-                metadata = _metadata(conn)
-            finally:
-                conn.close()
-        except Exception as exc:
-            warnings.append(f"{file_path.name}: metadata unavailable ({exc})")
-        sessions.append(_file_session(file_path, None, [], metadata))
+    sessions = [_file_session(file_path, None, [], {}) for file_path in page]
     return {
         "sessions": sessions,
-        "warnings": warnings,
+        "warnings": [],
         "total": len(candidates),
         "offset": offset,
         "limit": limit,
@@ -1415,7 +1443,7 @@ def _review_file(file_path: Path, sample_limit: int = 5000) -> dict:
             rows = _review_rows(raw_rows, table_info)
         channel_manifest = _channel_manifest(conn, channel_info if channel_info is not None else None)
     finally:
-        conn.close()
+        _close(conn)
     laps = _build_laps(rows)
     session = _file_session(file_path, info, warnings, metadata)
     session["latest_lap_number"] = max((int(lap["lap_number"]) for lap in laps), default=None)
@@ -1463,7 +1491,7 @@ def trajectory_session(session_id: str, lap_a: str | None = None, lap_b: str | N
         else:
             points, warnings = _trajectory_rows(conn, layout, lap_numbers, max(200, min(5000, max_points)))
     finally:
-        conn.close()
+        _close(conn)
     return {
         "session_id": session_id,
         "laps": lap_numbers,
