@@ -7,6 +7,8 @@ pytest==8.3.4
 httpx==0.28.1
 duckdb==1.1.3
 eval_type_backport==0.2.2
+pywebview==5.4
+pyinstaller==6.11.1
 # pyLMUSharedMemory is not currently pip-installable from its repo root.
 # For live LMU mode, clone https://github.com/TinyPedal/pyLMUSharedMemory
 # and add that clone to PYTHONPATH before starting the backend.

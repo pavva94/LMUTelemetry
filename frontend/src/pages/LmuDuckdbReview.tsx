@@ -31,6 +31,7 @@ const SCAN_LIMIT = 250;
 const fmt = (value?: number | null, digits = 1, suffix = "") =>
   value == null || Number.isNaN(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
+const MAX_METADATA_VALUE_LENGTH = 140;
 const dateText = (value?: string | null) => value ? new Date(value).toLocaleString() : "--";
 const carName = (session?: LmuDuckdbSession | null) => duckdbSessionParts(session).car;
 const fileSize = (bytes?: number | null) => {
@@ -52,6 +53,36 @@ const percentDelta = (a?: number | null, b?: number | null) => {
 const pointNumber = (row: Row, key: string) => {
   const value = Number(row[key]);
   return Number.isFinite(value) ? value : null;
+};
+const parseObjectMetadata = (value: string) => {
+  const trimmed = value.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+const metadataValueText = (key: string, value: string) => {
+  const parsed = parseObjectMetadata(value);
+  if (parsed && !Array.isArray(parsed)) {
+    const entries = Object.entries(parsed);
+    const setupEntries = entries.filter(([entryKey]) => entryKey.startsWith("VM_") || entryKey.startsWith("WM_"));
+    if (key.toLowerCase().includes("setup") || setupEntries.length) {
+      const unavailable = setupEntries.filter(([, entryValue]) => (
+        entryValue &&
+        typeof entryValue === "object" &&
+        "available" in entryValue &&
+        (entryValue as { available?: unknown }).available === false
+      )).length;
+      const suffix = unavailable ? `, ${unavailable} unavailable` : "";
+      return `Car setup snapshot (${setupEntries.length || entries.length} entries${suffix})`;
+    }
+    return `Object metadata (${entries.length} fields)`;
+  }
+  if (Array.isArray(parsed)) return `List metadata (${parsed.length} items)`;
+  return value.length > MAX_METADATA_VALUE_LENGTH ? `${value.slice(0, MAX_METADATA_VALUE_LENGTH - 1)}...` : value;
 };
 
 function EmptyState({ detail }: { detail: string }) {
@@ -852,7 +883,7 @@ export function LmuDuckdbReview() {
         <section className="card span-12">
           <SectionTitle title="Database Metadata" help="Values read from the native DuckDB metadata table for the selected session." />
           <div className="motec-value-grid">
-            {metadataRows.map(([key, value]) => <div key={key}><span className="label">{key}</span><strong>{value}</strong></div>)}
+            {metadataRows.map(([key, value]) => <div key={key}><span className="label">{key}</span><strong title={value}>{metadataValueText(key, value)}</strong></div>)}
           </div>
         </section>
       )}

@@ -2,9 +2,14 @@
 __pycache__/
 *.pyc
 .pytest_cache/
+.tmp/
 .venv/
 node_modules/
+build/
 dist/
+release/
+backend/pytest-basetemp/
 data/sessions/*.sqlite3
 data/sessions/*.sqlite3-*
 .env
+*.log

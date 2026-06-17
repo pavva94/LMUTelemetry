@@ -9,10 +9,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
 
-from app.core.config import ROOT_DIR
+from app.core.paths import app_data_dir
 
 
-DB_PATH = ROOT_DIR / "data" / "motec" / "motec.sqlite3"
+DB_PATH = app_data_dir() / "motec" / "motec.sqlite3"
 
 
 CATEGORY_MAP: list[tuple[str, set[str]]] = [

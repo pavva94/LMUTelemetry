@@ -77,6 +77,21 @@ describe("strategy simulation", () => {
     expect(plans).toHaveLength(0);
   });
 
+  it("searches beyond six stops for endurance races", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 420,
+      normalLapTime: 120,
+      fuelPerLap: 3,
+      raceStartFuelLiters: 60,
+      tankCapacityLiters: 60,
+      maxStops: undefined,
+    });
+
+    expect(plans.length).toBeGreaterThan(0);
+    expect(plans[0]?.stops).toBeGreaterThan(6);
+  });
+
   it("uses fuel saving when tank space, not total capacity, limits the stop count", () => {
     const plans = simulateStrategies({
       ...baseInput,
@@ -122,13 +137,43 @@ describe("strategy simulation", () => {
       currentTyreWear: 0.35,
       currentTyreWearByWheel: { fl: 0.2, fr: 0.36, rl: 0.3, rr: 0.5 },
       tyreWearRatePerLap: 0.018,
-      maxTyreWear: 0.75,
+      maxTyreWear: 0.85,
       maxStops: 1,
     });
 
     const planWithTyres = plans.find((plan) => plan.stops === 1 && plan.stopsDetail[0]?.tyresToChange.length);
     expect(planWithTyres?.stopsDetail[0].tyresToChange).toContain("rr");
-    expect(planWithTyres?.stopsDetail[0].nextStintProjectedWear?.rr).toBeLessThan(0.75);
+    expect(planWithTyres?.stopsDetail[0].nextStintProjectedWear?.rr).toBeLessThan(0.85);
+  });
+
+  it("treats max tyre wear as a strict planning threshold", () => {
+    const lowWearLimitPlans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 60,
+      fuelPerLap: 1,
+      raceStartFuelLiters: 100,
+      tankCapacityLiters: 100,
+      currentTyreWear: 0,
+      currentTyreWearByWheel: { fl: 0, fr: 0, rl: 0, rr: 0 },
+      tyreWearRatePerLap: 0.01,
+      maxTyreWear: 0.25,
+      maxStops: 1,
+    });
+    const highWearLimitPlans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 60,
+      fuelPerLap: 1,
+      raceStartFuelLiters: 100,
+      tankCapacityLiters: 100,
+      currentTyreWear: 0,
+      currentTyreWearByWheel: { fl: 0, fr: 0, rl: 0, rr: 0 },
+      tyreWearRatePerLap: 0.01,
+      maxTyreWear: 0.75,
+      maxStops: 1,
+    });
+
+    expect(lowWearLimitPlans.every((plan) => plan.stops > 0 && plan.tyresChangedPerStop > 0)).toBe(true);
+    expect(highWearLimitPlans.some((plan) => plan.stops === 0)).toBe(true);
   });
 
   it("keeps stint wear projections after applying tyre changes", () => {
@@ -138,7 +183,7 @@ describe("strategy simulation", () => {
       currentTyreWear: 0.35,
       currentTyreWearByWheel: { fl: 0.2, fr: 0.36, rl: 0.3, rr: 0.5 },
       tyreWearRatePerLap: 0.018,
-      maxTyreWear: 0.75,
+      maxTyreWear: 0.85,
       maxStops: 1,
     });
     const plan = plans.find((candidate) => candidate.stops === 1 && candidate.stopsDetail[0]?.tyresToChange.includes("rr"));

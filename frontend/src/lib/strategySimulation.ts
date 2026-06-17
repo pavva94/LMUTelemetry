@@ -118,6 +118,9 @@ export type StrategyCandidate = {
 const round = (value: number, digits = 3) => Number(value.toFixed(digits));
 const wheels: Wheel[] = ["fl", "fr", "rl", "rr"];
 const wheelLabels: Record<Wheel, string> = { fl: "FL", fr: "FR", rl: "RL", rr: "RR" };
+const MAX_SEARCHED_STOPS = 40;
+const TARGET_STINT_LAPS = 12;
+const TYRE_WEAR_LIMIT_TOLERANCE = 0.02;
 
 export function stopServiceTime(input: {
   pitLaneLossSeconds: number;
@@ -372,7 +375,13 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
   const raceLaps = input.raceDurationMinutes * 60 / paceSeconds;
   const baseFuelNeed = raceLaps * input.fuelPerLap + input.fuelSafetyMarginLiters;
   const raceStartFuelLiters = input.raceStartFuelLiters;
-  const maxStops = input.maxStops ?? Math.min(6, Math.max(2, Math.ceil(raceLaps / 12)));
+  const fuelLimitedMinimumStops = input.tankCapacityLiters > 0
+    ? Math.max(0, Math.ceil(Math.max(0, baseFuelNeed - raceStartFuelLiters) / input.tankCapacityLiters))
+    : 0;
+  const maxStops = input.maxStops ?? Math.min(
+    MAX_SEARCHED_STOPS,
+    Math.max(2, Math.ceil(raceLaps / TARGET_STINT_LAPS), fuelLimitedMinimumStops),
+  );
   const candidates: StrategyCandidate[] = [];
 
   for (let stops = 0; stops <= maxStops; stops += 1) {
@@ -392,7 +401,7 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
       const tyrePlan = tyreProjection(input, stops, stintLaps, maxTyres);
       const tyreWear = tyrePlan?.projectedTyreWear ?? null;
       const tyreOverLimit = tyreWear != null && tyreWear > input.maxTyreWear;
-      if (tyreOverLimit && tyreWear > input.maxTyreWear + 0.12) continue;
+      if (tyreOverLimit && tyreWear > input.maxTyreWear + TYRE_WEAR_LIMIT_TOLERANCE) continue;
 
       const stopsDetail = fuelPlan.stopsDetail.map((fuelStop, index) => {
         const tyresToChange = tyrePlan?.stopTyres[index] ?? [];

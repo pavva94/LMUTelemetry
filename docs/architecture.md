@@ -25,6 +25,14 @@ The current runtime is a separate backend and Vite frontend for development. Tel
 - Vite proxies `/api` and `/ws` to the backend.
 - Mock telemetry is allowed by default so the app can run without LMU.
 
+### Packaged Windows App
+
+- `backend/desktop_launcher.py` starts FastAPI on `127.0.0.1` using an available local port.
+- FastAPI serves the compiled React app from `frontend/dist`, so `/api`, `/ws`, and the UI share one origin.
+- The launcher opens the local app in a native WebView window and stops the backend when the window closes.
+- Packaged app data is stored under `%LOCALAPPDATA%\LMUTelemetry`; the install directory is treated as read-only.
+- PyInstaller bundles the launcher, backend, built frontend, config, and `pyLMUSharedMemory`; Inno Setup wraps the bundle as a normal installer.
+
 ## Main Data Flow
 
 1. Backend startup initializes the live database.

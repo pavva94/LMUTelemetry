@@ -394,6 +394,7 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .motec-warning { background: rgba(243, 182, 66, .14); border: 1px solid rgba(243, 182, 66, .34); color: var(--amber-2); border-radius: 6px; padding: 8px 10px; margin: 8px 0; }
 .motec-value-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .motec-value-grid > div { display: grid; gap: 3px; background: #0b1117; border: 1px solid var(--border); border-radius: 6px; padding: 10px; min-width: 0; }
+.motec-value-grid strong { overflow-wrap: anywhere; }
 .motec-map { width: 100%; min-height: 420px; display: block; background: #090f14; border-radius: var(--radius); }
 .channel-chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 

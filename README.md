@@ -22,6 +22,14 @@ Development runtime:
 
 The frontend does not need to be open for live logging. Logging happens in the backend telemetry loop.
 
+Packaged Windows runtime:
+
+- Installed app: `LMU Telemetry` from the Start Menu
+- Local backend/UI origin: dynamic `http://127.0.0.1:<port>`
+- App-owned data: `%LOCALAPPDATA%\LMUTelemetry`
+- Logs: `%LOCALAPPDATA%\LMUTelemetry\logs`
+- Real LMU shared-memory mode is the packaged default. Mock telemetry is available only when the launcher is started with `--mock`.
+
 ## Requirements For Development
 
 - Python 3.11+
@@ -169,6 +177,42 @@ Frontend tests:
 ```cmd
 cd frontend
 npm run test:run
+```
+
+## Windows Installer Build
+
+The non-coder Windows release is built with PyInstaller and Inno Setup. It bundles the Python backend, `pyLMUSharedMemory`, the compiled React frontend, and the default config.
+
+Prerequisites on the build machine:
+
+- Python 3.11+
+- Node.js 18+
+- Inno Setup 6
+
+From the project root:
+
+```powershell
+.\packaging\build_windows_installer.ps1
+```
+
+Outputs:
+
+```text
+dist\LMUTelemetry\LMUTelemetry.exe
+release\LMUTelemetry-Setup-0.1.0.exe
+```
+
+For a quick PyInstaller-only build without the installer:
+
+```powershell
+.\packaging\build_windows_installer.ps1 -SkipInstaller
+```
+
+The installed app writes user data under `%LOCALAPPDATA%\LMUTelemetry`, not the install folder. Override this for diagnostics with:
+
+```text
+LMU_TELEMETRY_DATA_DIR=C:\path\to\data
+LMU_TELEMETRY_LOG_DIR=C:\path\to\logs
 ```
 
 ## Troubleshooting
