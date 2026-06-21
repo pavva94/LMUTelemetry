@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { SectionTitle } from "../components/SectionTitle";
 import { StatusBadge } from "../components/StatusBadge";
 import { simulateStrategies, type PaceEvidence, type StrategyCandidate, type StrategyRisk, type Wheel } from "../lib/strategySimulation";
-import { formatRaceTime } from "../lib/timeFormat";
+import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import type { StrategyState } from "../types/strategy";
 import type { TelemetrySnapshot } from "../types/telemetry";
 
@@ -105,11 +105,11 @@ function LivePlanCard({
       </div>
       <h2>{firstStop ? `Pit lap ${absoluteStopLap(currentLap, firstStop.lap)}` : "Run to finish"}</h2>
       <div className="strategy-card-main">
-        <strong>{formatRaceTime(plan.totalTimeSeconds)}</strong>
+        <strong>{formatDuration(plan.totalTimeSeconds)}</strong>
         <span>{plan.stops} stop{plan.stops === 1 ? "" : "s"} from now - up to {plan.maxTyresChangedPerStop} tyre{plan.maxTyresChangedPerStop === 1 ? "" : "s"} when needed</span>
       </div>
       <div className="header-grid two">
-        <div><span className="label">Driving time</span><strong>{formatRaceTime(plan.baseRaceTimeSeconds)}</strong><span className="subvalue">{fmt(plan.calculationBreakdown.simulationPaceSeconds, 3, " s/lap")}</span></div>
+        <div><span className="label">Driving time</span><strong>{formatDuration(plan.baseRaceTimeSeconds)}</strong><span className="subvalue">{fmt(plan.calculationBreakdown.simulationPaceSeconds, 3, " s/lap")}</span></div>
         <div><span className="label">Next stop</span><strong>{firstStop ? `Lap ${absoluteStopLap(currentLap, firstStop.lap)}` : "None"}</strong><span className="subvalue">{firstStop ? `in ${firstStop.lap} lap${firstStop.lap === 1 ? "" : "s"}` : "fuel and tyres can finish"}</span></div>
         <div><span className="label">Pit time</span><strong>{fmt(plan.pitTimeSeconds, 1, " s")}</strong></div>
         <div><span className="label">Pace loss</span><strong>{fmt(plan.projectedPaceLossSeconds + plan.tyreDegradationLossSeconds, 1, " s")}</strong><span className="subvalue">trend {fmt(plan.projectedPaceLossSeconds, 1, " s")} / tyres {fmt(plan.tyreDegradationLossSeconds, 1, " s")}</span></div>
@@ -224,7 +224,9 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
     tyrePaceDegradationPerLap: Number(strategy?.tyres.pace_degradation_per_lap) || paceEvidence.paceDegradationPerLap,
     tyreConfidence: strategy?.tyres.confidence,
     maxTyreWear: Number(assumptions.max_tyre_wear ?? 0.75),
-    trafficPenaltySeconds: pit?.traffic_risk_after_stop === "high" ? 8 : pit?.traffic_risk_after_stop === "medium" ? 4 : 0,
+    // Traffic risk is shown categorically; no uncalibrated seconds penalty is
+    // injected into strategy ranking.
+    trafficPenaltySeconds: 0,
     safetyCarActive: Boolean(pit?.safety_car_pit_recommendation),
     safetyCarPitLossSeconds: Number(assumptions.safety_car_pit_loss_seconds ?? 16),
   }), [
@@ -284,7 +286,7 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
           <div><span className="label">Fuel at stop</span><strong>{firstStop ? fmt(firstStop.fuelRemainingLiters, 1, " L") : fmt(currentFuel, 1, " L")}</strong><span className="subvalue">{firstStop ? `add ${fmt(firstStop.fuelAddedLiters, 1, " L")}` : `finish ${fmt(selectedPlan?.finishFuelRemainingLiters, 1, " L")}`}</span></div>
           <div><span className="label">Tyres to change</span><strong>{firstStop ? tyreChangeWearText(firstStop) : "None"}</strong></div>
           <div><span className="label">Stop time</span><strong>{firstStop ? fmt(firstStop.stopTimeSeconds, 1, " s") : "0 s"}</strong></div>
-          <div><span className="label">Remaining</span><strong>{formatRaceTime(remaining.value)}</strong><span className="subvalue">{remaining.source}</span></div>
+          <div><span className="label">Remaining</span><strong>{formatDuration(remaining.value)}</strong><span className="subvalue">{remaining.source}</span></div>
           <div><span className="label">Pace model</span><strong>{formatRaceTime(paceEvidence.weightedRecentPace)}</strong><span className="subvalue">{paceEvidence.source}</span></div>
         </div>
       </section>
@@ -325,12 +327,12 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
               <tbody>
                 <tr><td>Weighted pace</td><td>{formatRaceTime(selectedPlan.calculationBreakdown.simulationPaceSeconds)}</td><td>Remaining laps and base driving time</td></tr>
                 <tr><td>Remaining race laps</td><td>{fmt(selectedPlan.raceLaps, 2)}</td><td>Fuel and stint projection</td></tr>
-                <tr><td>Base driving time</td><td>{formatRaceTime(selectedPlan.baseRaceTimeSeconds)}</td><td>Total time baseline</td></tr>
+                <tr><td>Base driving time</td><td>{formatDuration(selectedPlan.baseRaceTimeSeconds)}</td><td>Total time baseline</td></tr>
                 <tr><td>Pit/service time</td><td>{fmt(selectedPlan.pitTimeSeconds, 1, " s")}</td><td>Pit lane, tyres, and refuelling</td></tr>
-                <tr><td>Recent pace trend loss</td><td>{fmt(selectedPlan.projectedPaceLossSeconds, 1, " s")}</td><td>Penalty for slowing recent pace</td></tr>
-                <tr><td>Tyre degradation loss</td><td>{fmt(selectedPlan.tyreDegradationLossSeconds, 1, " s")}</td><td>Penalty for extending worn-tyre stints</td></tr>
-                <tr><td>Lift/coast loss</td><td>{fmt(selectedPlan.liftCoastLossSeconds, 1, " s")}</td><td>Fuel-saving pace cost</td></tr>
-                <tr><td>Traffic loss</td><td>{fmt(selectedPlan.trafficLossSeconds, 1, " s")}</td><td>Projected rejoin traffic</td></tr>
+                <tr><td>Recent pace trend loss</td><td>{fmt(selectedPlan.projectedPaceLossSeconds, 1, " s")}</td><td>Linear projection of the recent 10-lap regression slope</td></tr>
+                <tr><td>Tyre degradation loss</td><td>{fmt(selectedPlan.tyreDegradationLossSeconds, 1, " s")}</td><td>Applied only when a measured tyre/pace slope is supplied</td></tr>
+                <tr><td>Lift/coast loss</td><td>{fmt(selectedPlan.liftCoastLossSeconds, 1, " s")}</td><td>Not monetized without a calibrated pace-cost assumption</td></tr>
+                <tr><td>Traffic loss</td><td>{fmt(selectedPlan.trafficLossSeconds, 1, " s")}</td><td>Risk shown separately; no fixed seconds invented</td></tr>
                 <tr><td>Fuel model</td><td>{fmt(selectedPlan.calculationBreakdown.fuelUseLitersPerLap, 3, " L/lap")}</td><td>Fuel range and stop fuel</td></tr>
                 <tr><td>Finish fuel</td><td>{fmt(selectedPlan.finishFuelRemainingLiters, 1, " L")}</td><td>Reserve and risk</td></tr>
                 <tr><td>Confidence</td><td>{selectedPlan.confidence}</td><td>Fuel, tyre, pace, and risk quality</td></tr>

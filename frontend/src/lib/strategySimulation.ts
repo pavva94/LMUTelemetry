@@ -173,11 +173,11 @@ function simulationPace(input: StrategySimulationInput) {
 function projectedPaceLoss(input: StrategySimulationInput, raceLaps: number) {
   const trend = input.paceEvidence?.paceTrendSecondsPerLap ?? 0;
   if (!Number.isFinite(trend) || trend <= 0) return 0;
-  return trend * raceLaps * 0.5;
+  return trend * raceLaps * Math.max(0, raceLaps - 1) / 2;
 }
 
 function tyreDegradationLoss(input: StrategySimulationInput, tyrePlan: ReturnType<typeof tyreProjection>, stops: number, stintLaps: number) {
-  const paceDegradation = input.tyrePaceDegradationPerLap ?? input.paceEvidence?.paceDegradationPerLap ?? 0;
+  const paceDegradation = input.tyrePaceDegradationPerLap ?? 0;
   if (!Number.isFinite(paceDegradation) || paceDegradation <= 0) return 0;
   const stints = tyrePlan?.stintWear.length ? tyrePlan.stintWear : Array.from({ length: stops + 1 }, (_, index) => ({
     stint: index + 1,
@@ -190,9 +190,7 @@ function tyreDegradationLoss(input: StrategySimulationInput, tyrePlan: ReturnTyp
   return stints.reduce((sum, stint) => {
     const laps = Math.max(0, stint.endLap - stint.startLap + 1);
     const triangularLoss = paceDegradation * laps * Math.max(0, laps - 1) / 2;
-    const maxWear = Math.max(...wheels.map((wheel) => stint.endWear[wheel] ?? 0));
-    const wearStress = maxWear > input.maxTyreWear - 0.1 ? (maxWear - (input.maxTyreWear - 0.1)) * laps * 25 : 0;
-    return sum + triangularLoss + Math.max(0, wearStress);
+    return sum + triangularLoss;
   }, 0);
 }
 
@@ -425,7 +423,9 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
         };
       });
       const pitTimeSeconds = stopsDetail.reduce((sum, stop) => sum + stop.stopTimeSeconds, 0);
-      const liftTimeLoss = liftSavePercent > 0 ? (liftSavePercent / 100) * input.normalLapTime * 0.2 * raceLaps : 0;
+      // Fuel saving remains a feasibility result until a calibrated, explicit
+      // seconds-per-percent assumption is available; do not invent pace cost.
+      const liftTimeLoss = 0;
       const baseRaceTimeSeconds = raceLaps * paceSeconds;
       const paceLoss = projectedPaceLoss(input, raceLaps);
       const tyreLoss = tyreDegradationLoss(input, tyrePlan, stops, stintLaps);

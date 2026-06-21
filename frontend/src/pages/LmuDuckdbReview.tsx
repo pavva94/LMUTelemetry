@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { SectionTitle } from "../components/SectionTitle";
 import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
+import { toFiniteNumber } from "../lib/sessionAnalysis";
 import { chartLabelFormatter, chartValueFormatter, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSession } from "../types/lmuDuckdb";
@@ -94,26 +95,23 @@ function Metric({ label, value, sub }: { label: string; value: string | number; 
 }
 
 function avg(rows: Row[], key: string) {
-  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  const values = rows.map((row) => toFiniteNumber(row[key])).filter((value): value is number => value != null);
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 }
 
 function max(rows: Row[], key: string) {
-  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  const values = rows.map((row) => toFiniteNumber(row[key])).filter((value): value is number => value != null);
   return values.length ? Math.max(...values) : null;
 }
 
 function averageFiveLapPace(laps: Row[]) {
   const lapTimes = laps
-    .filter((lap) => !lap.in_pit)
+    .filter((lap) => lap.valid_lap === true && !lap.in_pit)
     .map((lap) => Number(lap.lap_time))
     .filter((value) => Number.isFinite(value) && value > 0);
   if (lapTimes.length < 5) return null;
-  const windowAverages = lapTimes.slice(0, -4).map((_, index) => {
-    const window = lapTimes.slice(index, index + 5);
-    return window.reduce((sum, value) => sum + value, 0) / window.length;
-  });
-  return windowAverages.reduce((sum, value) => sum + value, 0) / windowAverages.length;
+  const window = lapTimes.slice(-5);
+  return window.reduce((sum, value) => sum + value, 0) / window.length;
 }
 
 function quantile(values: number[], fraction: number) {
@@ -763,19 +761,22 @@ export function LmuDuckdbReview() {
 
   const summary = useMemo(() => {
     const aggregate = review?.summary;
+    const validLaps = laps.filter((lap) => lap.valid_lap === true);
     const validFuelUsed = laps
-      .filter((lap) => !lap.in_pit && Number(lap.lap_time) > 0)
+      .filter((lap) => lap.valid_lap === true)
       .map((lap) => Number(lap.fuel_used))
       .filter((value) => Number.isFinite(value) && value > 0);
     const fuelUsedForAverage = withoutOutliers(validFuelUsed);
     const fuelUsed = validFuelUsed.reduce((sum, value) => sum + value, 0);
     return {
-      laps: aggregate?.lap_count ?? laps.length,
+      detectedLaps: aggregate?.lap_count ?? laps.length,
+      validLaps: aggregate?.valid_lap_count ?? validLaps.length,
+      paceLaps: aggregate?.pace_lap_count ?? validLaps.length,
       samples: samples.length,
       storedSamples: aggregate?.sample_count ?? selectedSession?.sample_count,
-      avgLap: aggregate?.average_lap ?? avg(laps, "lap_time"),
+      avgLap: aggregate?.average_lap ?? avg(validLaps, "lap_time"),
       bestLap: aggregate?.best_lap ?? (() => {
-        const values = laps.map((lap) => Number(lap.lap_time)).filter(Number.isFinite);
+        const values = validLaps.map((lap) => toFiniteNumber(lap.lap_time)).filter((value): value is number => value != null);
         return values.length ? Math.min(...values) : null;
       })(),
       topSpeed: aggregate?.top_speed ?? max(laps, "top_speed") ?? max(samples, "speed_kph"),
@@ -864,19 +865,19 @@ export function LmuDuckdbReview() {
           <Metric label="Track" value={text(selectedParts.track)} />
           <Metric label="Session" value={text(selectedParts.sessionType)} />
           <Metric label="Car" value={text(selectedParts.car)} />
-          <Metric label="Laps" value={summary.laps} />
+          <Metric label="Valid / detected laps" value={`${summary.validLaps} / ${summary.detectedLaps}`} />
           <Metric label="Samples" value={summary.samples} sub={summary.storedSamples ? `${summary.storedSamples} native rows` : "mapped review samples"} />
           <Metric label="Best lap" value={formatRaceTime(summary.bestLap)} />
-          <Metric label="Average lap" value={formatRaceTime(summary.avgLap)} />
-          <Metric label="Avg 5-lap pace" value={formatRaceTime(summary.fiveLapPace)} />
+          <Metric label="Clean pace average" value={formatRaceTime(summary.avgLap)} sub={`${summary.paceLaps} pace-clean laps`} />
+          <Metric label="Recent 5 clean-lap pace" value={formatRaceTime(summary.fiveLapPace)} />
           <Metric label="Top speed" value={fmt(summary.topSpeed, 0, " km/h")} />
-          <Metric label="Fuel used" value={fmt(summary.fuelUsed, 2, " L")} />
+          <Metric label="Eligible-lap fuel used" value={fmt(summary.fuelUsed, 2, " L")} />
           <Metric label="Avg fuel/lap" value={fmt(summary.avgFuelPerLap, 2, " L")} />
           <Metric label="Distance" value={fmt(summary.distance, 1, " km")} />
           <Metric label="Avg tyre wear used" value={fmt(summary.tyreWear, 2, "%")} sub={summary.tyreLifeRemaining != null ? `${fmt(summary.tyreLifeRemaining, 1, "%")} life left` : undefined} />
-          <Metric label="Avg tyre temp" value={fmt(summary.tyreTemp, 0, " C")} />
-          <Metric label="Avg pressure" value={fmt(summary.tyrePressure, 1)} />
-          <Metric label="Avg brake temp" value={fmt(summary.brakeTemp, 0, " C")} />
+          <Metric label="Sample avg tyre temp" value={fmt(summary.tyreTemp, 0, " C")} />
+          <Metric label="Sample avg pressure" value={fmt(summary.tyrePressure, 1, " kPa")} />
+          <Metric label="Sample avg brake temp" value={fmt(summary.brakeTemp, 0, " C")} />
         </div>
       </section>
       {metadataRows.length > 0 && (
@@ -929,11 +930,13 @@ export function LmuDuckdbReview() {
         {laps.length ? (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Lap</th><th>Lap time</th>{showPosition && <th>Position</th>}{showClassPosition && <th>Class pos</th>}<th>Start</th><th>End</th><th>Fuel start</th><th>Fuel end</th><th>Fuel used</th><th>Fuel added</th><th>Top speed</th><th>Samples</th></tr></thead>
+              <thead><tr><th>Lap</th><th>Status</th><th>Notes</th><th>Lap time</th>{showPosition && <th>Position</th>}{showClassPosition && <th>Class pos</th>}<th>Start</th><th>End</th><th>Fuel start</th><th>Fuel end</th><th>Fuel used</th><th>Fuel added</th><th>Top speed</th><th>Samples</th></tr></thead>
               <tbody>
                 {laps.map((lap, index) => (
                   <tr key={index}>
                     <td>{text(lap.lap_number)}</td>
+                    <td>{lap.valid_lap === true ? "Valid" : "Excluded"}</td>
+                    <td>{Array.isArray(lap.invalid_reasons) ? lap.invalid_reasons.join(", ") : "--"}</td>
                     <td>{formatRaceTime(lap.lap_time as number)}</td>
                     {showPosition && <td>{lap.position != null ? `P${lap.position}` : "--"}</td>}
                     {showClassPosition && <td>{lap.class_position != null ? `P${lap.class_position}` : "--"}</td>}

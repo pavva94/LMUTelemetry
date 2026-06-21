@@ -22,6 +22,8 @@ export type SavedSession = {
 export type AggregatedSessionSummary = {
   duration_seconds?: number | null;
   lap_count?: number | null;
+  valid_lap_count?: number | null;
+  pace_lap_count?: number | null;
   total_distance_km?: number | null;
   best_lap?: number | null;
   average_lap?: number | null;

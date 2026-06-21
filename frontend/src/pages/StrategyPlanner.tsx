@@ -5,7 +5,7 @@ import { SectionTitle } from "../components/SectionTitle";
 import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { average, standardDeviation, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
 import { simulateStrategies, type PaceEvidence, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
-import { formatRaceTime } from "../lib/timeFormat";
+import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview } from "../types/session";
 import type { StrategyState } from "../types/strategy";
@@ -252,7 +252,7 @@ function modelFromLive(strategy: StrategyState | null, telemetry?: TelemetrySnap
     tyreWearRatePerLap: Number.isFinite(wearRate) && wearRate > 0 ? wearRate : null,
     tyrePaceDegradationPerLap: Number(strategy?.tyres.pace_degradation_per_lap) || null,
     tyreConfidence: strategy?.tyres.confidence || "low",
-    fuelUseStdDevLiters: null,
+    fuelUseStdDevLiters: strategy?.fuel.fuel_use_stddev_liters ?? null,
     fuelConfidence: strategy?.fuel.confidence || "low",
     paceEvidence: livePaceEvidence(strategy, liveLap.value),
   };
@@ -307,12 +307,12 @@ function PlanCard({ plan, index, selected, onSelect }: { plan: StrategyCandidate
       </div>
       <h2>{plan.label}</h2>
       <div className="strategy-card-main">
-        <strong>{formatRaceTime(plan.totalTimeSeconds)}</strong>
+        <strong>{formatDuration(plan.totalTimeSeconds)}</strong>
         <span>{plan.stops} stop{plan.stops === 1 ? "" : "s"} - up to {plan.maxTyresChangedPerStop} tyre{plan.maxTyresChangedPerStop === 1 ? "" : "s"} when needed</span>
       </div>
       <div className="header-grid two">
         <div><span className="label">Pit time</span><strong>{fmt(plan.pitTimeSeconds, 1, " s")}</strong></div>
-        <div><span className="label">Driving time</span><strong>{formatRaceTime(plan.baseRaceTimeSeconds)}</strong><span className="subvalue">{fmt(plan.calculationBreakdown.simulationPaceSeconds, 3, " s/lap")}</span></div>
+        <div><span className="label">Driving time</span><strong>{formatDuration(plan.baseRaceTimeSeconds)}</strong><span className="subvalue">{fmt(plan.calculationBreakdown.simulationPaceSeconds, 3, " s/lap")}</span></div>
         <div><span className="label">Pace loss</span><strong>{fmt(plan.projectedPaceLossSeconds + plan.tyreDegradationLossSeconds, 1, " s")}</strong><span className="subvalue">trend {fmt(plan.projectedPaceLossSeconds, 1, " s")} / tyres {fmt(plan.tyreDegradationLossSeconds, 1, " s")}</span></div>
         <div><span className="label">Traffic loss</span><strong>{fmt(plan.trafficLossSeconds, 1, " s")}</strong></div>
         <div><span className="label">Confidence</span><strong>{plan.confidence}</strong></div>
@@ -689,7 +689,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
               <thead><tr><th>Input</th><th>Value</th><th>Used for</th></tr></thead>
               <tbody>
                 <tr><td>Weighted pace</td><td>{formatRaceTime(selectedPlan.calculationBreakdown.simulationPaceSeconds)}</td><td>Race laps and base driving time</td></tr>
-                <tr><td>Base driving time</td><td>{formatRaceTime(selectedPlan.baseRaceTimeSeconds)}</td><td>Total time baseline</td></tr>
+                <tr><td>Base driving time</td><td>{formatDuration(selectedPlan.baseRaceTimeSeconds)}</td><td>Total time baseline</td></tr>
                 <tr><td>Pit/service time</td><td>{fmt(selectedPlan.pitTimeSeconds, 1, " s")}</td><td>Pit lane, tyres, and refuelling</td></tr>
                 <tr><td>Recent pace trend loss</td><td>{fmt(selectedPlan.projectedPaceLossSeconds, 1, " s")}</td><td>Penalty for slowing recent pace</td></tr>
                 <tr><td>Tyre degradation loss</td><td>{fmt(selectedPlan.tyreDegradationLossSeconds, 1, " s")}</td><td>Penalty for longer worn-tyre stints</td></tr>

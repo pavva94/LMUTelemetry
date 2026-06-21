@@ -9,6 +9,10 @@ build/
 dist/
 release/
 backend/pytest-basetemp/
+backend/.audit-tmp*/
+backend/.pytest-unlocked*/
+backend/pytest-of-*/
+tmp-pytest-*/
 data/sessions/*.sqlite3
 data/sessions/*.sqlite3-*
 .env

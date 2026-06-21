@@ -13,6 +13,7 @@ from sqlalchemy import delete, func, select
 
 from app.db.database import SessionLocal
 from app.db.models import AppSettingModel, LmuDuckdbLapModel, LmuDuckdbSessionModel
+from app.analysis.lap_quality import apply_lap_quality
 
 
 try:
@@ -301,14 +302,22 @@ def _without_outlier_items(items: list[dict], field: str, minimum: float | None 
     return filtered
 
 
-def _tyre_wear_used(value: float | None) -> float | None:
+def _tyre_wear_used_fraction(value: float | None) -> float | None:
     if value is None or not math.isfinite(value):
         return None
     if 0 <= value <= 1:
-        return (1.0 - value) * 100.0
+        return 1.0 - value
     if 1 < value <= 100:
-        return 100.0 - value
+        return (100.0 - value) / 100.0
     return None
+
+
+def _normalize_native_tyre_wear(rows: list[dict]) -> None:
+    for row in rows:
+        for wheel in WHEELS:
+            key = f"tyre_wear_{wheel}"
+            if key in row:
+                row[key] = _tyre_wear_used_fraction(_num(row.get(key)))
 
 
 def _session_id(path: Path) -> str:
@@ -630,9 +639,10 @@ def _nearest_event(events: list[tuple[float, Any]], time_value: float, cursor: i
 
 
 def _row_limit_for_review(sample_limit: int) -> int:
-    if sample_limit <= 0:
-        return MAX_REVIEW_ROWS
-    return min(MAX_REVIEW_ROWS, max(1200, sample_limit * 4))
+    # The response point limit is a presentation concern. Calculating laps and
+    # summaries from that decimated display set changes fuel endpoints, extrema,
+    # distance, and averages when a caller requests fewer chart points.
+    return MAX_REVIEW_ROWS
 
 
 def _select_channel_rows(conn, layout: ChannelLayout, row_limit: int = MAX_REVIEW_ROWS) -> tuple[list[dict], list[str]]:
@@ -750,6 +760,8 @@ def _select_channel_rows(conn, layout: ChannelLayout, row_limit: int = MAX_REVIE
 
     for row in rows:
         row.pop("__rn", None)
+    if _norm(layout.vector_mapped.get("tyre_wear", "")) == "tyreswear":
+        _normalize_native_tyre_wear(rows)
     if "lap_number" not in rows[0] if rows else True:
         warnings.append("Lap table has no usable events; lap numbers will be inferred from Lap Dist when possible.")
     unmapped = sorted((set(layout.mapped.values()) | set(layout.vector_mapped.values())) - used_tables)
@@ -825,6 +837,9 @@ def _review_rows(raw_rows: list[dict], info: TableInfo) -> list[dict]:
                 previous_lap_distance = float(lap_distance)
             row["lap_number"] = inferred_lap
         rows.append({key: value for key, value in row.items() if value is not None and key != "lap_distance"})
+    tyre_source = info.vector_mapped.get("tyre_wear", "")
+    if _norm(tyre_source) == "tyreswear":
+        _normalize_native_tyre_wear(rows)
     return rows
 
 
@@ -834,16 +849,36 @@ def _build_laps(rows: list[dict]) -> list[dict]:
         lap_number = row.get("lap_number")
         if isinstance(lap_number, (int, float)):
             grouped.setdefault(int(lap_number), []).append(row)
+    lap_numbers = sorted(grouped)
+    official_lap_times: dict[int, float] = {}
+    for lap_number in lap_numbers:
+        values = [
+            _num(row.get("last_lap_time")) for row in grouped[lap_number]
+            if (_num(row.get("last_lap_time")) or 0) > 0
+        ]
+        if values:
+            official_lap_times[lap_number - 1] = values[-1]  # last-lap channel belongs to the preceding lap
     laps: list[dict] = []
     previous_fuel_end: float | None = None
-    for lap_number in sorted(grouped):
+    for index, lap_number in enumerate(lap_numbers):
         lap_rows = grouped[lap_number]
         first = lap_rows[0]
         last = lap_rows[-1]
         start_time = _num(first.get("game_time"))
-        end_time = _num(last.get("game_time"))
-        official = _max([_num(row.get("last_lap_time")) for row in lap_rows])
-        duration = official if official and official > 0 else (end_time - start_time if start_time is not None and end_time is not None and end_time >= start_time else None)
+        next_lap = lap_numbers[index + 1] if index + 1 < len(lap_numbers) else None
+        next_start = _num(grouped[next_lap][0].get("game_time")) if next_lap is not None else None
+        sample_end = _num(last.get("game_time"))
+        end_time = next_start if next_start is not None else sample_end
+        official = official_lap_times.get(lap_number)
+        if official and official > 0:
+            duration = official
+            timing_source = "official"
+        elif next_start is not None and start_time is not None and next_start >= start_time:
+            duration = next_start - start_time
+            timing_source = "lap_boundary"
+        else:
+            duration = sample_end - start_time if start_time is not None and sample_end is not None and sample_end >= start_time else None
+            timing_source = "partial_samples"
         fuel_start = _num(first.get("fuel_liters"))
         fuel_end = _num(last.get("fuel_liters"))
         fuel_used = fuel_start - fuel_end if fuel_start is not None and fuel_end is not None and fuel_start >= fuel_end else None
@@ -854,6 +889,7 @@ def _build_laps(rows: list[dict]) -> list[dict]:
             "start_time": start_time,
             "end_time": end_time,
             "lap_time": duration,
+            "timing_source": timing_source,
             "fuel_start": fuel_start,
             "fuel_end": fuel_end,
             "fuel_used": fuel_used,
@@ -884,7 +920,7 @@ def _build_laps(rows: list[dict]) -> list[dict]:
         laps.append(lap)
         if fuel_end is not None:
             previous_fuel_end = fuel_end
-    return laps
+    return apply_lap_quality(laps)
 
 
 def _pit_events(rows: list[dict]) -> list[dict]:
@@ -916,40 +952,36 @@ def _pit_events(rows: list[dict]) -> list[dict]:
 
 
 def _summary(rows: list[dict], laps: list[dict], info: TableInfo) -> dict:
-    completed_laps = [
-        lap for lap in laps
-        if not lap.get("in_pit") and (_num(lap.get("lap_time")) or 0) > 0
-    ]
-    clean_completed_laps = _without_outlier_items(completed_laps, "lap_time", minimum=40.0, maximum=900.0)
-    lap_times = [_num(lap.get("lap_time")) for lap in clean_completed_laps]
-    fuel_used = [_num(lap.get("fuel_used")) for lap in clean_completed_laps]
+    completed_laps = [lap for lap in laps if lap.get("valid_lap") is True]
+    pace_laps = _without_outlier_items(completed_laps, "lap_time", minimum=40.0, maximum=900.0)
+    lap_times = [_num(lap.get("lap_time")) for lap in pace_laps]
+    fuel_used = [_num(lap.get("fuel_used")) for lap in completed_laps]
     fuel_used_positive = [value for value in fuel_used if value is not None and value > 0]
     fuel_used_for_average = _without_outliers(fuel_used_positive)
-    five_lap_paces = [
-        _avg(lap_times[index:index + 5])
-        for index in range(0, max(0, len(lap_times) - 4))
-    ]
+    recent_five_lap_pace = _avg(lap_times[-5:]) if len(lap_times) >= 5 else None
     duration = None
     if len(rows) >= 2:
         start = _num(rows[0].get("game_time"))
         end = _num(rows[-1].get("game_time"))
         duration = end - start if start is not None and end is not None and end >= start else None
     tyre_remaining_values = [_num(row.get(f"tyre_wear_{wheel}")) for row in rows for wheel in WHEELS]
-    tyre_wear_used_values = [_tyre_wear_used(value) for value in tyre_remaining_values]
+    tyre_wear_used_values = [value * 100.0 for value in tyre_remaining_values if value is not None and 0 <= value <= 1]
     speed_values = _without_outliers([_num(row.get("speed_kph")) for row in rows])
     return {
         "session_id": "external",
         "completed_at": None,
         "duration_seconds": duration,
         "lap_count": len(laps),
+        "valid_lap_count": len(completed_laps),
+        "pace_lap_count": len(pace_laps),
         "total_distance_km": sum(value for value in (_num(lap.get("distance_km")) for lap in laps) if value is not None) or _distance_km(rows),
         "best_lap": min((value for value in lap_times if value is not None and value > 0), default=None),
         "average_lap": _avg(lap_times),
         "average_fuel_per_lap": _avg(fuel_used_for_average),
-        "average_five_lap_pace": _avg([value for value in five_lap_paces if value is not None]),
+        "average_five_lap_pace": recent_five_lap_pace,
         "total_fuel_used": sum(fuel_used_positive) or None,
         "average_tyre_wear": _avg(_without_outliers(tyre_wear_used_values)),
-        "average_tyre_life_remaining": _avg(_without_outliers(tyre_remaining_values)),
+        "average_tyre_life_remaining": 100.0 - (_avg(_without_outliers(tyre_wear_used_values)) or 0.0) if tyre_wear_used_values else None,
         "average_tyre_temp": _avg(_without_outliers([_num(row.get(f"tyre_temp_{wheel}")) for row in rows for wheel in WHEELS])),
         "average_tyre_pressure": _avg(_without_outliers([_num(row.get(f"tyre_pressure_{wheel}")) for row in rows for wheel in WHEELS])),
         "average_brake_temp": _avg(_without_outliers([_num(row.get(f"brake_temp_{wheel}")) for row in rows for wheel in WHEELS])),
@@ -1101,12 +1133,14 @@ def _distance_km(rows: list[dict]) -> float | None:
     for previous, current in zip(rows, rows[1:]):
         previous_time = _num(previous.get("game_time"))
         current_time = _num(current.get("game_time"))
-        speed = _num(previous.get("speed_kph"))
-        if previous_time is None or current_time is None or speed is None:
+        previous_speed = _num(previous.get("speed_kph"))
+        current_speed = _num(current.get("speed_kph"))
+        if previous_time is None or current_time is None or previous_speed is None:
             continue
         delta = current_time - previous_time
-        if delta <= 0 or delta > 120:
+        if delta <= 0 or delta > 5:
             continue
+        speed = (previous_speed + current_speed) / 2 if current_speed is not None else previous_speed
         distance += speed * delta / 3600
         usable += 1
     return distance if usable else None

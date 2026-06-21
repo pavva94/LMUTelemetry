@@ -29,6 +29,10 @@ export type MotecLap = {
   maxRpm: number | null;
   fuelStart: number | null;
   fuelEnd: number | null;
+  distanceKm?: number | null;
+  averageSpeed?: number | null;
+  valid: boolean;
+  quality: string;
 };
 
 export type MotecSession = {
@@ -50,4 +54,5 @@ export type MotecSession = {
   maxSessionTime: number | null;
   sampleCount?: number;
   lapCount?: number;
+  validLapCount?: number;
 };

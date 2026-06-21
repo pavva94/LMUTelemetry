@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import math
 from datetime import datetime
+from statistics import median, pstdev
 
 from sqlalchemy import delete, desc, func, select
 
 from app.db.database import SessionLocal
+from app.analysis.lap_quality import apply_lap_quality
 from app.db.models import LapSummaryModel, RecommendationModel, SessionAggregateModel, SessionModel, TelemetrySampleModel, UserLifetimeStatsModel
 from app.schemas.recommendations import RecommendationPayload, StrategyRecommendation
 from app.schemas.strategy import FuelState, PitWindowState, StrategyAssumptions, StrategyState, StintState, TyreStrategyState
@@ -84,9 +86,10 @@ class Repository:
             if previous.game_time is None or current.game_time is None or previous.speed_kph is None:
                 continue
             delta = current.game_time - previous.game_time
-            if delta <= 0 or delta > 120:
+            if delta <= 0 or delta > 5:
                 continue
-            distance += previous.speed_kph * delta / 3600
+            current_speed = current.speed_kph if current.speed_kph is not None else previous.speed_kph
+            distance += ((previous.speed_kph + current_speed) / 2) * delta / 3600
             usable += 1
         return distance if usable else None
 
@@ -372,7 +375,14 @@ class Repository:
         latest = samples[-1] if samples else None
         lap_times = [float(lap["lap_time"]) for lap in self._valid_laps(laps)]
         distance = self._integrated_distance(samples)
-        fuel_values = [float(lap["fuel_used"]) for lap in laps if lap.get("fuel_used") is not None and float(lap["fuel_used"]) >= 0]
+        # Endpoint subtraction across a pit/refuel lap can look like enormous
+        # consumption (the real store contained 50-87 L examples). Keep this
+        # aggregate explicitly scoped to complete, clean laps; refuel/pit fuel
+        # requires sample-level integration and must not contaminate this KPI.
+        fuel_values = [
+            float(lap["fuel_used"]) for lap in self._valid_laps(laps)
+            if lap.get("fuel_used") is not None and math.isfinite(float(lap["fuel_used"])) and float(lap["fuel_used"]) >= 0
+        ]
         speed_values = [sample.speed_kph for sample in samples if sample.speed_kph is not None]
         duration = None
         if session.ended_at_game_time is not None and session.started_at_game_time is not None:
@@ -499,8 +509,10 @@ class Repository:
             boundary_duration = boundary_lap_times.get(lap_number)
             if official_duration is not None and (boundary_duration is None or abs(official_duration - boundary_duration) <= 2.0):
                 duration = official_duration
+                timing_source = "official"
             else:
                 duration = boundary_duration or duration_from_samples
+                timing_source = "lap_boundary" if boundary_duration is not None else "partial_samples"
             speed_values = [row.speed_kph for row in rows if row.speed_kph is not None]
             rpm_values = [row.rpm for row in rows if row.rpm is not None]
             fuel_start = first.fuel_liters
@@ -515,6 +527,7 @@ class Repository:
                 "start_time": start_time,
                 "end_time": end_time,
                 "lap_time": duration,
+                "timing_source": timing_source,
                 "fuel_start": fuel_start,
                 "fuel_end": fuel_end,
                 "fuel_used": fuel_used,
@@ -551,7 +564,11 @@ class Repository:
             laps.append(lap)
             if fuel_end is not None:
                 previous_fuel_end = fuel_end
+        self._apply_lap_quality(laps)
         return laps
+
+    def _apply_lap_quality(self, laps: list[dict]) -> list[dict]:
+        return apply_lap_quality(laps)
 
     def _build_pit_events(self, samples: list[TelemetrySampleModel]) -> list[dict]:
         events = []
@@ -592,19 +609,41 @@ class Repository:
             )
 
     def _valid_laps(self, laps: list[dict]) -> list[dict]:
-        return [
-            lap for lap in laps
-            if lap.get("valid_lap") is not False
-            and not lap.get("in_pit")
-            and not lap.get("under_yellow")
-            and lap.get("lap_time") is not None
+        self._apply_lap_quality(laps)
+        return [lap for lap in laps if lap.get("valid_lap") is True]
+
+    def _review_summary(self, aggregate: SessionAggregateModel | None, laps: list[dict]) -> dict | None:
+        """Return stored sample KPIs with lap KPIs recalculated under today's quality rules."""
+        if aggregate is None:
+            return None
+        summary = self._row_dict(aggregate)
+        valid_laps = self._valid_laps(laps)
+        lap_times = [float(lap["lap_time"]) for lap in valid_laps if lap.get("lap_time") is not None]
+        fuel_values = [
+            float(lap["fuel_used"])
+            for lap in valid_laps
+            if lap.get("fuel_used") is not None
+            and math.isfinite(float(lap["fuel_used"]))
+            and float(lap["fuel_used"]) >= 0
         ]
+        # Historical aggregates were created before pit/partial-lap filtering.
+        # Recalculate these fields on read so old sessions do not keep reporting
+        # impossible best laps or refuel quantities as consumption.
+        summary["lap_count"] = len(laps)
+        summary["valid_lap_count"] = len(valid_laps)
+        summary["best_lap"] = min(lap_times) if lap_times else None
+        summary["average_lap"] = sum(lap_times) / len(lap_times) if lap_times else None
+        summary["total_fuel_used"] = sum(fuel_values) if fuel_values else None
+        return summary
 
     def _fuel_state_from_laps(self, latest: TelemetrySampleModel, laps: list[dict], assumptions: StrategyAssumptions) -> FuelState:
         fuel_values = [
             float(lap["fuel_used"]) for lap in self._valid_laps(laps)
             if lap.get("fuel_used") is not None and float(lap["fuel_used"]) > 0
         ]
+        if len(fuel_values) >= 3:
+            baseline = median(fuel_values)
+            fuel_values = [value for value in fuel_values if baseline * 0.5 <= value <= baseline * 1.5]
         if len(fuel_values) < 3:
             return FuelState(
                 last_lap_fuel_used_liters=fuel_values[-1] if fuel_values else None,
@@ -612,17 +651,22 @@ class Repository:
                 valid_laps_observed=len(fuel_values),
                 valid_laps_required=3,
                 confidence="low",
+                reason_codes=["historical_fuel_history_below_three_laps"],
             )
-        fuel_per_lap = sum(fuel_values[-5:]) / len(fuel_values[-5:])
+        recent = fuel_values[-5:]
+        fuel_per_lap = sum(recent) / len(recent)
+        fuel_stddev = pstdev(recent) if len(recent) >= 2 else None
         fuel_laps = latest.fuel_liters / fuel_per_lap if latest.fuel_liters is not None and fuel_per_lap else None
         return FuelState(
             last_lap_fuel_used_liters=round(fuel_values[-1], 3),
             fuel_capacity_liters=round(latest.fuel_capacity_liters, 3) if latest.fuel_capacity_liters is not None else None,
             fuel_per_lap_liters=round(fuel_per_lap, 3),
+            fuel_use_stddev_liters=round(fuel_stddev, 3) if fuel_stddev is not None else None,
             fuel_laps_remaining=round(fuel_laps, 2) if fuel_laps is not None else None,
             valid_laps_observed=len(fuel_values),
             valid_laps_required=3,
             confidence="high" if len(fuel_values) >= 5 else "medium",
+            reason_codes=["historical_recent_five_clean_lap_mean"],
         )
 
     def _tyre_state_from_samples(self, latest: TelemetrySampleModel, laps: list[dict], assumptions: StrategyAssumptions) -> TyreStrategyState:
@@ -786,13 +830,15 @@ class Repository:
             ).all()
             recs = db.scalars(select(RecommendationModel).where(RecommendationModel.session_id == session_id).order_by(RecommendationModel.id.asc()).limit(100)).all()
             if not all_samples and aggregate:
+                stored_laps = self._json_rows(aggregate.laps_json)
+                self._apply_lap_quality(stored_laps)
                 result = {
                     "session": self._row_dict(session),
                     "telemetry_samples": self._json_rows(aggregate.sample_trace_json),
                     "recommendations": self._json_rows(aggregate.recommendations_json),
-                    "laps": self._json_rows(aggregate.laps_json),
+                    "laps": stored_laps,
                     "pit_events": self._json_rows(aggregate.pit_events_json),
-                    "summary": self._row_dict(aggregate),
+                    "summary": self._review_summary(aggregate, stored_laps),
                 }
                 self._review_cache = {cache_key: result}
                 return result
@@ -811,7 +857,7 @@ class Repository:
                 "recommendations": [self._row_dict(r) for r in recs],
                 "laps": laps,
                 "pit_events": self._build_pit_events(all_samples),
-                "summary": self._row_dict(aggregate) if aggregate else None,
+                "summary": self._review_summary(aggregate, laps),
             }
             self._review_cache = {cache_key: result}
             return result

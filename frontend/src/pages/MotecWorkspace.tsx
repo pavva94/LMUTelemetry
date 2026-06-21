@@ -171,11 +171,12 @@ function Missing({ channels, session }: { channels: string[]; session: MotecSess
 }
 
 function LapSelectors({ session, lapA, lapB, setLapA, setLapB }: { session: MotecSession | null; lapA: string; lapB: string; setLapA: (lap: string) => void; setLapB: (lap: string) => void }) {
+  const validLaps = session?.laps.filter((lap) => lap.valid) || [];
   return (
     <div className="motec-toolbar">
-      <label>Primary lap<select value={lapA} onChange={(event) => setLapA(event.target.value)}>{session?.laps.map((lap) => <option key={lap.lapNumber} value={lap.lapNumber}>Lap {lap.lapNumber}</option>)}</select></label>
-      <label>Compare lap<select value={lapB} onChange={(event) => setLapB(event.target.value)}><option value="">None</option>{session?.laps.map((lap) => <option key={lap.lapNumber} value={lap.lapNumber}>Lap {lap.lapNumber}</option>)}</select></label>
-      <span className="muted">{session ? `${session.sampleCount ?? 0} samples, ${session.laps.length} laps` : "No session loaded"}</span>
+      <label>Primary lap<select value={lapA} onChange={(event) => setLapA(event.target.value)}>{validLaps.map((lap) => <option key={lap.lapNumber} value={lap.lapNumber}>Lap {lap.lapNumber}</option>)}</select></label>
+      <label>Compare lap<select value={lapB} onChange={(event) => setLapB(event.target.value)}><option value="">None</option>{validLaps.map((lap) => <option key={lap.lapNumber} value={lap.lapNumber}>Lap {lap.lapNumber}</option>)}</select></label>
+      <span className="muted">{session ? `${session.sampleCount ?? 0} samples, ${session.validLapCount ?? session.laps.filter((lap) => lap.valid).length} valid / ${session.laps.length} detected laps` : "No session loaded"}</span>
     </div>
   );
 }
@@ -372,7 +373,7 @@ function LapBrowser({ session, setLapA, setLapB }: { session: MotecSession | nul
   if (!session) return <div className="page"><section className="card"><Empty /></section></div>;
   return (
     <div className="page grid">
-      <section className="card span-12"><SectionTitle title="Lap Browser" help="Lists laps detected from the CSV. Select a clean primary lap and a representative comparison lap before using the worksheets." /><div className="table-wrap"><table><thead><tr><th>Lap</th><th>Start</th><th>End</th><th>Duration</th><th>Max Speed</th><th>Min Corner</th><th>Max RPM</th><th>Fuel Start</th><th>Fuel End</th><th>Select</th></tr></thead><tbody>{session.laps.map((lap) => <tr key={lap.lapNumber}><td>{lap.lapNumber}</td><td>{timeValue(lap.startTime)}</td><td>{timeValue(lap.endTime)}</td><td>{timeValue(lap.duration)}</td><td>{fmt(lap.maxSpeed)}</td><td>{fmt(lap.minCornerSpeed)}</td><td>{fmt(lap.maxRpm, 0)}</td><td>{fmt(lap.fuelStart)}</td><td>{fmt(lap.fuelEnd)}</td><td><button onClick={() => setLapA(lap.lapNumber)}>Primary</button><button onClick={() => setLapB(lap.lapNumber)}>Compare</button></td></tr>)}</tbody></table></div></section>
+      <section className="card span-12"><SectionTitle title="Lap Browser" help="Lists every detected CSV lap, but only clean complete laps can be selected for numerical comparison." /><div className="table-wrap"><table><thead><tr><th>Lap</th><th>Status</th><th>Start</th><th>End</th><th>Duration</th><th>Max Speed</th><th>Min Corner</th><th>Max RPM</th><th>Fuel Start</th><th>Fuel End</th><th>Select</th></tr></thead><tbody>{session.laps.map((lap) => <tr key={lap.lapNumber}><td>{lap.lapNumber}</td><td>{lap.valid ? "Valid" : lap.quality.replace(/_/g, " ")}</td><td>{timeValue(lap.startTime)}</td><td>{timeValue(lap.endTime)}</td><td>{timeValue(lap.duration)}</td><td>{fmt(lap.maxSpeed)}</td><td>{fmt(lap.minCornerSpeed)}</td><td>{fmt(lap.maxRpm, 0)}</td><td>{fmt(lap.fuelStart)}</td><td>{fmt(lap.fuelEnd)}</td><td><button disabled={!lap.valid} onClick={() => setLapA(lap.lapNumber)}>Primary</button><button disabled={!lap.valid} onClick={() => setLapB(lap.lapNumber)}>Compare</button></td></tr>)}</tbody></table></div></section>
       <section className="card span-12"><SectionTitle title="Registry" help="Shows the channels available for analysis. Missing or empty channels explain why some worksheets may show limited data." /><ChannelRegistry channels={session.channels} /></section>
     </div>
   );
@@ -485,6 +486,7 @@ function buildFuelLapRows(session: MotecSession) {
       fuelUsed,
       pitStop,
       fuelAdded: pitStop ? fuelAdded : null,
+      valid: lap.valid,
     };
   });
 }
@@ -494,8 +496,9 @@ function buildStintSummaries(session: MotecSession, samples: MotecSample[] = [])
   const stintNumbers = Array.from(new Set(rows.map((row) => row.stint))).sort((a, b) => a - b);
   return stintNumbers.map((stint) => {
     const stintRows = rows.filter((row) => row.stint === stint);
-    const lapTimes = stintRows.map((row) => row.duration).filter((value): value is number => value != null && value > 0);
-    const fuelUsedValues = stintRows.map((row) => row.fuelUsed).filter((value): value is number => value != null && value >= 0);
+    const cleanStintRows = stintRows.filter((row) => row.valid);
+    const lapTimes = cleanStintRows.map((row) => row.duration).filter((value): value is number => value != null && value > 0);
+    const fuelUsedValues = cleanStintRows.map((row) => row.fuelUsed).filter((value): value is number => value != null && value > 0);
     const split = Math.max(1, Math.ceil(lapTimes.length / 2));
     const firstHalf = lapTimes.slice(0, split);
     const secondHalf = lapTimes.slice(split);
@@ -514,7 +517,7 @@ function buildStintSummaries(session: MotecSession, samples: MotecSample[] = [])
       stint,
       startLap: stintRows[0]?.lapNumber || "--",
       endLap: stintRows[stintRows.length - 1]?.lapNumber || "--",
-      lapCount: stintRows.length,
+      lapCount: cleanStintRows.length,
       fastestLap: lapTimes.length ? Math.min(...lapTimes) : null,
       averageLap: lapTimes.length ? avgValue(lapTimes) : null,
       medianLap: medianValue(lapTimes),
@@ -748,7 +751,7 @@ function StintSummaryPanel({ summaries }: { summaries: StintSummary[] }) {
 }
 
 function RaceEngineerWorksheet({ session, lapA, lapB, setLapA, setLapB }: { session: MotecSession; lapA: string; lapB: string; setLapA: (lap: string) => void; setLapB: (lap: string) => void }) {
-  const bestLap = session.laps.filter((lap) => lap.duration != null && lap.lapNumber !== lapA).sort((a, b) => (a.duration ?? Infinity) - (b.duration ?? Infinity))[0] || session.laps[0];
+  const bestLap = session.laps.filter((lap) => lap.valid && lap.duration != null && lap.lapNumber !== lapA).sort((a, b) => (a.duration ?? Infinity) - (b.duration ?? Infinity))[0] || session.laps.find((lap) => lap.valid);
   const referenceLap = lapB || bestLap?.lapNumber || "";
   const selectedSamples = useMotecSamples(session, lapA, engineerChannels, 7000);
   const referenceSamples = useMotecSamples(session, referenceLap, engineerChannels, 7000);
@@ -981,7 +984,7 @@ export function MotecWorkspace() {
   const [worksheet, setWorksheet] = useState<WorksheetKey>("import");
   const [lapA, setLapA] = useState("");
   const [lapB, setLapB] = useState("");
-  const activeLapA = lapA || session?.laps[0]?.lapNumber || "";
+  const activeLapA = lapA || session?.laps.find((lap) => lap.valid)?.lapNumber || "";
   const activeLapB = lapB;
   const selectSession = (next: MotecSession) => {
     setSessions((current) => [next, ...current.filter((item) => item.id !== next.id)]);
@@ -990,12 +993,13 @@ export function MotecWorkspace() {
   const loadSession = (id: string) => {
     void api.motecSession(id).then((next) => {
       selectSession(next);
-      setLapA((current) => current || next.laps[0]?.lapNumber || "");
+      setLapA(next.laps.find((lap) => lap.valid)?.lapNumber || "");
+      setLapB("");
     });
   };
   const setImported = (next: MotecSession, openAnalysis = true) => {
     selectSession(next);
-    setLapA(next.laps[0]?.lapNumber || "");
+    setLapA(next.laps.find((lap) => lap.valid)?.lapNumber || "");
     if (openAnalysis) setWorksheet("compare");
   };
   useEffect(() => {
@@ -1007,7 +1011,7 @@ export function MotecWorkspace() {
     });
   }, []);
   useEffect(() => {
-    if (session && !lapA) setLapA(session.laps[0]?.lapNumber || "");
+    if (session && !lapA) setLapA(session.laps.find((lap) => lap.valid)?.lapNumber || "");
   }, [session, lapA]);
   return (
     <div className="motec-workspace">

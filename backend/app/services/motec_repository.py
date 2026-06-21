@@ -4,6 +4,7 @@ import csv
 import json
 import math
 import sqlite3
+import statistics
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -182,6 +183,12 @@ def init_motec_db() -> None:
 def _num(value: object) -> float | None:
     if isinstance(value, (int, float)) and math.isfinite(float(value)):
         return float(value)
+    if isinstance(value, str):
+        try:
+            parsed = float(value.strip())
+        except ValueError:
+            return None
+        return parsed if math.isfinite(parsed) else None
     return None
 
 
@@ -521,6 +528,7 @@ def _session_row(row: sqlite3.Row) -> dict:
         "importedAt": row["imported_at"],
         "sampleCount": row["sample_count"],
         "lapCount": row["lap_count"],
+        "validLapCount": 0,
         "minSessionTime": row["min_session_time"],
         "maxSessionTime": row["max_session_time"],
         "warnings": json.loads(row["warnings_json"] or "[]"),
@@ -533,7 +541,51 @@ def _session_row(row: sqlite3.Row) -> dict:
 def list_sessions() -> list[dict]:
     init_motec_db()
     with _connect() as db:
-        return [_session_row(row) for row in db.execute("select * from motec_sessions order by imported_at desc")]
+        sessions = [_session_row(row) for row in db.execute("select * from motec_sessions order by imported_at desc")]
+        for session in sessions:
+            lap_rows = db.execute("select * from motec_laps where session_id = ? order by cast(lap_number as real)", (session["id"],)).fetchall()
+            session["validLapCount"] = sum(1 for lap in _motec_laps_with_quality(lap_rows) if lap["valid"])
+        return sessions
+
+
+def _motec_laps_with_quality(rows: list[sqlite3.Row]) -> list[dict]:
+    raw = [
+        {
+            "lapNumber": lap["lap_number"], "startTime": lap["start_time"], "endTime": lap["end_time"],
+            "duration": lap["duration"], "sampleCount": lap["sample_count"], "maxSpeed": lap["max_speed"],
+            "minCornerSpeed": lap["min_corner_speed"], "maxRpm": lap["max_rpm"], "fuelStart": lap["fuel_start"],
+            "fuelEnd": lap["fuel_end"], "distanceKm": lap["distance_km"], "averageSpeed": lap["average_speed"],
+        }
+        for lap in rows
+    ]
+    candidates = [
+        lap for lap in raw
+        if (_num(lap["lapNumber"]) or 0) >= 1
+        and (_num(lap["duration"]) or 0) >= 40
+        and (_num(lap["duration"]) or 0) <= 900
+        and (_num(lap["distanceKm"]) is None or (_num(lap["distanceKm"]) or 0) >= 0.5)
+    ]
+    normal_time = statistics.median(float(lap["duration"]) for lap in candidates) if candidates else None
+    distances = [float(lap["distanceKm"]) for lap in candidates if _num(lap["distanceKm"]) is not None]
+    normal_distance = statistics.median(distances) if distances else None
+    for lap in raw:
+        reasons: list[str] = []
+        number = _num(lap["lapNumber"])
+        duration = _num(lap["duration"])
+        distance = _num(lap["distanceKm"])
+        if number is None or number < 1:
+            reasons.append("out_or_unidentified_lap")
+        if duration is None or duration < 40 or duration > 900:
+            reasons.append("incomplete_or_implausible_duration")
+        elif normal_time is not None and not normal_time * 0.85 <= duration <= normal_time * 1.35:
+            reasons.append("duration_outside_session_pace_band")
+        if distance is not None and distance < 0.5:
+            reasons.append("incomplete_distance")
+        elif distance is not None and normal_distance is not None and distance < normal_distance * 0.75:
+            reasons.append("distance_outside_session_lap_band")
+        lap["valid"] = not reasons
+        lap["quality"] = "clean_lap" if not reasons else ",".join(reasons)
+    return raw
 
 
 def get_session(session_id: str) -> dict:
@@ -552,15 +604,10 @@ def get_session(session_id: str) -> dict:
             }
             for c in db.execute("select * from motec_channels where session_id = ? order by rowid", (session_id,))
         ]
-        session["laps"] = [
-            {
-                "lapNumber": lap["lap_number"], "startTime": lap["start_time"], "endTime": lap["end_time"],
-                "duration": lap["duration"], "sampleCount": lap["sample_count"], "maxSpeed": lap["max_speed"],
-                "minCornerSpeed": lap["min_corner_speed"], "maxRpm": lap["max_rpm"], "fuelStart": lap["fuel_start"],
-                "fuelEnd": lap["fuel_end"], "distanceKm": lap["distance_km"], "averageSpeed": lap["average_speed"],
-            }
-            for lap in db.execute("select * from motec_laps where session_id = ? order by cast(lap_number as real)", (session_id,))
-        ]
+        session["laps"] = _motec_laps_with_quality(
+            db.execute("select * from motec_laps where session_id = ? order by cast(lap_number as real)", (session_id,)).fetchall()
+        )
+        session["validLapCount"] = sum(1 for lap in session["laps"] if lap["valid"])
         session["samples"] = []
         return session
 

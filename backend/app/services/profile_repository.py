@@ -17,6 +17,12 @@ from app.services.motec_repository import DB_PATH as MOTEC_DB_PATH, init_motec_d
 def _num(value: Any) -> float | None:
     if isinstance(value, (int, float)) and math.isfinite(float(value)):
         return float(value)
+    if isinstance(value, str):
+        try:
+            parsed = float(value.strip())
+        except ValueError:
+            return None
+        return parsed if math.isfinite(parsed) else None
     return None
 
 
@@ -28,6 +34,17 @@ def _avg(values: list[float | None]) -> float | None:
 def _max(values: list[float | None]) -> float | None:
     clean = [value for value in values if value is not None and math.isfinite(value)]
     return max(clean) if clean else None
+
+
+def _cached_tyre_wear_used_fraction(value: Any) -> float | None:
+    number = _num(value)
+    if number is None:
+        return None
+    if 0 <= number <= 1:
+        return number  # current cache format: fraction already used
+    if 1 < number <= 100:
+        return 1.0 - (number / 100.0)  # legacy cache format: percent remaining
+    return None
 
 
 def _median(values: list[float]) -> float | None:
@@ -57,15 +74,31 @@ def _integrate_distance(samples: list[dict], time_key: str, speed_key: str) -> f
     for previous, current in zip(samples, samples[1:]):
         previous_time = _num(previous.get(time_key))
         current_time = _num(current.get(time_key))
-        speed = _num(previous.get(speed_key))
-        if previous_time is None or current_time is None or speed is None:
+        previous_speed = _num(previous.get(speed_key))
+        current_speed = _num(current.get(speed_key))
+        if previous_time is None or current_time is None or previous_speed is None:
             continue
         delta = current_time - previous_time
-        if delta <= 0 or delta > 120:
+        if delta <= 0 or delta > 5:
             continue
+        speed = (previous_speed + current_speed) / 2 if current_speed is not None else previous_speed
         distance += speed * delta / 3600
         usable += 1
     return distance if usable else None
+
+
+def _is_completed_driving_lap(lap: dict) -> bool:
+    """Broad career-duration eligibility, separate from stricter ranking validity."""
+    lap_number = _num(lap.get("lap_number"))
+    lap_time = _num(lap.get("lap_time"))
+    distance = _num(lap.get("distance_km"))
+    return bool(
+        lap_number is not None
+        and lap_number >= 1
+        and lap_time is not None
+        and 40.0 <= lap_time <= 900.0
+        and (distance is None or distance >= 0.5)
+    )
 
 
 def _sample_dict(sample: TelemetrySampleModel) -> dict:
@@ -116,8 +149,8 @@ class ProfileFilters:
 
 
 class ProfileRepository:
-    min_lap_time_ratio = 0.75
-    max_lap_time_ratio = 1.80
+    min_lap_time_ratio = 0.85
+    max_lap_time_ratio = 1.35
     min_distance_ratio = 0.75
     _all_laps_cache_key: tuple[int | None, int, str | None] | None = None
     _all_laps_cache: list[dict] | None = None
@@ -413,10 +446,10 @@ class ProfileRepository:
                     "fuel_used": lap.fuel_used,
                     "fuel_added": lap.fuel_added,
                     "tyre_compound": None,
-                    "tyre_wear_fl": lap.tyre_wear_fl,
-                    "tyre_wear_fr": lap.tyre_wear_fr,
-                    "tyre_wear_rl": lap.tyre_wear_rl,
-                    "tyre_wear_rr": lap.tyre_wear_rr,
+                    "tyre_wear_fl": _cached_tyre_wear_used_fraction(lap.tyre_wear_fl),
+                    "tyre_wear_fr": _cached_tyre_wear_used_fraction(lap.tyre_wear_fr),
+                    "tyre_wear_rl": _cached_tyre_wear_used_fraction(lap.tyre_wear_rl),
+                    "tyre_wear_rr": _cached_tyre_wear_used_fraction(lap.tyre_wear_rr),
                     "tyre_pressure_fl": lap.tyre_pressure_fl,
                     "tyre_pressure_fr": lap.tyre_pressure_fr,
                     "tyre_pressure_rl": lap.tyre_pressure_rl,
@@ -460,12 +493,19 @@ class ProfileRepository:
                 distance_ratio = distance / normal_distance if distance is not None and normal_distance else None
                 valid = True
                 reason = "estimated_full_lap"
+                lap_number = _num(lap.get("lap_number"))
                 if lap.get("valid_lap") is False:
                     valid = False
                     reason = "recorded_invalid_lap"
                 elif lap.get("in_pit"):
                     valid = False
                     reason = "pit_lap"
+                elif lap_number is None or lap_number < 1:
+                    valid = False
+                    reason = "missing_or_out_lap_number"
+                elif distance is not None and distance < 0.5:
+                    valid = False
+                    reason = "implausibly_short_distance"
                 elif lap_time is None or normal_time is None:
                     valid = False
                     reason = "insufficient_lap_time"
@@ -510,7 +550,8 @@ class ProfileRepository:
             )
             session["laps"] += 1
             session["distance_km"] += _num(lap.get("distance_km")) or 0
-            session["duration"] += _num(lap.get("lap_time")) or 0
+            if _is_completed_driving_lap(lap):
+                session["duration"] += _num(lap.get("lap_time")) or 0
         return sessions
 
     def _persisted_session_counts(self) -> dict[str, int]:
@@ -579,7 +620,8 @@ class ProfileRepository:
         persisted_sessions = self._persisted_session_counts()
         session_distances = self._career_session_distances()
         total_distance = sum(session_distances.values())
-        total_driving_time = sum((_num(lap.get("lap_time")) or 0) for lap in laps)
+        completed_driving_laps = [lap for lap in laps if _is_completed_driving_lap(lap)]
+        total_driving_time = sum((_num(lap.get("lap_time")) or 0) for lap in completed_driving_laps)
         valid_laps = [lap for lap in laps if lap.get("valid_lap")]
         session_values = list(sessions.values())
         total_session_count = max(len(sessions), persisted_sessions["total"])
@@ -589,10 +631,12 @@ class ProfileRepository:
         lifetime_laps = max(len(laps), int(lifetime.get("total_laps") or 0))
         lifetime_time = max(total_driving_time, float(lifetime.get("total_driving_time") or 0))
         race_sessions = [session for session in session_values if self._is_race_session(session)]
-        wins = sum(1 for session in race_sessions if session.get("finish_position") == 1)
-        podiums = sum(1 for session in race_sessions if (session.get("finish_position") or 999) <= 3)
-        top10 = sum(1 for session in race_sessions if (session.get("finish_position") or 999) <= 10)
-        dnf_dns = sum(1 for session in race_sessions if str(session.get("finish_status") or "").lower() in {"dnf", "dns", "dq"})
+        positioned_races = [session for session in race_sessions if _num(session.get("finish_position")) is not None]
+        status_races = [session for session in race_sessions if str(session.get("finish_status") or "").strip()]
+        wins = sum(1 for session in positioned_races if session.get("finish_position") == 1) if positioned_races else None
+        podiums = sum(1 for session in positioned_races if float(session["finish_position"]) <= 3) if positioned_races else None
+        top10 = sum(1 for session in positioned_races if float(session["finish_position"]) <= 10) if positioned_races else None
+        dnf_dns = sum(1 for session in status_races if str(session.get("finish_status") or "").lower() in {"dnf", "dns", "dq"}) if status_races else None
         by_class = []
         for car_class, class_laps in self._group(laps, "car_class").items():
             distance = sum((_num(lap.get("distance_km")) or 0) for lap in class_laps)
@@ -612,6 +656,7 @@ class ProfileRepository:
                 "total_distance_km": lifetime_distance,
                 "total_sessions": lifetime_total_sessions,
                 "total_laps": lifetime_laps,
+                "completed_laps": len(completed_driving_laps),
                 "valid_laps": len(valid_laps),
                 "total_driving_time": lifetime_time,
                 "different_cars": len({lap["car"] for lap in laps if lap.get("car")}),
@@ -624,6 +669,8 @@ class ProfileRepository:
                 "top10": top10,
                 "dnf_dns": dnf_dns,
                 "race_sessions": len(race_sessions),
+                "positioned_race_sessions": len(positioned_races),
+                "status_race_sessions": len(status_races),
                 "live_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "live"}), persisted_sessions["live"]),
                 "csv_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "csv"}), persisted_sessions["csv"]),
                 "duckdb_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "duckdb"}), persisted_sessions["duckdb"]),

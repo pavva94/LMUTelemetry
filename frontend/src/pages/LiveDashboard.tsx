@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { RecommendationPanel } from "../components/RecommendationPanel";
 import { SectionTitle } from "../components/SectionTitle";
-import { formatRaceTime } from "../lib/timeFormat";
+import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { CompetitorState, PlayerState, TelemetrySnapshot, TyreState, TyreTemps } from "../types/telemetry";
 
@@ -128,7 +128,7 @@ function Header({ telemetry, connected, readOnlyLabel }: { telemetry: TelemetryS
         <div><span className="label">Driver</span><strong>{driver}</strong></div>
         <div><span className="label">Position</span><strong>{position != null ? `P${position}` : "--"}</strong></div>
         <div><span className="label">Lap</span><strong>{text(player?.lap_number ?? session?.current_lap)}</strong></div>
-        <div><span className="label">Remaining</span><strong>{formatRaceTime(session?.time_remaining)}</strong></div>
+        <div><span className="label">Remaining</span><strong>{formatDuration(session?.time_remaining)}</strong></div>
       </div>
     </section>
   );
@@ -274,7 +274,7 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected, 
           <div><span className="label">Current</span><strong>{fmt(player?.fuel_liters)} L</strong></div>
           <div><span className="label">Capacity</span><strong>{fmt(player?.fuel_capacity_liters)} L</strong></div>
           <div><span className="label">Last lap</span><strong>{fmt(fuel?.last_lap_fuel_used_liters, 2)} L</strong></div>
-          <div><span className="label">Session average</span><strong>{fmt(fuel?.fuel_per_lap_liters, 2)} L/lap</strong><span className="subvalue">{fuelLapsNeeded > 0 ? `Need ${fuelLapsNeeded} valid lap${fuelLapsNeeded === 1 ? "" : "s"}` : `${fuel?.valid_laps_observed ?? 0} valid laps`}</span></div>
+          <div><span className="label">Recent clean-lap average</span><strong>{fmt(fuel?.fuel_per_lap_liters, 2)} L/lap</strong><span className="subvalue">{fuel?.fuel_use_stddev_liters != null ? `σ ${fmt(fuel.fuel_use_stddev_liters, 3)} L over up to 5 laps` : fuelLapsNeeded > 0 ? `Need ${fuelLapsNeeded} valid lap${fuelLapsNeeded === 1 ? "" : "s"}` : `${fuel?.valid_laps_observed ?? 0} valid laps`}</span></div>
           <div><span className="label">Range</span><strong>{fmt(fuel?.fuel_laps_remaining)} laps</strong></div>
           <div><span className="label">Needed</span><strong>{fmt(fuel?.required_fuel_to_finish)} L</strong></div>
           <div><span className="label">Margin</span><strong>{fmt(fuel?.fuel_delta_to_finish)} L</strong></div>

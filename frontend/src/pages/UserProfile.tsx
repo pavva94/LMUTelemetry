@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
-import { formatRaceTime } from "../lib/timeFormat";
+import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSettings } from "../types/lmuDuckdb";
 import type { ProfileLap, ProfileSummary } from "../types/profile";
 
@@ -11,6 +11,7 @@ const fmt = (value?: number | null, digits = 1, suffix = "") =>
   value == null || Number.isNaN(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
 const dateText = (value?: string | null) => value ? new Date(value).toLocaleString() : "--";
+const wearText = (value?: number | null) => fmt(value == null ? null : value * 100, 1, "%");
 
 function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return <div className="metric compact"><span className="label">{label}</span><span className="value">{value}</span>{sub && <span className="subvalue">{sub}</span>}</div>;
@@ -153,17 +154,17 @@ export function UserProfile() {
         <div className="header-grid">
           <Metric label="Distance" value={fmt(totals.total_distance_km as number, 1, " km")} />
           <Metric label="Sessions" value={text(totals.total_sessions as number)} sub={`${text(totals.duckdb_sessions as number)} DuckDB`} />
-          <Metric label="Laps" value={text(totals.total_laps as number)} sub={`${text(totals.valid_laps as number)} valid`} />
-          <Metric label="Driving time" value={formatRaceTime(totals.total_driving_time as number)} />
+          <Metric label="Detected laps" value={text(totals.total_laps as number)} sub={`${text(totals.completed_laps as number)} completed; ${text(totals.valid_laps as number)} ranking-valid`} />
+          <Metric label="Completed driving time" value={formatDuration(totals.total_driving_time as number)} />
           <Metric label="Cars" value={text(totals.different_cars as number)} />
           <Metric label="Tracks" value={text(totals.different_tracks as number)} />
-          <Metric label="Avg session" value={formatRaceTime(totals.average_session_duration as number)} />
+          <Metric label="Avg session" value={formatDuration(totals.average_session_duration as number)} />
           <Metric label="Avg distance" value={fmt(totals.average_distance_per_session as number, 1, " km")} />
           <Metric label="Avg laps" value={fmt(totals.average_laps_per_session as number, 1)} />
-          <Metric label="Wins" value={text(totals.wins as number)} />
-          <Metric label="Podiums" value={text(totals.podiums as number)} />
-          <Metric label="Top 10" value={text(totals.top10 as number)} />
-          <Metric label="DNF/DNS/DQ" value={text(totals.dnf_dns as number)} />
+          <Metric label="Wins" value={text(totals.wins as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
+          <Metric label="Podiums" value={text(totals.podiums as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
+          <Metric label="Top 10" value={text(totals.top10 as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
+          <Metric label="DNF/DNS/DQ" value={text(totals.dnf_dns as number)} sub={`${text(totals.status_race_sessions as number)} races with status data`} />
           <Metric label="Best-lap records" value={text(totals.best_lap_count as number)} />
         </div>
       </section>
@@ -235,7 +236,7 @@ function LapTable({
               <th><SortButton label="Fuel" field="fuel" sort={sort} direction={direction} onSort={onSort} /></th>
               <th><SortButton label="Fuel used" field="fuel_used" sort={sort} direction={direction} onSort={onSort} /></th>
               <th><SortButton label="Tyre wear" field="tyre_wear" sort={sort} direction={direction} onSort={onSort} /></th>
-              <th>Tyre pressure</th>
+              <th>Tyre pressure (kPa)</th>
               {!compact && <th>Brake temp</th>}
               <th><SortButton label="Track temp" field="track_temp" sort={sort} direction={direction} onSort={onSort} /></th>
               <th>Ambient</th>
@@ -279,7 +280,7 @@ function LapTable({
                 <td>{validityBadge(lap)}</td>
                 <td>{fmt(lap.fuel_start, 2, " L")} / {fmt(lap.fuel_end, 2, " L")}</td>
                 <td>{fmt(lap.fuel_used, 2, " L")}</td>
-                <td>{fmt(lap.tyre_wear_fl, 1)} / {fmt(lap.tyre_wear_fr, 1)} / {fmt(lap.tyre_wear_rl, 1)} / {fmt(lap.tyre_wear_rr, 1)}</td>
+                <td>{wearText(lap.tyre_wear_fl)} / {wearText(lap.tyre_wear_fr)} / {wearText(lap.tyre_wear_rl)} / {wearText(lap.tyre_wear_rr)}</td>
                 <td>{fmt(lap.tyre_pressure_fl, 1)} / {fmt(lap.tyre_pressure_fr, 1)} / {fmt(lap.tyre_pressure_rl, 1)} / {fmt(lap.tyre_pressure_rr, 1)}</td>
                 {!compact && <td>{fmt(lap.brake_temp_fl, 0)} / {fmt(lap.brake_temp_fr, 0)} / {fmt(lap.brake_temp_rl, 0)} / {fmt(lap.brake_temp_rr, 0)}</td>}
                 <td>{fmt(lap.track_temp, 1, " C")}</td>
@@ -347,7 +348,7 @@ function lapFilterText(lap: ProfileLap, key: LapFilterKey) {
     case "fuel_used":
       return searchableNumber(lap.fuel_used, 2, " L");
     case "tyre_wear":
-      return [lap.tyre_wear_fl, lap.tyre_wear_fr, lap.tyre_wear_rl, lap.tyre_wear_rr].map((value) => searchableNumber(value, 1)).join(" ");
+      return [lap.tyre_wear_fl, lap.tyre_wear_fr, lap.tyre_wear_rl, lap.tyre_wear_rr].map((value) => searchableNumber(value == null ? null : value * 100, 1, "%")).join(" ");
     case "tyre_pressure":
       return [lap.tyre_pressure_fl, lap.tyre_pressure_fr, lap.tyre_pressure_rl, lap.tyre_pressure_rr].map((value) => searchableNumber(value, 1)).join(" ");
     case "brake_temp":
@@ -407,8 +408,8 @@ function validityBadge(lap: ProfileLap) {
 
 function formatCell(column: string, value: unknown) {
   if (typeof value === "number") {
-    if (column.includes("distance")) return fmt(value, 1, " km");
     if (column.includes("percent")) return fmt(value, 1, "%");
+    if (column.includes("distance")) return fmt(value, 1, " km");
     if (column.includes("lap")) return column === "best_lap" ? formatRaceTime(value) : fmt(value, 0);
     return fmt(value, 1);
   }

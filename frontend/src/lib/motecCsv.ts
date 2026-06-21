@@ -198,17 +198,25 @@ function buildLaps(samples: MotecSample[]): MotecLap[] {
     const speeds = lapSamples.map((sample) => numeric(sample, "Ground Speed")).filter((value): value is number => value != null);
     const cornerSpeeds = lapSamples.map((sample) => numeric(sample, "Min Corner Speed")).filter((value): value is number => value != null);
     const rpm = lapSamples.map((sample) => numeric(sample, "Engine RPM")).filter((value): value is number => value != null);
+    const duration = times.length ? Math.max(...times) - Math.min(...times) : null;
+    const lapIndex = Number(lapNumber);
+    const reasons = [
+      ...(!Number.isFinite(lapIndex) || lapIndex < 1 ? ["lap number is not a completed racing lap"] : []),
+      ...(duration == null || duration < 40 || duration > 900 ? ["duration is outside 40-900 seconds"] : []),
+    ];
     return {
       lapNumber,
       startTime: times.length ? Math.min(...times) : null,
       endTime: times.length ? Math.max(...times) : null,
-      duration: times.length ? Math.max(...times) - Math.min(...times) : null,
+      duration,
       sampleCount: lapSamples.length,
       maxSpeed: speeds.length ? Math.max(...speeds) : null,
       minCornerSpeed: cornerSpeeds.length ? Math.min(...cornerSpeeds) : null,
       maxRpm: rpm.length ? Math.max(...rpm) : null,
       fuelStart: numeric(lapSamples[0], "Fuel Level"),
       fuelEnd: numeric(lapSamples[lapSamples.length - 1], "Fuel Level"),
+      valid: reasons.length === 0,
+      quality: reasons.length ? reasons.join("; ") : "complete lap",
     };
   }).sort((a, b) => Number(a.lapNumber) - Number(b.lapNumber));
 }

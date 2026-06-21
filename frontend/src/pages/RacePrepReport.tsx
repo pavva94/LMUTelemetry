@@ -6,7 +6,7 @@ import { SectionTitle } from "../components/SectionTitle";
 import { duckdbSessionLabel, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { buildRacePrepReport, type RacePrepReport as RacePrepReportModel, type Wheel } from "../lib/racePrepReport";
-import { formatRaceTime } from "../lib/timeFormat";
+import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview } from "../types/session";
 import type { StrategyState } from "../types/strategy";
@@ -175,7 +175,7 @@ function SessionOverview({ report }: { report: RacePrepReportModel }) {
         <Metric label="Best lap" value={formatRaceTime(report.pace.bestLap)} />
         <Metric label="Average lap" value={formatRaceTime(report.pace.averageLap)} />
         <Metric label="Median lap" value={formatRaceTime(report.pace.medianLap)} />
-        <Metric label="Duration" value={formatRaceTime(report.session.duration)} />
+        <Metric label="Duration" value={formatDuration(report.session.duration)} />
         <Metric label="Distance" value={fmt(report.session.totalDistanceKm, 2, " km")} />
         <Metric label="Top speed" value={fmt(report.session.topSpeed, 0, " km/h")} />
         <Metric label="Pit laps" value={report.session.pitLaps} />

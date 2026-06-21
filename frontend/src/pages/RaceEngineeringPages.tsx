@@ -14,7 +14,8 @@ import {
 import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
-import { formatRaceGap, formatRaceTime } from "../lib/timeFormat";
+import { toFiniteNumber } from "../lib/sessionAnalysis";
+import { formatDuration, formatRaceGap, formatRaceTime } from "../lib/timeFormat";
 import type { SessionReview } from "../types/session";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { CompetitorState, PlayerState, TelemetrySnapshot, TyreState, TyreTemps } from "../types/telemetry";
@@ -117,19 +118,19 @@ const sampleWithLive = (review: SessionReview | null, telemetry: TelemetrySnapsh
   ];
 };
 const maxField = (rows: Field[], key: string) => {
-  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  const values = rows.map((row) => toFiniteNumber(row[key])).filter((value): value is number => value != null);
   return values.length ? Math.max(...values) : null;
 };
 const minField = (rows: Field[], key: string) => {
-  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  const values = rows.map((row) => toFiniteNumber(row[key])).filter((value): value is number => value != null);
   return values.length ? Math.min(...values) : null;
 };
 const avgField = (rows: Field[], key: string) => {
-  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  const values = rows.map((row) => toFiniteNumber(row[key])).filter((value): value is number => value != null);
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 };
 const medianField = (rows: Field[], key: string) => {
-  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite).sort((a, b) => a - b);
+  const values = rows.map((row) => toFiniteNumber(row[key])).filter((value): value is number => value != null).sort((a, b) => a - b);
   if (!values.length) return null;
   const middle = Math.floor(values.length / 2);
   return values.length % 2 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
@@ -204,7 +205,7 @@ function PageHeader({ telemetry, connected }: { telemetry: TelemetrySnapshot | n
         <Metric label="Car" value={text(carName(player))} />
         <Metric label="Driver" value={text((telemetry?.competitors || []).find((c) => c.is_player)?.driver_name || "Player")} />
         <Metric label="Lap" value={text(player?.lap_number ?? session?.current_lap)} />
-        <Metric label="Remaining" value={formatRaceTime(session?.time_remaining)} />
+        <Metric label="Remaining" value={formatDuration(session?.time_remaining)} />
       </div>
     </section>
   );
@@ -398,7 +399,7 @@ function numericSampleFields(samples: Field[]) {
   return [...preferred.filter((key) => discovered.has(key)), ...[...discovered].filter((key) => !preferred.includes(key)).sort()];
 }
 
-function buildStints(laps: Field[]) {
+export function buildStints(laps: Field[]) {
   const stints: Array<{ number: number; rows: Field[]; summary: Field }> = [];
   let current: Field[] = [];
   laps.forEach((lap) => {
@@ -412,18 +413,27 @@ function buildStints(laps: Field[]) {
   return stints.map((stint) => {
     const rows = stint.rows;
     const paceRows = validPaceRows(rows);
-    const fuelUsed = rows.map((row) => Number(row.fuel_used)).filter(Number.isFinite).reduce((sum, value) => sum + value, 0);
+    const fuelValues = paceRows.map((row) => toFiniteNumber(row.fuel_used)).filter((value): value is number => value != null && value >= 0);
+    const fuelUsed = fuelValues.reduce((sum, value) => sum + value, 0);
+    const tyreWearDeltas = paceRows.map((row) => {
+      const wheelDeltas = ["fl", "fr", "rl", "rr"]
+        .map((wheel) => toFiniteNumber(row[`tyre_wear_delta_${wheel}`]))
+        .filter((value): value is number => value != null && value > 0 && value < 0.2);
+      const fallback = toFiniteNumber(row.tyre_wear_delta);
+      return wheelDeltas.length ? avgNumbers(wheelDeltas) : fallback != null && fallback > 0 && fallback < 0.2 ? fallback : null;
+    }).filter((value): value is number => value != null);
     const summary = {
       stint_number: stint.number,
       start_lap: rows[0]?.lap_number,
       end_lap: rows[rows.length - 1]?.lap_number,
-      lap_count: rows.length,
+      lap_count: paceRows.length,
+      detected_lap_count: rows.length,
       fastest_lap: minField(paceRows, "lap_time"),
       average_lap: avgField(paceRows, "lap_time"),
-      top_speed: maxField(rows, "top_speed"),
+      top_speed: maxField(paceRows, "top_speed"),
       fuel_used: fuelUsed || null,
-      fuel_per_lap: fuelUsed && rows.length ? fuelUsed / rows.length : null,
-      tyre_wear_delta: (Number(rows[rows.length - 1]?.tyre_wear_end) || 0) - (Number(rows[0]?.tyre_wear_start) || 0),
+      fuel_per_lap: fuelValues.length ? fuelUsed / fuelValues.length : null,
+      tyre_wear_delta: avgNumbers(tyreWearDeltas),
     };
     return { ...stint, summary };
   });
@@ -455,7 +465,7 @@ export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
         <Metric label="Virtual energy" value={pct(player?.hybrid_state?.virtual_energy_fraction)} sub={text(player?.hybrid_state?.motor_state)} />
         <Metric label="Battery / regen" value={`${fmt(player?.hybrid_state?.battery_percent, 0, "%")} / ${fmt(player?.hybrid_state?.regen_kw, 1, " kW")}`} />
         <Metric label="Last lap used" value={`${fmt(fuel?.last_lap_fuel_used_liters, 2)} L`} />
-        <Metric label="Session average" value={`${fmt(fuel?.fuel_per_lap_liters, 2)} L`} sub={fuelLapsNeeded > 0 ? `Need ${fuelLapsNeeded} more valid lap${fuelLapsNeeded === 1 ? "" : "s"}` : `${fuel?.valid_laps_observed ?? 0} valid laps, ${fuel?.confidence || "low"} confidence`} />
+        <Metric label="Recent clean-lap average" value={`${fmt(fuel?.fuel_per_lap_liters, 2)} L`} sub={fuel?.fuel_use_stddev_liters != null ? `σ ${fmt(fuel.fuel_use_stddev_liters, 3)} L, ${fuel?.confidence || "low"} confidence` : fuelLapsNeeded > 0 ? `Need ${fuelLapsNeeded} more valid lap${fuelLapsNeeded === 1 ? "" : "s"}` : `${fuel?.valid_laps_observed ?? 0} valid laps, ${fuel?.confidence || "low"} confidence`} />
         <Metric label="Laps remaining" value={fmt(fuel?.fuel_laps_remaining)} />
         <Metric label="Needed to finish" value={`${fmt(fuel?.required_fuel_to_finish)} L`} />
         <Metric label="Fuel margin" value={`${fmt(fuel?.fuel_delta_to_finish)} L`} />
@@ -863,8 +873,8 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
         {stints.length ? <StintSummaryTable stints={stints} /> : <EmptyState detail="Complete laps and pit cycles will populate the stint history." />}
       </section>
       <section className="card span-12"><SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits come from telemetry pit entries, and returning to the main menu starts a new session." /><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<span className="muted">Stints split only on pit entry or a new session.</span></div></section>
-      <section className="card span-3"><SectionTitle title="Summary" help="Condenses stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Stint length" value={text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Fuel used" value={`${fmt(summary.fuel_used as number ?? telemetry?.player?.fuel_liters)} L`} /></section>
-      <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Wear delta" value={pct(strategy?.tyres?.average_wear)} /><Metric label="Deg per lap" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
+      <section className="card span-3"><SectionTitle title="Summary" help="Condenses clean-lap stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Valid / detected laps" value={`${text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} / ${text(summary.detected_lap_count ?? summary.lap_count)}`} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Clean-lap fuel used" value={fmt(summary.fuel_used as number, 2, " L")} /></section>
+      <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes eligible lap-to-lap wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Avg wear / valid lap" value={pct(summary.tyre_wear_delta as number)} /><Metric label="Model wear rate" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
       <section className="card span-6"><SectionTitle title="Stint Comparison" help="Compares lap time, fuel use, and tyre change across the stint. Look for degradation trends after fuel load falls." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
       <section className="card span-12"><SectionTitle title="Stint Lap Table" help="Shows every lap in the selected stint. Sort the story by lap time, fuel used, and events before changing setup assumptions." /><LapTable rows={rows} /></section>
     </div>
@@ -875,11 +885,11 @@ function StintSummaryTable({ stints }: { stints: Array<{ number: number; rows: F
   return (
     <div className="table-wrap">
       <table>
-        <thead><tr><th>Stint</th><th>Laps</th><th>Lap range</th><th>Fastest</th><th>Average</th><th>Fuel used</th><th>Fuel/lap</th><th>Tyre delta</th><th>Top speed</th></tr></thead>
+        <thead><tr><th>Stint</th><th>Valid / detected laps</th><th>Lap range</th><th>Fastest</th><th>Average</th><th>Clean fuel used</th><th>Fuel/valid lap</th><th>Avg wear/valid lap</th><th>Top speed</th></tr></thead>
         <tbody>{stints.map((stint) => (
           <tr key={stint.number}>
             <td>{stint.number}</td>
-            <td>{text(stint.summary.lap_count)}</td>
+            <td>{text(stint.summary.lap_count)} / {text(stint.summary.detected_lap_count)}</td>
             <td>{text(stint.summary.start_lap)}-{text(stint.summary.end_lap)}</td>
             <td>{lapTime(stint.summary.fastest_lap as number)}</td>
             <td>{lapTime(stint.summary.average_lap as number)}</td>
