@@ -1,8 +1,10 @@
 export type StrategyRisk = "low" | "medium" | "high";
-export type Wheel = "fl" | "fr" | "rl" | "rr";
-export type WheelWear = Record<Wheel, number | null>;
-
 export type StrategyConfidence = "low" | "medium" | "high";
+export type Wheel = "fl" | "fr" | "rl" | "rr";
+export type WheelValues = Record<Wheel, number>;
+export type ServiceModel = "sequential" | "parallel";
+export type TyreChangePolicy = "automatic" | "all" | "selected" | "never";
+export type SafetyPolicy = "aggressive" | "balanced" | "conservative";
 
 export type PaceEvidence = {
   lastLapTime?: number | null;
@@ -14,16 +16,21 @@ export type PaceEvidence = {
   sampleLaps?: number;
   confidence?: StrategyConfidence | string;
   source?: string;
+  method?: string;
+  spreadSeconds?: number | null;
+  foundLaps?: number;
 };
 
 export type CalculationBreakdown = {
   raceLaps: number;
   simulationPaceSeconds: number;
   baseRaceTimeSeconds: number;
+  pitLaneTimeSeconds: number;
+  stationaryServiceTimeSeconds: number;
   pitTimeSeconds: number;
   projectedPaceLossSeconds: number;
-  tyreDegradationLossSeconds: number;
-  liftCoastLossSeconds: number;
+  tyreDegradationLossSeconds: number | null;
+  liftCoastLossSeconds: number | null;
   trafficLossSeconds: number;
   fuelMarginLiters: number;
   fuelUseLitersPerLap: number;
@@ -31,6 +38,8 @@ export type CalculationBreakdown = {
   fuelConfidence: string;
   paceConfidence: string;
   tyreConfidence: string;
+  targetDurationSeconds: number;
+  timeRemainingSeconds: number;
   totalTimeSeconds: number;
 };
 
@@ -38,9 +47,11 @@ export type StintWearProjection = {
   stint: number;
   startLap: number;
   endLap: number;
-  startWear: Record<Wheel, number>;
-  endWear: Record<Wheel, number>;
-  remainingWear: Record<Wheel, number>;
+  startWear: WheelValues;
+  endWear: WheelValues;
+  remainingWear: WheelValues;
+  startFuelLiters: number;
+  endFuelLiters: number;
 };
 
 export type StrategySimulationInput = {
@@ -53,19 +64,29 @@ export type StrategySimulationInput = {
   fuelUseStdDevLiters?: number | null;
   fuelConfidence?: string;
   tankCapacityLiters: number | null;
-  raceStartFuelLiters: number | null;
+  /** @deprecated Start fuel is calculated by the engine. */
+  raceStartFuelLiters?: number | null;
   raceStartNewTyres?: boolean;
+  startingTyreWearByWheel?: Partial<Record<Wheel, number | null>>;
   fuelSafetyMarginLiters: number;
+  safetyPolicy?: SafetyPolicy;
   pitLaneLossSeconds: number;
+  baseStationarySeconds?: number;
   tyreChangeSecondsPerTyre: number;
   refuelSecondsPer5Liters: number;
+  serviceModel?: ServiceModel;
   currentTyreWear: number | null;
-  currentTyreWearByWheel?: Partial<WheelWear>;
+  currentTyreWearByWheel?: Partial<Record<Wheel, number | null>>;
   tyreWearRatePerLap: number | null;
+  tyreWearRateByWheel?: Partial<Record<Wheel, number | null>>;
   tyrePaceDegradationPerLap?: number | null;
   tyreConfidence?: string;
   maxTyreWear: number;
+  maxTyreWearByWheel?: Partial<Record<Wheel, number | null>>;
+  tyreChangePolicy?: TyreChangePolicy;
+  selectedTyres?: Wheel[];
   trafficPenaltySeconds?: number;
+  liftCoastSecondsPerPercentPerLap?: number | null;
   safetyCarActive?: boolean;
   safetyCarPitLossSeconds?: number | null;
   maxStops?: number;
@@ -75,16 +96,21 @@ export type StrategyStop = {
   lap: number;
   fuelRemainingLiters: number;
   fuelAddedLiters: number;
+  fuelOnExitLiters: number;
   tyresChanged: number;
   tyresToChange: Wheel[];
+  pitLaneTimeSeconds: number;
+  stationaryTimeSeconds: number;
   stopTimeSeconds: number;
-  tyreWearBeforeStop: Record<Wheel, number> | null;
-  nextStintProjectedWear: Record<Wheel, number> | null;
+  tyreWearBeforeStop: WheelValues | null;
+  nextStintProjectedWear: WheelValues | null;
+  reason: string;
 };
 
 export type StrategyCandidate = {
   id: string;
   label: string;
+  category: "fastest" | "balanced" | "conservative" | "alternative" | "fuel-save";
   stops: number;
   maxTyresChangedPerStop: number;
   tyresChangedPerStop: number;
@@ -93,8 +119,8 @@ export type StrategyCandidate = {
   totalTimeSeconds: number;
   baseRaceTimeSeconds: number;
   projectedPaceLossSeconds: number;
-  tyreDegradationLossSeconds: number;
-  liftCoastLossSeconds: number;
+  tyreDegradationLossSeconds: number | null;
+  liftCoastLossSeconds: number | null;
   trafficLossSeconds: number;
   confidence: StrategyConfidence;
   calculationBreakdown: CalculationBreakdown;
@@ -107,20 +133,23 @@ export type StrategyCandidate = {
   recommendedStartFuelLiters: number;
   startFuelIsFullTank: boolean;
   projectedTyreWear: number | null;
-  projectedTyreWearByWheel: Record<Wheel, number> | null;
+  projectedTyreWearByWheel: WheelValues | null;
   lowestRemainingTyreWear: number | null;
   risk: StrategyRisk;
   reasons: string[];
+  warnings: string[];
   stopsDetail: StrategyStop[];
   stintWear: StintWearProjection[];
 };
 
-const round = (value: number, digits = 3) => Number(value.toFixed(digits));
 const wheels: Wheel[] = ["fl", "fr", "rl", "rr"];
-const wheelLabels: Record<Wheel, string> = { fl: "FL", fr: "FR", rl: "RL", rr: "RR" };
-const MAX_SEARCHED_STOPS = 40;
-const TARGET_STINT_LAPS = 12;
-const TYRE_WEAR_LIMIT_TOLERANCE = 0.02;
+const wheelLabel: Record<Wheel, string> = { fl: "FL", fr: "FR", rl: "RL", rr: "RR" };
+const round = (value: number, digits = 3) => Number(value.toFixed(digits));
+const values = <T>(wheel: Record<Wheel, T>) => wheels.map((key) => wheel[key]);
+
+function confidenceRank(value?: string) { return value === "high" ? 2 : value === "medium" ? 1 : 0; }
+function confidenceName(value: number): StrategyConfidence { return value >= 2 ? "high" : value >= 1 ? "medium" : "low"; }
+function riskRank(value: StrategyRisk) { return value === "high" ? 2 : value === "medium" ? 1 : 0; }
 
 export function stopServiceTime(input: {
   pitLaneLossSeconds: number;
@@ -128,394 +157,274 @@ export function stopServiceTime(input: {
   tyreChangeSecondsPerTyre: number;
   fuelAddedLiters: number;
   refuelSecondsPer5Liters: number;
+  baseStationarySeconds?: number;
+  serviceModel?: ServiceModel;
 }) {
-  return (
-    input.pitLaneLossSeconds +
-    input.tyresChanged * input.tyreChangeSecondsPerTyre +
-    Math.ceil(Math.max(0, input.fuelAddedLiters) / 5) * input.refuelSecondsPer5Liters
-  );
+  const tyre = Math.max(0, input.tyresChanged) * Math.max(0, input.tyreChangeSecondsPerTyre);
+  const fuel = Math.max(0, input.fuelAddedLiters) / 5 * Math.max(0, input.refuelSecondsPer5Liters);
+  const work = input.serviceModel === "parallel" ? Math.max(tyre, fuel) : tyre + fuel;
+  return Math.max(0, input.pitLaneLossSeconds) + Math.max(0, input.baseStationarySeconds ?? 0) + work;
 }
 
-function liftCoastRisk(savePercent: number): StrategyRisk {
-  if (savePercent <= 2) return "low";
-  if (savePercent <= 5) return "medium";
-  return "high";
+function reserveFor(input: StrategySimulationInput) {
+  const factor = input.safetyPolicy === "conservative" ? 1.35 : input.safetyPolicy === "aggressive" ? 0.8 : 1;
+  const variance = Math.max(0, input.fuelUseStdDevLiters ?? 0) * (input.safetyPolicy === "conservative" ? 2 : input.safetyPolicy === "aggressive" ? 0 : 1);
+  return Math.max(0, input.fuelSafetyMarginLiters * factor + variance);
 }
 
-function riskRank(risk: StrategyRisk) {
-  return risk === "low" ? 0 : risk === "medium" ? 1 : 2;
+function fuelRateFor(input: StrategySimulationInput) {
+  const base = input.fuelPerLap ?? 0;
+  const deviation = Math.max(0, input.fuelUseStdDevLiters ?? 0);
+  return base + (input.safetyPolicy === "conservative" ? deviation : input.safetyPolicy === "balanced" ? deviation * 0.5 : 0);
 }
 
-function confidenceRank(confidence: StrategyConfidence | string | undefined) {
-  if (confidence === "high") return 2;
-  if (confidence === "medium") return 1;
+function paceFor(input: StrategySimulationInput) {
+  for (const value of [input.paceEvidence?.weightedRecentPace, input.paceEvidence?.last7LapAverage, input.paceEvidence?.last10LapAverage, input.paceEvidence?.lastLapTime, input.normalLapTime]) {
+    if (value != null && Number.isFinite(value) && value > 0) return value;
+  }
   return 0;
 }
 
-function confidenceFromRank(rank: number): StrategyConfidence {
-  if (rank >= 2) return "high";
-  if (rank >= 1) return "medium";
-  return "low";
-}
-
-function simulationPace(input: StrategySimulationInput) {
-  const evidence = input.paceEvidence;
-  const direct = evidence?.weightedRecentPace;
-  const last7 = evidence?.last7LapAverage;
-  const last10 = evidence?.last10LapAverage;
-  const last = evidence?.lastLapTime;
-  for (const value of [direct, last7, last10, last, input.normalLapTime]) {
-    if (value != null && Number.isFinite(value) && value > 0) return value;
-  }
-  return input.normalLapTime;
-}
-
-function projectedPaceLoss(input: StrategySimulationInput, raceLaps: number) {
-  const trend = input.paceEvidence?.paceTrendSecondsPerLap ?? 0;
-  if (!Number.isFinite(trend) || trend <= 0) return 0;
-  return trend * raceLaps * Math.max(0, raceLaps - 1) / 2;
-}
-
-function tyreDegradationLoss(input: StrategySimulationInput, tyrePlan: ReturnType<typeof tyreProjection>, stops: number, stintLaps: number) {
-  const paceDegradation = input.tyrePaceDegradationPerLap ?? 0;
-  if (!Number.isFinite(paceDegradation) || paceDegradation <= 0) return 0;
-  const stints = tyrePlan?.stintWear.length ? tyrePlan.stintWear : Array.from({ length: stops + 1 }, (_, index) => ({
-    stint: index + 1,
-    startLap: Math.round(stintLaps * index) + 1,
-    endLap: Math.round(stintLaps * (index + 1)),
-    startWear: { fl: 0, fr: 0, rl: 0, rr: 0 },
-    endWear: { fl: 0, fr: 0, rl: 0, rr: 0 },
-    remainingWear: { fl: input.maxTyreWear, fr: input.maxTyreWear, rl: input.maxTyreWear, rr: input.maxTyreWear },
-  }));
-  return stints.reduce((sum, stint) => {
-    const laps = Math.max(0, stint.endLap - stint.startLap + 1);
-    const triangularLoss = paceDegradation * laps * Math.max(0, laps - 1) / 2;
-    return sum + triangularLoss;
-  }, 0);
-}
-
-function planConfidence(input: StrategySimulationInput, risk: StrategyRisk): StrategyConfidence {
-  const ranks = [
-    input.fuelObservedLaps >= input.fuelRequiredLaps ? confidenceRank(input.fuelConfidence || "high") : 0,
-    confidenceRank(input.paceEvidence?.confidence),
-    confidenceRank(input.tyreConfidence || (input.tyreWearRatePerLap ? "medium" : "low")),
-    risk === "high" ? 0 : risk === "medium" ? 1 : 2,
-  ];
-  return confidenceFromRank(Math.min(...ranks));
-}
-
-function currentTyreWearByWheel(input: StrategySimulationInput): Record<Wheel, number> | null {
-  if (input.raceStartNewTyres) {
-    return { fl: 0, fr: 0, rl: 0, rr: 0 };
-  }
+function startingWear(input: StrategySimulationInput): WheelValues | null {
+  if (input.raceStartNewTyres !== false) return { fl: 0, fr: 0, rl: 0, rr: 0 };
   const fallback = input.currentTyreWear;
-  if (fallback == null || input.tyreWearRatePerLap == null) return null;
-  return Object.fromEntries(wheels.map((wheel) => {
-    const direct = input.currentTyreWearByWheel?.[wheel];
-    return [wheel, direct != null && Number.isFinite(direct) ? Math.max(0, direct) : Math.max(0, fallback)];
-  })) as Record<Wheel, number>;
+  const source = input.startingTyreWearByWheel ?? input.currentTyreWearByWheel;
+  if (fallback == null && !wheels.some((wheel) => source?.[wheel] != null)) return null;
+  return Object.fromEntries(wheels.map((wheel) => [wheel, Math.max(0, source?.[wheel] ?? fallback ?? 0)])) as WheelValues;
 }
 
-function addWear(wear: Record<Wheel, number>, laps: number, rate: number) {
-  return Object.fromEntries(wheels.map((wheel) => [wheel, wear[wheel] + laps * rate])) as Record<Wheel, number>;
+function wearRates(input: StrategySimulationInput): WheelValues | null {
+  if (input.tyreWearRatePerLap == null && !wheels.some((wheel) => input.tyreWearRateByWheel?.[wheel] != null)) return null;
+  return Object.fromEntries(wheels.map((wheel) => [wheel, Math.max(0, input.tyreWearRateByWheel?.[wheel] ?? input.tyreWearRatePerLap ?? 0)])) as WheelValues;
 }
 
-function remainingWear(wear: Record<Wheel, number>, maxTyreWear: number) {
-  return Object.fromEntries(wheels.map((wheel) => [wheel, maxTyreWear - wear[wheel]])) as Record<Wheel, number>;
+function wearLimits(input: StrategySimulationInput): WheelValues {
+  return Object.fromEntries(wheels.map((wheel) => [wheel, input.maxTyreWearByWheel?.[wheel] ?? input.maxTyreWear])) as WheelValues;
 }
 
-function resetChangedTyres(wear: Record<Wheel, number>, tyres: Wheel[]) {
-  const changed = new Set(tyres);
-  return Object.fromEntries(wheels.map((wheel) => [wheel, changed.has(wheel) ? 0 : wear[wheel]])) as Record<Wheel, number>;
+function splitLaps(total: number, stints: number) {
+  const base = Math.floor(total / stints);
+  const extra = total % stints;
+  return Array.from({ length: stints }, (_, index) => base + (index < extra ? 1 : 0));
 }
 
-function tyresForNextStint(endWear: Record<Wheel, number>, rate: number, stintLaps: number, maxTyreWear: number, maxTyresToChange: number) {
-  if (maxTyresToChange <= 0) return [];
-  return wheels
-    .map((wheel) => ({ wheel, nextEndWear: endWear[wheel] + stintLaps * rate }))
-    .filter(({ nextEndWear }) => nextEndWear >= maxTyreWear)
-    .sort((a, b) => b.nextEndWear - a.nextEndWear)
-    .slice(0, maxTyresToChange)
-    .map(({ wheel }) => wheel);
+function tyresForStop(input: StrategySimulationInput, wear: WheelValues, rates: WheelValues, nextLaps: number) {
+  const policy = input.tyreChangePolicy ?? "automatic";
+  if (policy === "never") return [];
+  if (policy === "all") return [...wheels];
+  if (policy === "selected") return [...(input.selectedTyres ?? [])];
+  const limits = wearLimits(input);
+  return wheels.filter((wheel) => wear[wheel] + rates[wheel] * nextLaps > limits[wheel]);
 }
 
-function tyreProjection(input: StrategySimulationInput, stops: number, stintLaps: number, maxTyresToChange: number) {
-  const wearRate = input.tyreWearRatePerLap;
-  const initialWear = currentTyreWearByWheel(input);
-  if (wearRate == null || initialWear == null) return null;
-
-  let startWear = initialWear;
-  const stintWear: StintWearProjection[] = [];
-  const stopTyres: Wheel[][] = [];
-  const stopWearBefore: Array<Record<Wheel, number>> = [];
+function calculateTyres(input: StrategySimulationInput, stintLaps: number[]) {
+  const start = startingWear(input);
+  const rates = wearRates(input);
+  if (!start || !rates) return { stints: [] as StintWearProjection[], calls: [] as Wheel[][], maxWear: null, final: null, violations: [] as string[] };
+  const limits = wearLimits(input);
+  let wear = { ...start };
+  let lap = 1;
+  const stints: StintWearProjection[] = [];
+  const calls: Wheel[][] = [];
+  const violations: string[] = [];
   let maxWear = 0;
-
-  for (let stintIndex = 0; stintIndex < stops + 1; stintIndex += 1) {
-    const endWear = addWear(startWear, stintLaps, wearRate);
-    maxWear = Math.max(maxWear, ...wheels.map((wheel) => endWear[wheel]));
-    stintWear.push({
-      stint: stintIndex + 1,
-      startLap: Math.round(stintLaps * stintIndex) + 1,
-      endLap: Math.round(stintLaps * (stintIndex + 1)),
-      startWear: Object.fromEntries(wheels.map((wheel) => [wheel, round(startWear[wheel], 3)])) as Record<Wheel, number>,
-      endWear: Object.fromEntries(wheels.map((wheel) => [wheel, round(endWear[wheel], 3)])) as Record<Wheel, number>,
-      remainingWear: Object.fromEntries(wheels.map((wheel) => [wheel, round(input.maxTyreWear - endWear[wheel], 3)])) as Record<Wheel, number>,
+  for (let index = 0; index < stintLaps.length; index += 1) {
+    const laps = stintLaps[index];
+    const end = Object.fromEntries(wheels.map((wheel) => [wheel, wear[wheel] + rates[wheel] * laps])) as WheelValues;
+    wheels.forEach((wheel) => {
+      maxWear = Math.max(maxWear, end[wheel]);
+      if (end[wheel] > limits[wheel] + 1e-6) violations.push(`${wheelLabel[wheel]} reaches ${round(end[wheel] * 100, 1)}% (limit ${round(limits[wheel] * 100, 1)}%)`);
     });
-
-    if (stintIndex < stops) {
-      const tyresToChange = tyresForNextStint(endWear, wearRate, stintLaps, input.maxTyreWear, maxTyresToChange);
-      stopTyres.push(tyresToChange);
-      stopWearBefore.push(Object.fromEntries(wheels.map((wheel) => [wheel, round(endWear[wheel], 3)])) as Record<Wheel, number>);
-      startWear = resetChangedTyres(endWear, tyresToChange);
+    stints.push({ stint: index + 1, startLap: lap, endLap: lap + laps - 1, startWear: { ...wear }, endWear: end, remainingWear: Object.fromEntries(wheels.map((wheel) => [wheel, limits[wheel] - end[wheel]])) as WheelValues, startFuelLiters: 0, endFuelLiters: 0 });
+    lap += laps;
+    if (index < stintLaps.length - 1) {
+      const call = tyresForStop(input, end, rates, stintLaps[index + 1]);
+      calls.push(call);
+      wear = Object.fromEntries(wheels.map((wheel) => [wheel, call.includes(wheel) ? 0 : end[wheel]])) as WheelValues;
     }
   }
-
-  const finalWear = stintWear[stintWear.length - 1]?.endWear ?? null;
-  const finalRemaining = finalWear ? remainingWear(finalWear, input.maxTyreWear) : null;
-  return {
-    projectedTyreWear: round(maxWear, 3),
-    projectedTyreWearByWheel: finalWear,
-    lowestRemainingTyreWear: finalRemaining == null ? null : round(Math.min(...wheels.map((wheel) => finalRemaining[wheel])), 3),
-    stintWear,
-    stopTyres,
-    stopWearBefore,
-  };
+  return { stints, calls, maxWear, final: stints[stints.length - 1]?.endWear ?? null, violations };
 }
 
-function tyreListText(tyres: Wheel[]) {
-  return tyres.length ? tyres.map((wheel) => wheelLabels[wheel]).join("/") : "fuel only";
-}
-
-function candidateLabel(stops: number, maxTyres: number, liftSavePercent: number) {
-  const stopText = stops === 1 ? "1 stop" : `${stops} stops`;
-  const tyreText = stops === 0 ? "no tyre service" : maxTyres === 0 ? "fuel only" : `up to ${maxTyres} tyre${maxTyres === 1 ? "" : "s"} as needed`;
-  const liftText = liftSavePercent > 0 ? " + lift/coast" : "";
-  return `${stopText}, ${tyreText}${liftText}`;
-}
-
-function buildFuelPlan(input: StrategySimulationInput, stops: number, stintLaps: number, effectiveFuelPerLap: number) {
-  const stintFuelNeed = stintLaps * effectiveFuelPerLap;
-  const fuelSafetyMargin = Math.max(0, input.fuelSafetyMarginLiters);
-  const tankCapacityLiters = input.tankCapacityLiters ?? 0;
-  const stopsDetail: Array<Pick<StrategyStop, "lap" | "fuelRemainingLiters" | "fuelAddedLiters">> = [];
-  let fuelInTank = input.raceStartFuelLiters ?? 0;
-
-  if (fuelInTank + 0.01 < stintFuelNeed + (stops > 0 ? fuelSafetyMargin : 0)) return null;
-
-  for (let index = 0; index < stops; index += 1) {
-    fuelInTank -= stintFuelNeed;
-    if (fuelInTank < fuelSafetyMargin - 0.01) return null;
-
-    const stintsRemaining = stops - index;
-    const fuelNeededAfterStop = stintsRemaining * stintFuelNeed + fuelSafetyMargin;
-    const fuelAddedLiters = Math.max(0, Math.min(tankCapacityLiters, fuelNeededAfterStop) - fuelInTank);
-    if (fuelAddedLiters > tankCapacityLiters - fuelInTank + 0.01) return null;
-
-    stopsDetail.push({
-      lap: Math.round(stintLaps * (index + 1)),
-      fuelRemainingLiters: round(fuelInTank, 2),
-      fuelAddedLiters: round(fuelAddedLiters, 2),
-    });
-    fuelInTank += fuelAddedLiters;
-  }
-
-  fuelInTank -= stintFuelNeed;
-  if (fuelInTank < fuelSafetyMargin - 0.01) return null;
-
-  return {
-    stopsDetail,
-    finishFuelRemainingLiters: fuelInTank,
-    fuelAddedTotalLiters: stopsDetail.reduce((sum, stop) => sum + stop.fuelAddedLiters, 0),
-  };
-}
-
-function findFuelPlan(input: StrategySimulationInput, stops: number, raceLaps: number, stintLaps: number, baseFuelNeed: number) {
-  const maxLiftSavePerLap = input.fuelPerLap == null ? 0 : input.fuelPerLap * 0.08;
-  const fuelCapacityAvailable = (input.raceStartFuelLiters ?? 0) + stops * (input.tankCapacityLiters ?? 0);
-  const totalShortage = Math.max(0, baseFuelNeed - fuelCapacityAvailable);
-  let liftSavePerLap = totalShortage > 0 ? totalShortage / raceLaps : 0;
-
-  const planFor = (savePerLap: number) => {
-    const effectiveFuelPerLap = (input.fuelPerLap ?? 0) - savePerLap;
-    return effectiveFuelPerLap > 0 ? buildFuelPlan(input, stops, stintLaps, effectiveFuelPerLap) : null;
-  };
-
-  let fuelPlan = planFor(liftSavePerLap);
-  if (!fuelPlan) {
-    let low = liftSavePerLap;
-    let high = maxLiftSavePerLap;
-    if (!planFor(high)) return null;
-    for (let index = 0; index < 24; index += 1) {
-      const mid = (low + high) / 2;
-      if (planFor(mid)) high = mid;
-      else low = mid;
+function buildFuel(input: StrategySimulationInput, stintLaps: number[], savePerLap: number) {
+  const rate = fuelRateFor(input) - savePerLap;
+  const reserve = reserveFor(input);
+  const tank = input.tankCapacityLiters ?? 0;
+  const required = stintLaps.map((laps) => laps * rate);
+  const start = required[0] + reserve;
+  if (rate <= 0 || start > tank + 1e-6) return null;
+  let fuel = start;
+  const stops: Array<{ entry: number; add: number; exit: number }> = [];
+  for (let index = 0; index < stintLaps.length; index += 1) {
+    fuel -= required[index];
+    if (fuel < -1e-6) return null;
+    if (index < stintLaps.length - 1) {
+      const target = required[index + 1] + reserve;
+      if (target > tank + 1e-6) return null;
+      const add = Math.max(0, target - fuel);
+      stops.push({ entry: fuel, add, exit: fuel + add });
+      fuel += add;
     }
-    liftSavePerLap = high;
-    fuelPlan = planFor(liftSavePerLap);
   }
+  if (fuel + 1e-6 < reserve) return null;
+  return { rate, reserve, start, finish: fuel, stops, required };
+}
 
-  if (!fuelPlan) return null;
-  return { liftSavePerLap, effectiveFuelPerLap: (input.fuelPerLap ?? 0) - liftSavePerLap, fuelPlan };
+function elapsedFor(input: StrategySimulationInput, laps: number, stintLaps: number[], tyreCalls: Wheel[][], fuelStops: Array<{ add: number }>, savePercent: number) {
+  const basePace = paceFor(input);
+  const trend = Math.max(0, input.paceEvidence?.paceTrendSecondsPerLap ?? 0);
+  const degradation = input.tyrePaceDegradationPerLap != null && input.tyrePaceDegradationPerLap >= 0 ? input.tyrePaceDegradationPerLap : null;
+  const liftCost = savePercent > 0 && input.liftCoastSecondsPerPercentPerLap != null ? input.liftCoastSecondsPerPercentPerLap * savePercent * laps : null;
+  let elapsed = 0;
+  let base = 0;
+  let trendLoss = 0;
+  let tyreLoss = 0;
+  let pitLane = 0;
+  let stationary = 0;
+  let completed = 0;
+  const stops: Array<{ lane: number; stationary: number; total: number }> = [];
+  for (let stint = 0; stint < stintLaps.length; stint += 1) {
+    for (let local = 0; local < stintLaps[stint]; local += 1) {
+      if (elapsed >= input.raceDurationMinutes * 60) break;
+      const trendPart = trend * completed;
+      const tyrePart = degradation == null ? 0 : degradation * local;
+      const liftPart = liftCost == null ? 0 : liftCost / Math.max(1, laps);
+      elapsed += basePace + trendPart + tyrePart + liftPart;
+      base += basePace;
+      trendLoss += trendPart;
+      tyreLoss += tyrePart;
+      completed += 1;
+    }
+    if (elapsed >= input.raceDurationMinutes * 60 || stint >= stintLaps.length - 1) continue;
+    const lane = input.safetyCarActive && input.safetyCarPitLossSeconds != null ? input.safetyCarPitLossSeconds : input.pitLaneLossSeconds;
+    const tyre = tyreCalls[stint].length * input.tyreChangeSecondsPerTyre;
+    const fuel = fuelStops[stint].add / 5 * input.refuelSecondsPer5Liters;
+    const work = input.serviceModel === "parallel" ? Math.max(tyre, fuel) : tyre + fuel;
+    const stopStationary = Math.max(0, input.baseStationarySeconds ?? 0) + work;
+    elapsed += lane + stopStationary + Math.max(0, input.trafficPenaltySeconds ?? 0);
+    pitLane += lane;
+    stationary += stopStationary;
+    stops.push({ lane, stationary: stopStationary, total: lane + stopStationary });
+  }
+  return { elapsed, completed, base, trendLoss, tyreLoss: degradation == null ? null : tyreLoss, liftCost, pitLane, stationary, stops };
+}
+
+function candidate(input: StrategySimulationInput, stopCount: number, initialLapGuess: number, allowSave: boolean): StrategyCandidate | null {
+  let raceLaps = Math.max(1, initialLapGuess);
+  let result: ReturnType<typeof elapsedFor> | null = null;
+  let tyre = calculateTyres(input, splitLaps(raceLaps, stopCount + 1));
+  let fuel: ReturnType<typeof buildFuel> = null;
+  let savePerLap = 0;
+  for (let iteration = 0; iteration < 8; iteration += 1) {
+    const stints = splitLaps(raceLaps, stopCount + 1);
+    tyre = calculateTyres(input, stints);
+    fuel = buildFuel(input, stints, savePerLap);
+    if (!fuel && allowSave && input.fuelPerLap) {
+      for (let percent = 0.5; percent <= 8 && !fuel; percent += 0.5) {
+        savePerLap = input.fuelPerLap * percent / 100;
+        fuel = buildFuel(input, stints, savePerLap);
+      }
+    }
+    if (!fuel) return null;
+    const savePercent = savePerLap / (input.fuelPerLap ?? 1) * 100;
+    result = elapsedFor(input, raceLaps, stints, tyre.calls, fuel.stops, savePercent);
+    if (result.completed === raceLaps) break;
+    raceLaps = Math.max(1, result.completed);
+  }
+  if (!fuel || !result) return null;
+  const stints = splitLaps(raceLaps, stopCount + 1);
+  tyre = calculateTyres(input, stints);
+  if (tyre.violations.length && input.tyreChangePolicy !== "never") return null;
+  const savePercent = savePerLap / (input.fuelPerLap ?? 1) * 100;
+  const stopsDetail: StrategyStop[] = fuel.stops.map((stop, index) => {
+    const wear = tyre.stints[index]?.endWear ?? null;
+    const tyres = tyre.calls[index] ?? [];
+    const limits = wearLimits(input);
+    const next = tyre.stints[index + 1]?.endWear ?? null;
+    const thresholdReason = (input.tyreChangePolicy ?? "automatic") === "automatic" ? tyres.map(wheel => wheelLabel[wheel]) : [];
+    return {
+      lap: stints.slice(0, index + 1).reduce((sum, value) => sum + value, 0),
+      fuelRemainingLiters: round(stop.entry, 2), fuelAddedLiters: round(stop.add, 2), fuelOnExitLiters: round(stop.exit, 2),
+      tyresChanged: tyres.length, tyresToChange: tyres,
+      pitLaneTimeSeconds: round(result!.stops[index]?.lane ?? input.pitLaneLossSeconds, 2),
+      stationaryTimeSeconds: round(result!.stops[index]?.stationary ?? 0, 2),
+      stopTimeSeconds: round(result!.stops[index]?.total ?? 0, 2),
+      tyreWearBeforeStop: wear, nextStintProjectedWear: next,
+      reason: thresholdReason.length ? `${thresholdReason.join(" + ")} would exceed the permitted wear before the next stop` : tyres.length ? "Selected tyre service policy" : "Fuel range",
+    };
+  });
+  let fuelCursor = fuel.start;
+  tyre.stints.forEach((stint, index) => {
+    stint.startFuelLiters = round(fuelCursor, 2);
+    fuelCursor -= fuel.required[index];
+    stint.endFuelLiters = round(fuelCursor, 2);
+    if (fuel.stops[index]) fuelCursor += fuel.stops[index].add;
+  });
+  const margin = fuel.finish - fuel.reserve;
+  const warnings: string[] = [];
+  if (savePercent > 0 && input.liftCoastSecondsPerPercentPerLap == null) warnings.push("Fuel-saving pace cost unavailable: no calibrated lift-and-coast model");
+  if (input.tyrePaceDegradationPerLap == null) warnings.push("Insufficient tyre degradation data; no degradation time was applied");
+  if (tyre.violations.length) warnings.push(...tyre.violations);
+  if (input.fuelObservedLaps < input.fuelRequiredLaps) warnings.push(`Fuel model uses only ${input.fuelObservedLaps} valid laps`);
+  const risk: StrategyRisk = tyre.violations.length || savePercent > 5 ? "high" : margin < (input.fuelPerLap ?? 0) * 0.5 || savePercent > 0 ? "medium" : "low";
+  const confidence = confidenceName(Math.min(confidenceRank(input.paceEvidence?.confidence), confidenceRank(input.fuelConfidence), confidenceRank(input.tyreConfidence), risk === "low" ? 2 : risk === "medium" ? 1 : 0));
+  const traffic = stopCount * Math.max(0, input.trafficPenaltySeconds ?? 0);
+  const total = result.elapsed;
+  const breakdown: CalculationBreakdown = {
+    raceLaps, simulationPaceSeconds: round(paceFor(input), 3), baseRaceTimeSeconds: round(result.base, 2),
+    pitLaneTimeSeconds: round(result.pitLane, 2), stationaryServiceTimeSeconds: round(result.stationary, 2), pitTimeSeconds: round(result.pitLane + result.stationary, 2),
+    projectedPaceLossSeconds: round(result.trendLoss, 2), tyreDegradationLossSeconds: result.tyreLoss == null ? null : round(result.tyreLoss, 2),
+    liftCoastLossSeconds: result.liftCost == null ? null : round(result.liftCost, 2), trafficLossSeconds: round(traffic, 2), fuelMarginLiters: round(margin, 2),
+    fuelUseLitersPerLap: round(fuel.rate, 3), fuelUseStdDevLiters: input.fuelUseStdDevLiters ?? null, fuelConfidence: input.fuelConfidence ?? "low",
+    paceConfidence: String(input.paceEvidence?.confidence ?? "low"), tyreConfidence: input.tyreConfidence ?? "low", targetDurationSeconds: input.raceDurationMinutes * 60,
+    timeRemainingSeconds: round(input.raceDurationMinutes * 60 - total, 2), totalTimeSeconds: round(total, 2),
+  };
+  const reasons = [
+    `${raceLaps} laps are completed by simulating elapsed time including ${stopCount} stop${stopCount === 1 ? "" : "s"}`,
+    `${round(fuel.rate, 3)} L/lap planning rate from ${input.fuelObservedLaps} valid fuel laps`,
+    `${round(fuel.start, 1)} L start fuel covers stint 1 plus ${round(fuel.reserve, 1)} L reserve`,
+    savePercent ? `${round(savePercent, 1)}% fuel saving is required` : "No lift-and-coast is required",
+  ];
+  return {
+    id: `${stopCount}-${input.safetyPolicy ?? "balanced"}-${round(savePercent, 1)}`, label: `${stopCount === 0 ? "No stop" : `${stopCount} stop${stopCount === 1 ? "" : "s"}`}`,
+    category: savePercent ? "fuel-save" : "alternative", stops: stopCount, maxTyresChangedPerStop: stopsDetail.length ? Math.max(...stopsDetail.map(stop => stop.tyresChanged)) : 0,
+    tyresChangedPerStop: stopsDetail.length ? Math.max(...stopsDetail.map(stop => stop.tyresChanged)) : 0, raceLaps, stintLaps: round(raceLaps / (stopCount + 1), 2), totalTimeSeconds: round(total, 2),
+    baseRaceTimeSeconds: round(result.base, 2), projectedPaceLossSeconds: round(result.trendLoss, 2), tyreDegradationLossSeconds: breakdown.tyreDegradationLossSeconds,
+    liftCoastLossSeconds: breakdown.liftCoastLossSeconds, trafficLossSeconds: round(traffic, 2), confidence, calculationBreakdown: breakdown, pitTimeSeconds: breakdown.pitTimeSeconds,
+    liftCoastSavePercent: round(savePercent, 2), liftCoastSaveLitersPerLap: round(savePerLap, 3), fuelMarginLiters: round(margin, 2), finishFuelRemainingLiters: round(fuel.finish, 2),
+    firstStintFuelNeedLiters: round(fuel.required[0], 2), recommendedStartFuelLiters: round(fuel.start, 2), startFuelIsFullTank: fuel.start >= (input.tankCapacityLiters ?? 0) - 0.01,
+    projectedTyreWear: tyre.maxWear == null ? null : round(tyre.maxWear, 3), projectedTyreWearByWheel: tyre.final, lowestRemainingTyreWear: tyre.final ? round(Math.min(...wheels.map(wheel => wearLimits(input)[wheel] - tyre.final![wheel])), 3) : null,
+    risk, reasons, warnings, stopsDetail, stintWear: tyre.stints,
+  };
 }
 
 export function simulateStrategies(input: StrategySimulationInput): StrategyCandidate[] {
-  if (
-    !input.fuelPerLap ||
-    !input.tankCapacityLiters ||
-    !input.raceStartFuelLiters ||
-    input.normalLapTime <= 0 ||
-    input.raceDurationMinutes <= 0
-  ) {
-    return [];
-  }
-
-  const paceSeconds = simulationPace(input);
-  const raceLaps = input.raceDurationMinutes * 60 / paceSeconds;
-  const baseFuelNeed = raceLaps * input.fuelPerLap + input.fuelSafetyMarginLiters;
-  const raceStartFuelLiters = input.raceStartFuelLiters;
-  const fuelLimitedMinimumStops = input.tankCapacityLiters > 0
-    ? Math.max(0, Math.ceil(Math.max(0, baseFuelNeed - raceStartFuelLiters) / input.tankCapacityLiters))
-    : 0;
-  const maxStops = input.maxStops ?? Math.min(
-    MAX_SEARCHED_STOPS,
-    Math.max(2, Math.ceil(raceLaps / TARGET_STINT_LAPS), fuelLimitedMinimumStops),
-  );
-  const candidates: StrategyCandidate[] = [];
-
+  if (!input.fuelPerLap || !input.tankCapacityLiters || paceFor(input) <= 0 || input.raceDurationMinutes <= 0) return [];
+  const roughLaps = Math.max(1, Math.ceil(input.raceDurationMinutes * 60 / paceFor(input)));
+  const fuelStint = Math.max(1, Math.floor((input.tankCapacityLiters - reserveFor(input)) / fuelRateFor(input)));
+  const minimumStops = Math.max(0, Math.ceil(roughLaps / fuelStint) - 1);
+  const maxStops = input.maxStops ?? Math.min(40, Math.max(minimumStops + 3, 4));
+  const all: StrategyCandidate[] = [];
   for (let stops = 0; stops <= maxStops; stops += 1) {
-    const stints = stops + 1;
-    const stintLaps = raceLaps / stints;
-
-    for (let maxTyres = 0; maxTyres <= 4; maxTyres += 1) {
-      const fuelFit = findFuelPlan(input, stops, raceLaps, stintLaps, baseFuelNeed);
-      if (!fuelFit) continue;
-      const { liftSavePerLap, effectiveFuelPerLap, fuelPlan } = fuelFit;
-      const liftSavePercent = input.fuelPerLap > 0 ? liftSavePerLap / input.fuelPerLap * 100 : 0;
-      if (liftSavePercent > 8) continue;
-      const firstStintFuelNeed = stintLaps * effectiveFuelPerLap;
-      if (firstStintFuelNeed > raceStartFuelLiters + 0.01) continue;
-      const recommendedStartFuel = Math.min(input.tankCapacityLiters, firstStintFuelNeed + input.fuelSafetyMarginLiters);
-
-      const tyrePlan = tyreProjection(input, stops, stintLaps, maxTyres);
-      const tyreWear = tyrePlan?.projectedTyreWear ?? null;
-      const tyreOverLimit = tyreWear != null && tyreWear > input.maxTyreWear;
-      if (tyreOverLimit && tyreWear > input.maxTyreWear + TYRE_WEAR_LIMIT_TOLERANCE) continue;
-
-      const stopsDetail = fuelPlan.stopsDetail.map((fuelStop, index) => {
-        const tyresToChange = tyrePlan?.stopTyres[index] ?? [];
-        const stopTimeSeconds = stopServiceTime({
-          pitLaneLossSeconds: input.safetyCarActive && input.safetyCarPitLossSeconds != null ? input.safetyCarPitLossSeconds : input.pitLaneLossSeconds,
-          tyresChanged: tyresToChange.length,
-          tyreChangeSecondsPerTyre: input.tyreChangeSecondsPerTyre,
-          fuelAddedLiters: fuelStop.fuelAddedLiters,
-          refuelSecondsPer5Liters: input.refuelSecondsPer5Liters,
-        });
-        const nextStintProjectedWear = tyrePlan?.stintWear[index + 1]?.endWear ?? null;
-        return {
-          lap: fuelStop.lap,
-          fuelRemainingLiters: fuelStop.fuelRemainingLiters,
-          fuelAddedLiters: fuelStop.fuelAddedLiters,
-          tyresChanged: tyresToChange.length,
-          tyresToChange,
-          stopTimeSeconds: round(stopTimeSeconds, 2),
-          tyreWearBeforeStop: tyrePlan?.stopWearBefore[index] ?? null,
-          nextStintProjectedWear,
-        };
-      });
-      const pitTimeSeconds = stopsDetail.reduce((sum, stop) => sum + stop.stopTimeSeconds, 0);
-      // Fuel saving remains a feasibility result until a calibrated, explicit
-      // seconds-per-percent assumption is available; do not invent pace cost.
-      const liftTimeLoss = 0;
-      const baseRaceTimeSeconds = raceLaps * paceSeconds;
-      const paceLoss = projectedPaceLoss(input, raceLaps);
-      const tyreLoss = tyreDegradationLoss(input, tyrePlan, stops, stintLaps);
-      const trafficLoss = stops > 0 ? Math.max(0, input.trafficPenaltySeconds ?? 0) * stops : 0;
-      const totalTimeSeconds = baseRaceTimeSeconds + pitTimeSeconds + liftTimeLoss + paceLoss + tyreLoss + trafficLoss;
-      const finishFuelRemainingLiters = fuelPlan.finishFuelRemainingLiters;
-      const fuelMarginLiters = finishFuelRemainingLiters - input.fuelSafetyMarginLiters;
-      const risks: StrategyRisk[] = [];
-      if (liftSavePercent > 0) risks.push(liftCoastRisk(liftSavePercent));
-      if (tyreOverLimit) risks.push("high");
-      else if (tyreWear != null && tyreWear > input.maxTyreWear - 0.08) risks.push("medium");
-      if (fuelMarginLiters < input.fuelPerLap * 0.5) risks.push("medium");
-      if (input.fuelObservedLaps < input.fuelRequiredLaps) risks.push("medium");
-      if ((input.fuelUseStdDevLiters ?? 0) > input.fuelPerLap * 0.12) risks.push("medium");
-      if ((input.paceEvidence?.paceTrendSecondsPerLap ?? 0) > 0.25) risks.push("medium");
-      if (tyreLoss > Math.max(5, input.pitLaneLossSeconds * 0.5)) risks.push("medium");
-      const risk = risks.sort((a, b) => riskRank(b) - riskRank(a))[0] ?? "low";
-      const confidence = planConfidence(input, risk);
-      const calculationBreakdown: CalculationBreakdown = {
-        raceLaps: round(raceLaps, 2),
-        simulationPaceSeconds: round(paceSeconds, 3),
-        baseRaceTimeSeconds: round(baseRaceTimeSeconds, 2),
-        pitTimeSeconds: round(pitTimeSeconds, 2),
-        projectedPaceLossSeconds: round(paceLoss, 2),
-        tyreDegradationLossSeconds: round(tyreLoss, 2),
-        liftCoastLossSeconds: round(liftTimeLoss, 2),
-        trafficLossSeconds: round(trafficLoss, 2),
-        fuelMarginLiters: round(fuelMarginLiters, 2),
-        fuelUseLitersPerLap: round(input.fuelPerLap, 3),
-        fuelUseStdDevLiters: input.fuelUseStdDevLiters == null ? null : round(input.fuelUseStdDevLiters, 3),
-        fuelConfidence: input.fuelConfidence || (input.fuelObservedLaps >= input.fuelRequiredLaps ? "high" : "low"),
-        paceConfidence: String(input.paceEvidence?.confidence || "low"),
-        tyreConfidence: input.tyreConfidence || (input.tyreWearRatePerLap ? "medium" : "low"),
-        totalTimeSeconds: round(totalTimeSeconds, 2),
-      };
-      const reasons = [
-        `${round(stintLaps, 1)} lap average stint`,
-        `pace model ${round(paceSeconds, 3)} s/lap from ${input.paceEvidence?.source || "strategy input"}`,
-        `finish with ${round(finishFuelRemainingLiters, 1)} L fuel remaining`,
-        stops > 0 ? `${round(fuelPlan.fuelAddedTotalLiters, 1)} L total fuel added` : "no scheduled fuel stop",
-        `${round(recommendedStartFuel, 1)} L start fuel needed for stint 1`,
-        input.raceStartNewTyres ? "race start assumes a new tyre set" : "race start uses observed tyre wear",
-        tyreWear == null ? "tyre projection needs more wear data" : `max projected tyre wear ${round(tyreWear * 100, 0)}%`,
-        tyreLoss > 0 ? `${round(tyreLoss, 1)} s tyre degradation loss` : "no tyre degradation loss applied",
-        paceLoss > 0 ? `${round(paceLoss, 1)} s recent pace trend loss` : "recent pace trend stable",
-        trafficLoss > 0 ? `${round(trafficLoss, 1)} s traffic loss applied` : "no traffic loss applied",
-        stops > 0 ? `tyre service: ${stopsDetail.map((stop) => `lap ${stop.lap} ${tyreListText(stop.tyresToChange)}`).join(", ")}` : "no scheduled tyre service",
-        liftSavePercent > 0 ? `${round(liftSavePercent, 1)}% lift-and-coast fuel save required` : `${round(fuelMarginLiters, 1)} L fuel margin`,
-      ];
-
-      candidates.push({
-        id: `${stops}-${maxTyres}-${round(liftSavePercent, 2)}-${stopsDetail.map((stop) => stop.tyresToChange.join("")).join("-")}`,
-        label: candidateLabel(stops, maxTyres, liftSavePercent),
-        stops,
-        maxTyresChangedPerStop: maxTyres,
-        tyresChangedPerStop: stopsDetail.length ? Math.max(...stopsDetail.map((stop) => stop.tyresChanged)) : 0,
-        raceLaps: round(raceLaps, 2),
-        stintLaps: round(stintLaps, 2),
-        totalTimeSeconds: round(totalTimeSeconds, 2),
-        baseRaceTimeSeconds: round(baseRaceTimeSeconds, 2),
-        projectedPaceLossSeconds: round(paceLoss, 2),
-        tyreDegradationLossSeconds: round(tyreLoss, 2),
-        liftCoastLossSeconds: round(liftTimeLoss, 2),
-        trafficLossSeconds: round(trafficLoss, 2),
-        confidence,
-        calculationBreakdown,
-        pitTimeSeconds: round(pitTimeSeconds, 2),
-        liftCoastSavePercent: round(liftSavePercent, 2),
-        liftCoastSaveLitersPerLap: round(liftSavePerLap, 3),
-        fuelMarginLiters: round(fuelMarginLiters, 2),
-        finishFuelRemainingLiters: round(finishFuelRemainingLiters, 2),
-        firstStintFuelNeedLiters: round(firstStintFuelNeed, 2),
-        recommendedStartFuelLiters: round(recommendedStartFuel, 2),
-        startFuelIsFullTank: recommendedStartFuel >= input.tankCapacityLiters - 0.01,
-        projectedTyreWear: tyreWear == null ? null : round(tyreWear, 3),
-        projectedTyreWearByWheel: tyrePlan?.projectedTyreWearByWheel ?? null,
-        lowestRemainingTyreWear: tyrePlan?.lowestRemainingTyreWear ?? null,
-        risk,
-        reasons,
-        stopsDetail,
-        stintWear: tyrePlan?.stintWear ?? [],
-      });
+    const normal = candidate(input, stops, roughLaps, false);
+    if (normal) all.push(normal);
+    else {
+      const saved = candidate(input, stops, roughLaps, true);
+      if (saved) all.push(saved);
     }
   }
-
-  return candidates
-    .sort((a, b) => a.totalTimeSeconds - b.totalTimeSeconds || riskRank(a.risk) - riskRank(b.risk))
-    .filter((candidate, index, sorted) => {
-      const key = `${candidate.stops}|${candidate.liftCoastSavePercent}|${candidate.stopsDetail.map((stop) => stop.tyresToChange.join("/")).join(",")}`;
-      return sorted.findIndex((other) => `${other.stops}|${other.liftCoastSavePercent}|${other.stopsDetail.map((stop) => stop.tyresToChange.join("/")).join(",")}` === key) === index;
-    })
-    .slice(0, 3);
+  if (!all.length) return [];
+  all.sort((a, b) => b.raceLaps - a.raceLaps || a.totalTimeSeconds - b.totalTimeSeconds || riskRank(a.risk) - riskRank(b.risk));
+  const selected: StrategyCandidate[] = [];
+  const add = (item?: StrategyCandidate, category?: StrategyCandidate["category"], label?: string) => {
+    if (!item || selected.some(existing => existing.id === item.id)) return;
+    selected.push({ ...item, category: category ?? item.category, label: label ?? item.label });
+  };
+  add(all[0], "fastest", "Fastest projected");
+  add(all.filter(item => item.risk !== "high").sort((a, b) => riskRank(a.risk) - riskRank(b.risk) || a.totalTimeSeconds - b.totalTimeSeconds)[0], "balanced", "Balanced");
+  add(all.filter(item => item.confidence === "high" || item.risk === "low").sort((a, b) => riskRank(a.risk) - riskRank(b.risk) || b.finishFuelRemainingLiters - a.finishFuelRemainingLiters)[0], "conservative", "Conservative");
+  add(all.find(item => item.stops !== all[0].stops && item.liftCoastSavePercent === 0), "alternative", "Alternative stop count");
+  add(all.find(item => item.liftCoastSavePercent > 0), "fuel-save", "Fuel-save contingency");
+  all.forEach(item => { if (selected.length < 4) add(item, "alternative", `${item.stops}-stop alternative`); });
+  return selected.slice(0, 5);
 }
