@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import sqlite3
 from collections import Counter, defaultdict
@@ -9,7 +11,7 @@ from typing import Any
 from sqlalchemy import func, select
 
 from app.db.database import SessionLocal
-from app.db.models import LapSummaryModel, LmuDuckdbLapModel, LmuDuckdbSessionModel, SessionAggregateModel, SessionModel, TelemetrySampleModel
+from app.db.models import LapSummaryModel, LapValidationModel, LmuDuckdbLapModel, LmuDuckdbSessionModel, PersonalBestLapModel, SessionAggregateModel, SessionModel, TelemetrySampleModel
 from app.db.repository import Repository
 from app.services.motec_repository import DB_PATH as MOTEC_DB_PATH, init_motec_db
 
@@ -154,6 +156,24 @@ class ProfileRepository:
     min_distance_ratio = 0.75
     _all_laps_cache_key: tuple[int | None, int, str | None] | None = None
     _all_laps_cache: list[dict] | None = None
+
+    @staticmethod
+    def _identity(value: Any) -> str:
+        return " ".join(str(value or "").strip().lower().split())
+
+    def _context(self, lap: dict) -> tuple[str, str, str, str] | None:
+        values = tuple(self._identity(lap.get(key)) for key in ("session_type", "track", "layout", "car"))
+        if not all(values) or any(value.startswith("unknown") for value in values):
+            return None
+        return values
+
+    @staticmethod
+    def _source_key(lap: dict) -> str:
+        return f"{lap.get('source')}:{lap.get('session_id')}:{lap.get('lap_number')}"
+
+    @staticmethod
+    def _record_key(context: tuple[str, str, str, str]) -> str:
+        return hashlib.sha256("\x1f".join(context).encode("utf-8")).hexdigest()
 
     def _all_laps_cache_token(self) -> tuple[int | None, int, str | None]:
         with SessionLocal() as db:
@@ -479,10 +499,23 @@ class ProfileRepository:
         self.__class__._all_laps_cache = laps
         return laps
 
+    def best_lap_candidates(self) -> list[dict]:
+        """All historical sources share one validation path for PB selection."""
+        return self._with_lap_quality(self._live_laps() + self._motec_laps() + self._duckdb_laps())
+
     def _with_lap_quality(self, laps: list[dict]) -> list[dict]:
-        grouped: dict[str, list[dict]] = defaultdict(list)
+        grouped: dict[tuple[str, str, str, str], list[dict]] = defaultdict(list)
         for lap in laps:
-            grouped[f"{lap.get('source')}:{lap.get('session_id')}"].append(lap)
+            context = self._context(lap)
+            if context:
+                grouped[context].append(lap)
+            elif not any(key in lap for key in ("session_type", "track", "layout", "car")):
+                # Small synthetic/legacy fixtures can still exercise telemetry rules;
+                # these rows remain ineligible for PB grouping via _context().
+                grouped[(str(lap.get("source")), str(lap.get("session_id")), "", "")].append(lap)
+            else:
+                lap.update(valid_lap=False, lap_quality="unresolved_session_track_layout_or_car", validation_status="insufficient_data")
+        seen_source_laps: set[str] = set()
         for session_laps in grouped.values():
             normal_time = _robust_normal([_num(lap.get("lap_time")) for lap in session_laps], minimum=40.0)
             normal_distance = _robust_normal([_num(lap.get("distance_km")) for lap in session_laps], minimum=0.5)
@@ -494,7 +527,21 @@ class ProfileRepository:
                 valid = True
                 reason = "estimated_full_lap"
                 lap_number = _num(lap.get("lap_number"))
-                if lap.get("valid_lap") is False:
+                average_speed = _num(lap.get("average_speed"))
+                source_key = self._source_key(lap)
+                if source_key in seen_source_laps:
+                    valid = False
+                    reason = "duplicate_lap"
+                elif lap.get("complete") is False:
+                    valid = False
+                    reason = "incomplete_lap"
+                elif lap.get("out_lap"):
+                    valid = False
+                    reason = "out_lap"
+                elif lap.get("in_lap"):
+                    valid = False
+                    reason = "in_lap"
+                elif lap.get("valid_lap") is False:
                     valid = False
                     reason = "recorded_invalid_lap"
                 elif lap.get("in_pit"):
@@ -503,9 +550,18 @@ class ProfileRepository:
                 elif lap_number is None or lap_number < 1:
                     valid = False
                     reason = "missing_or_out_lap_number"
-                elif distance is not None and distance < 0.5:
+                elif distance is None or distance < 0.5:
                     valid = False
-                    reason = "implausibly_short_distance"
+                    reason = "missing_or_incomplete_distance"
+                elif "average_speed" in lap and (average_speed is None or average_speed < 20):
+                    valid = False
+                    reason = "missing_zero_or_implausibly_low_average_speed"
+                elif average_speed is not None and average_speed > 450:
+                    valid = False
+                    reason = "implausibly_high_average_speed"
+                elif lap_time and average_speed and abs((distance / (lap_time / 3600)) - average_speed) / average_speed > 0.35:
+                    valid = False
+                    reason = "distance_time_speed_disagree"
                 elif lap_time is None or normal_time is None:
                     valid = False
                     reason = "insufficient_lap_time"
@@ -524,6 +580,32 @@ class ProfileRepository:
                 lap["distance_ratio"] = distance_ratio
                 lap["valid_lap"] = valid
                 lap["lap_quality"] = reason
+                lap["validation_status"] = "valid" if valid else ("suspicious" if reason == "distance_time_speed_disagree" else "invalid")
+                lap["validation_reason_code"] = reason
+                lap["historical_valid_laps_compared"] = max(0, len(session_laps) - 1)
+                seen_source_laps.add(source_key)
+        reason_text = {
+            "estimated_full_lap": "Passed timing, identity, completion, distance, speed, and context plausibility checks.",
+            "unresolved_session_track_layout_or_car": "Excluded because session type, circuit, layout, or exact car identity could not be resolved.",
+            "recorded_invalid_lap": "Excluded because source telemetry marked this lap invalid.",
+            "duplicate_lap": "Excluded as a duplicate source lap.",
+            "incomplete_lap": "Excluded because the lap did not complete.",
+            "out_lap": "Excluded because this is an out lap.",
+            "in_lap": "Excluded because this is an in lap.",
+            "pit_lap": "Excluded because pit-lane activity identifies this as a pit or in lap.",
+            "missing_or_out_lap_number": "Excluded because this is an out lap or its lap number is unresolved.",
+            "missing_or_incomplete_distance": "Excluded because meaningful full-lap distance was not recorded.",
+            "missing_zero_or_implausibly_low_average_speed": "Excluded because average speed is missing, zero, or implausibly low.",
+            "implausibly_high_average_speed": "Excluded because average speed exceeds plausible racing bounds.",
+            "distance_time_speed_disagree": "Needs review because distance, lap time, and average speed materially disagree.",
+            "insufficient_lap_time": "Excluded because lap timing is missing or cannot be validated.",
+            "partial_or_out_lap": "Excluded because timing is implausibly fast against comparable historical laps.",
+            "very_slow_or_incident_lap": "Excluded because timing is implausibly slow against comparable historical laps.",
+            "short_distance_lap": "Excluded because distance is substantially shorter than comparable laps for this layout.",
+        }
+        for lap in laps:
+            lap.setdefault("validation_reason_code", lap.get("lap_quality"))
+            lap["validation_reason"] = reason_text.get(str(lap.get("lap_quality")), "Excluded by telemetry quality validation.")
         return laps
 
     def _sessions_from_laps(self, laps: list[dict]) -> dict[str, dict]:
@@ -684,8 +766,8 @@ class ProfileRepository:
 
     def overview(self) -> dict:
         laps = self.all_laps()
-        best_laps = self._best_laps_from_laps(laps)
-        return {"summary": self.summary(laps, best_laps), "best_laps": best_laps}
+        result = self.revalidate()
+        return {"summary": self.summary(laps, result["best_laps"]), **result}
 
     def filter_options(self, laps: list[dict] | None = None) -> dict:
         laps = laps if laps is not None else self.all_laps()
@@ -750,13 +832,64 @@ class ProfileRepository:
             lap_time = _num(lap.get("lap_time"))
             if lap_time is None or lap_time <= 0 or not lap.get("valid_lap"):
                 continue
-            key = (lap.get("track"), lap.get("layout"), lap.get("car"), lap.get("car_class"))
+            key = self._context(lap)
+            if key is None:
+                continue
             if key not in best or lap_time < (best[key].get("lap_time") or math.inf):
                 best[key] = lap
-        return sorted(best.values(), key=lambda lap: (str(lap.get("track")), str(lap.get("car")), lap.get("lap_time") or math.inf))
+        rows = list(best.values())
+        for row in rows:
+            context = self._context(row)
+            peers = sorted((lap for lap in laps if self._context(lap) == context and lap.get("valid_lap")), key=lambda lap: _num(lap.get("lap_time")) or math.inf)
+            row["record_key"] = self._record_key(context) if context else None
+            row["source_lap_key"] = self._source_key(row)
+            row["previous_best_lap"] = _num(peers[1].get("lap_time")) if len(peers) > 1 else None
+            row["improvement_seconds"] = row["previous_best_lap"] - row["lap_time"] if row.get("previous_best_lap") else None
+        return sorted(rows, key=lambda lap: str(lap.get("date") or ""), reverse=True)
 
     def best_laps(self) -> list[dict]:
-        return self._best_laps_from_laps(self.all_laps())
+        return self._best_laps_from_laps(self.best_lap_candidates())
+
+    def excluded_best_lap_candidates(self) -> list[dict]:
+        return [lap for lap in self.best_lap_candidates() if lap.get("validation_status") != "valid"]
+
+    def revalidate(self, laps: list[dict] | None = None) -> dict:
+        """Rebuild audit/current-best tables without altering source telemetry."""
+        from app.core.utils import utc_now
+
+        laps = laps if laps is not None else self.best_lap_candidates()
+        best_laps = self._best_laps_from_laps(laps)
+        now = utc_now().isoformat()
+        with SessionLocal() as db:
+            previous = {row.record_key: row for row in db.scalars(select(PersonalBestLapModel)).all()}
+            db.query(LapValidationModel).delete()
+            db.query(PersonalBestLapModel).delete()
+            for lap in laps:
+                context = self._context(lap)
+                audit = {key: lap.get(key) for key in ("lap_time", "distance_km", "average_speed", "expected_lap_time", "expected_distance_km", "historical_valid_laps_compared")}
+                db.add(LapValidationModel(
+                    source_lap_key=self._source_key(lap), source_type=str(lap.get("source")), source_session_id=str(lap.get("session_id")),
+                    source_lap_number=str(lap.get("lap_number")), context_key=self._record_key(context) if context else None,
+                    status=str(lap.get("validation_status")), reason_code=str(lap.get("validation_reason_code")),
+                    reason=str(lap.get("validation_reason")), audit_json=json.dumps(audit), validated_at=now,
+                ))
+            for lap in best_laps:
+                record_key = str(lap["record_key"])
+                history: list[dict] = []
+                old = previous.get(record_key)
+                if old:
+                    history = json.loads(old.history_json or "[]")
+                    if old.source_lap_key != lap["source_lap_key"]:
+                        history.append(json.loads(old.record_json))
+                db.add(PersonalBestLapModel(
+                    record_key=record_key, session_type=str(lap.get("session_type")), track=str(lap.get("track")), layout=str(lap.get("layout")),
+                    car=str(lap.get("car")), car_class=lap.get("car_class"), lap_time=float(lap["lap_time"]), source_lap_key=str(lap["source_lap_key"]),
+                    source_type=str(lap.get("source")), source_session_id=str(lap.get("session_id")), source_lap_number=str(lap.get("lap_number")),
+                    set_at=lap.get("date"), validation_status="valid", record_json=json.dumps(lap, default=str), history_json=json.dumps(history), revalidated_at=now,
+                ))
+            db.commit()
+        counts = Counter(str(lap.get("validation_status")) for lap in laps)
+        return {"best_laps": best_laps, "data_quality": {"valid_candidates": counts["valid"], "excluded_laps": counts["invalid"] + counts["insufficient_data"], "suspicious_laps": counts["suspicious"], "personal_bests": len(best_laps), "revalidated_at": now}}
 
     def filtered_laps(self, filters: ProfileFilters) -> dict:
         laps = self.all_laps()
@@ -787,7 +920,7 @@ class ProfileRepository:
             if expected and str(expected).lower() != str(actual or "").lower():
                 return False
         contains_checks = [
-            (filters.session, lap.get("session_name")),
+            (filters.session, lap.get("session_type") or lap.get("session_name")),
             (filters.layout, lap.get("layout")),
         ]
         for expected, actual in contains_checks:

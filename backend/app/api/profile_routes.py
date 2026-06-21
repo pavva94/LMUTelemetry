@@ -22,6 +22,16 @@ def profile_best_laps():
     return ProfileRepository().best_laps()
 
 
+@router.post("/best-laps/revalidate")
+def revalidate_profile_best_laps():
+    return ProfileRepository().revalidate()
+
+
+@router.get("/best-laps/excluded")
+def excluded_profile_best_lap_candidates():
+    return ProfileRepository().excluded_best_lap_candidates()
+
+
 @router.get("/laps")
 def profile_laps(
     track: str | None = None,

@@ -58,8 +58,11 @@ http://127.0.0.1:8000
 ## Frontend Setup
 
 ```cmd
+cd backend 
+.venv\Scripts\activate
+cd ..
 cd frontend
-npm install
+
 npm run dev
 ```
 
@@ -85,7 +88,7 @@ Run the backend with real LMU telemetry instead of mock data.
 CMD:
 
 ```cmd
-cd backend
+cd backend 
 .venv\Scripts\activate
 set USE_MOCK_TELEMETRY=false
 python run_backend.py

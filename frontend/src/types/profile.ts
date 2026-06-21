@@ -16,6 +16,14 @@ export type ProfileLap = {
   expected_lap_time?: number | null;
   lap_time_ratio?: number | null;
   lap_quality?: string | null;
+  validation_status?: "valid" | "invalid" | "suspicious" | "insufficient_data";
+  validation_reason?: string | null;
+  validation_reason_code?: string | null;
+  record_key?: string | null;
+  source_lap_key?: string | null;
+  historical_valid_laps_compared?: number | null;
+  previous_best_lap?: number | null;
+  improvement_seconds?: number | null;
   expected_distance_km?: number | null;
   distance_ratio?: number | null;
   distance_km?: number | null;
@@ -71,4 +79,11 @@ export type ProfileLapResponse = {
 export type ProfileOverview = {
   summary: ProfileSummary;
   best_laps: ProfileLap[];
+  data_quality: {
+    valid_candidates: number;
+    excluded_laps: number;
+    suspicious_laps: number;
+    personal_bests: number;
+    revalidated_at: string;
+  };
 };

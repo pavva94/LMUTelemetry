@@ -3,7 +3,7 @@ import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSettings } from "../types/lmuDuckdb";
-import type { ProfileLap, ProfileSummary } from "../types/profile";
+import type { ProfileLap, ProfileOverview, ProfileSummary } from "../types/profile";
 
 const DEFAULT_FOLDER = "G:\\SteamLibrary\\steamapps\\common\\Le Mans Ultimate\\UserData\\Telemetry";
 
@@ -73,6 +73,9 @@ const emptyLapFilters = (): LapFilters => ({
 export function UserProfile() {
   const [summary, setSummary] = useState<ProfileSummary | null>(null);
   const [bestLaps, setBestLaps] = useState<ProfileLap[]>([]);
+  const [quality, setQuality] = useState<ProfileOverview["data_quality"] | null>(null);
+  const [excludedLaps, setExcludedLaps] = useState<ProfileLap[]>([]);
+  const [showExcluded, setShowExcluded] = useState(false);
   const [sort, setSort] = useState("date");
   const [direction, setDirection] = useState("desc");
   const [error, setError] = useState("");
@@ -87,6 +90,7 @@ export function UserProfile() {
       const overview = await api.profileOverview();
       setSummary(overview.summary);
       setBestLaps(overview.best_laps);
+      setQuality(overview.data_quality);
       setError("");
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -119,6 +123,29 @@ export function UserProfile() {
       setError(exc instanceof Error ? exc.message : String(exc));
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const revalidate = async () => {
+    setLoadingOverview(true);
+    try {
+      const result = await api.revalidateProfileBestLaps();
+      setBestLaps(result.best_laps);
+      setQuality(result.data_quality);
+      setExcludedLaps(await api.excludedProfileBestLapCandidates());
+      setError("");
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setLoadingOverview(false);
+    }
+  };
+
+  const toggleExcluded = async () => {
+    const next = !showExcluded;
+    setShowExcluded(next);
+    if (next && !excludedLaps.length) {
+      setExcludedLaps(await api.excludedProfileBestLapCandidates());
     }
   };
 
@@ -175,7 +202,21 @@ export function UserProfile() {
 
       <section className="card span-12">
         <h2>Best Laps</h2>
-        {bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU DuckDB folder is synced." />}
+        <p className="section-copy">One fastest validated lap for every session type, circuit, layout, and exact car combination. Every record links back to its source session and lap.</p>
+        <div className="header-grid profile-quality-grid">
+          <Metric label="Valid candidates" value={text(quality?.valid_candidates)} />
+          <Metric label="Personal bests" value={text(quality?.personal_bests)} />
+          <Metric label="Excluded laps" value={text(quality?.excluded_laps)} />
+          <Metric label="Needs review" value={text(quality?.suspicious_laps)} />
+        </div>
+        <div className="control-row profile-quality-actions">
+          <button type="button" onClick={() => void revalidate()}>Revalidate history</button>
+          <button type="button" className={showExcluded ? "active-control" : ""} onClick={() => void toggleExcluded()}>{showExcluded ? "Show personal bests" : "Data quality / excluded laps"}</button>
+          {quality?.revalidated_at && <span>Last validated {dateText(quality.revalidated_at)}</span>}
+        </div>
+        {showExcluded
+          ? (excludedLaps.length ? <LapTable rows={excludedLaps} sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="No excluded or suspicious laps were found." />)
+          : (bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU DuckDB folder is synced." />)}
       </section>
     </div>
   );
@@ -270,7 +311,7 @@ function LapTable({
             {filteredRows.map((lap) => (
               <tr key={lap.id}>
                 <td>{dateText(lap.date)}</td>
-                <td>{text(lap.session_name)}</td>
+                <td>{text(lap.session_type)}</td>
                 <td>{text(lap.track)}</td>
                 <td>{text(lap.layout)}</td>
                 <td>{text(lap.car)}</td>
@@ -328,7 +369,7 @@ function lapFilterText(lap: ProfileLap, key: LapFilterKey) {
     case "date":
       return `${searchable(lap.date)} ${searchable(dateText(lap.date))}`;
     case "session":
-      return searchable(lap.session_name);
+      return `${searchable(lap.session_type)} ${searchable(lap.session_name)}`;
     case "track":
       return searchable(lap.track);
     case "layout":
@@ -400,10 +441,11 @@ function sourceBadge(source: ProfileLap["source"]) {
 }
 
 function validityBadge(lap: ProfileLap) {
-  const label = lap.valid_lap ? "Valid" : "Invalid";
+  const label = (lap.validation_status || (lap.valid_lap ? "valid" : "invalid")).replace("_", " ");
   const ratio = lap.lap_time_ratio ? `${fmt(lap.lap_time_ratio * 100, 0, "%")} of normal` : "no estimate";
-  const reason = lap.lap_quality ? lap.lap_quality.replace(/_/g, " ") : ratio;
-  return <span className={`badge ${lap.valid_lap ? "green" : "red"}`} title={`Expected lap: ${formatRaceTime(lap.expected_lap_time)}; ${ratio}; ${reason}`}>{label}</span>;
+  const reason = lap.validation_reason || (lap.lap_quality ? lap.lap_quality.replace(/_/g, " ") : ratio);
+  const color = lap.valid_lap ? "green" : lap.validation_status === "suspicious" ? "amber" : "red";
+  return <span className={`badge ${color}`} title={`${reason} Source: ${lap.source_lap_key || `${lap.source}:${lap.session_id}:${lap.lap_number}`}`}>{label}</span>;
 }
 
 function formatCell(column: string, value: unknown) {

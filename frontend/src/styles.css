@@ -303,6 +303,9 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
   cursor: pointer;
 }
 .control-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.profile-quality-grid { margin: 14px 0 10px; }
+.profile-quality-actions { margin-bottom: 12px; }
+.profile-quality-actions span { color: var(--muted); font-size: 12px; }
 .control-row button, .card button {
   border: 1px solid var(--border-strong);
   background: #0b1117;
