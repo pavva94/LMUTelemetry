@@ -122,7 +122,6 @@ function RaceHeader({ telemetry, connected, averageLap }: { telemetry: Telemetry
   const currentLap = player?.lap_number ?? session?.current_lap;
   const hasRealLapLimit = finite(session?.max_laps) && session.max_laps > 0 && session.max_laps < 10_000 && (!finite(currentLap) || session.max_laps >= currentLap);
   const estimatedTotalLaps = hasRealLapLimit ? session?.max_laps : finite(currentLap) && finite(session?.time_remaining) && session.time_remaining > 0 && finite(averageLap) ? currentLap + Math.ceil(session.time_remaining / averageLap) : undefined;
-  const lapProgress = finite(currentLap) ? `Lap ${currentLap}${finite(estimatedTotalLaps) ? ` / ${hasRealLapLimit ? estimatedTotalLaps : `~${estimatedTotalLaps}`}` : ""}` : undefined;
   const position = player?.position ?? playerCar?.position;
   const classPosition = player?.class_position ?? playerCar?.class_position;
   const vehicle = player?.vehicle_model || player?.vehicle_name || carName(playerCar);
@@ -138,8 +137,8 @@ function RaceHeader({ telemetry, connected, averageLap }: { telemetry: Telemetry
       </div>
       <div className="race-core-grid">
         <div className="race-position-block">
-          <span>Race position</span><strong>{finite(position) ? `P${position}` : "--"}</strong>
-          <small className="position-context">{lapProgress && <b>{lapProgress}</b>}{finite(classPosition) && <span>P{classPosition} in class</span>}</small>
+          <div className="primary-race-number"><span>Race position</span><strong>{finite(position) ? `P${position}` : "--"}</strong>{finite(classPosition) && <small>P{classPosition} in class</small>}</div>
+          <div className="primary-race-number session-lap-number"><span>Session laps</span><strong><b>{finite(currentLap) ? currentLap : "--"}</b><i>/</i><b>{finite(estimatedTotalLaps) ? `${hasRealLapLimit ? "" : "~"}${estimatedTotalLaps}` : "--"}</b></strong><small>{hasRealLapLimit ? "Scheduled distance" : "Estimated from clean pace"}</small></div>
         </div>
         <LapTiming player={player} playerCar={playerCar} averageLap={averageLap} />
         <div className={`race-flag-block ${caution ? "caution" : flag.toLowerCase().includes("green") ? "green" : "neutral"}`}>

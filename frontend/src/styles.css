@@ -685,16 +685,22 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .live-session-strip .session-car b { color: var(--text); margin: 0; }
 .session-car small { color: var(--cyan); font-size: 9px; font-weight: 950; text-transform: uppercase; }
 .session-driver { color: var(--text-soft); }
-.race-core-grid { display: grid; grid-template-columns: minmax(120px,.62fr) minmax(400px,2fr) minmax(210px,1.05fr) minmax(130px,.68fr); min-height: 138px; }
+.race-core-grid { display: grid; grid-template-columns: minmax(250px,.95fr) minmax(350px,1.7fr) minmax(200px,1fr) minmax(130px,.62fr); min-height: 138px; }
 .race-core-grid > * { min-width: 0; border-right: 1px solid var(--border); }
 .race-core-grid > *:last-child { border-right: 0; }
 .race-position-block, .race-flag-block, .compact-car-state { display: grid; align-content: center; padding: 16px 18px; }
+.race-position-block { grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; }
+.primary-race-number { display: grid; align-content: center; min-width: 0; }
+.primary-race-number + .primary-race-number { padding-left: 16px; border-left: 1px solid var(--border-strong); }
+.primary-race-number > span { color: var(--muted); font-size: 9px; font-weight: 950; text-transform: uppercase; letter-spacing: .11em; }
+.primary-race-number > strong { color: var(--amber-2); font-size: clamp(38px,3.5vw,58px); line-height: .9; letter-spacing: -.06em; white-space: nowrap; }
+.primary-race-number > small { margin-top: 7px; color: var(--muted); font-size: 9px; white-space: nowrap; }
+.session-lap-number > strong { display: flex; align-items: baseline; gap: 5px; color: #fff; }
+.session-lap-number > strong b { font: inherit; color: inherit; }
+.session-lap-number > strong i { color: var(--faint); font-size: .55em; font-style: normal; }
 .race-position-block > span, .race-flag-block > span, .compact-car-state span { color: var(--muted); font-size: 9px; font-weight: 950; text-transform: uppercase; letter-spacing: .11em; }
 .race-position-block > strong { color: var(--amber-2); font-size: clamp(42px,4vw,62px); line-height: .9; letter-spacing: -.06em; }
 .race-position-block > small, .race-flag-block > small { margin-top: 7px; color: var(--muted); font-size: 10px; }
-.position-context { display: flex; flex-wrap: wrap; gap: 4px 9px; align-items: center; }
-.position-context b { color: var(--text); font-size: 11px; }
-.position-context span { color: var(--cyan); }
 .compact-lap-now { padding: 15px 18px; gap: 8px 20px; }
 .compact-lap-now .lap-now-main > strong { font-size: clamp(28px,3vw,44px); }
 .compact-lap-now .delta-now strong { font-size: clamp(25px,2.5vw,38px); }
@@ -727,7 +733,7 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 @media (max-width: 1080px) {
   .live-primary-grid { grid-template-columns: 1fr; }
   .speed-cluster { border-right: 0; border-bottom: 1px solid var(--border); }
-  .race-core-grid { grid-template-columns: minmax(110px,.55fr) minmax(0,1.8fr); }
+  .race-core-grid { grid-template-columns: minmax(230px,.85fr) minmax(0,1.8fr); }
   .race-position-block { border-bottom: 1px solid var(--border); }
   .compact-lap-now { border-right: 0; border-bottom: 1px solid var(--border); }
   .race-flag-block { border-right: 1px solid var(--border); }

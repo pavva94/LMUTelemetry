@@ -20,9 +20,9 @@ import {
 const liveItems = [
   ["live", "Live Dashboard", Gauge],
   ["circle-map", "Circle Map", CircleDot],
-  ["lap-compare", "Lap Compare", GitCompare],
+  ["lap-compare", "Lap Stats", GitCompare],
   ["one-lap", "Standings", Timer],
-  ["race-history", "Race History", History],
+  ["race-history", "Session History", History],
   ["xy-plotter", "X-Y Plotter", LineChart],
   ["lap-analysis", "Lap Analysis", Microscope],
   ["pit", "Pit Window", Flag],
