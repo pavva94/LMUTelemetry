@@ -71,7 +71,6 @@ export type StrategySimulationInput = {
   fuelSafetyMarginLiters: number;
   safetyPolicy?: SafetyPolicy;
   pitLaneLossSeconds: number;
-  baseStationarySeconds?: number;
   tyreChangeSecondsPerTyre: number;
   refuelSecondsPer5Liters: number;
   serviceModel?: ServiceModel;
@@ -157,13 +156,12 @@ export function stopServiceTime(input: {
   tyreChangeSecondsPerTyre: number;
   fuelAddedLiters: number;
   refuelSecondsPer5Liters: number;
-  baseStationarySeconds?: number;
   serviceModel?: ServiceModel;
 }) {
   const tyre = Math.max(0, input.tyresChanged) * Math.max(0, input.tyreChangeSecondsPerTyre);
   const fuel = Math.max(0, input.fuelAddedLiters) / 5 * Math.max(0, input.refuelSecondsPer5Liters);
   const work = input.serviceModel === "parallel" ? Math.max(tyre, fuel) : tyre + fuel;
-  return Math.max(0, input.pitLaneLossSeconds) + Math.max(0, input.baseStationarySeconds ?? 0) + work;
+  return Math.max(0, input.pitLaneLossSeconds) + work;
 }
 
 function reserveFor(input: StrategySimulationInput) {
@@ -196,6 +194,13 @@ function startingWear(input: StrategySimulationInput): WheelValues | null {
 function wearRates(input: StrategySimulationInput): WheelValues | null {
   if (input.tyreWearRatePerLap == null && !wheels.some((wheel) => input.tyreWearRateByWheel?.[wheel] != null)) return null;
   return Object.fromEntries(wheels.map((wheel) => [wheel, Math.max(0, input.tyreWearRateByWheel?.[wheel] ?? input.tyreWearRatePerLap ?? 0)])) as WheelValues;
+}
+
+function startingTyreAge(input: StrategySimulationInput): WheelValues {
+  const wear = startingWear(input);
+  const rates = wearRates(input);
+  if (!wear || !rates) return { fl: 0, fr: 0, rl: 0, rr: 0 };
+  return Object.fromEntries(wheels.map((wheel) => [wheel, rates[wheel] > 0 ? wear[wheel] / rates[wheel] : 0])) as WheelValues;
 }
 
 function wearLimits(input: StrategySimulationInput): WheelValues {
@@ -282,29 +287,32 @@ function elapsedFor(input: StrategySimulationInput, laps: number, stintLaps: num
   let pitLane = 0;
   let stationary = 0;
   let completed = 0;
+  let tyreAge = startingTyreAge(input);
   const stops: Array<{ lane: number; stationary: number; total: number }> = [];
   for (let stint = 0; stint < stintLaps.length; stint += 1) {
     for (let local = 0; local < stintLaps[stint]; local += 1) {
       if (elapsed >= input.raceDurationMinutes * 60) break;
       const trendPart = trend * completed;
-      const tyrePart = degradation == null ? 0 : degradation * local;
+      const tyrePart = degradation == null ? 0 : degradation * (values(tyreAge).reduce((sum, age) => sum + age, 0) / wheels.length);
       const liftPart = liftCost == null ? 0 : liftCost / Math.max(1, laps);
       elapsed += basePace + trendPart + tyrePart + liftPart;
       base += basePace;
       trendLoss += trendPart;
       tyreLoss += tyrePart;
       completed += 1;
+      tyreAge = Object.fromEntries(wheels.map((wheel) => [wheel, tyreAge[wheel] + 1])) as WheelValues;
     }
     if (elapsed >= input.raceDurationMinutes * 60 || stint >= stintLaps.length - 1) continue;
     const lane = input.safetyCarActive && input.safetyCarPitLossSeconds != null ? input.safetyCarPitLossSeconds : input.pitLaneLossSeconds;
     const tyre = tyreCalls[stint].length * input.tyreChangeSecondsPerTyre;
     const fuel = fuelStops[stint].add / 5 * input.refuelSecondsPer5Liters;
     const work = input.serviceModel === "parallel" ? Math.max(tyre, fuel) : tyre + fuel;
-    const stopStationary = Math.max(0, input.baseStationarySeconds ?? 0) + work;
+    const stopStationary = work;
     elapsed += lane + stopStationary + Math.max(0, input.trafficPenaltySeconds ?? 0);
     pitLane += lane;
     stationary += stopStationary;
     stops.push({ lane, stationary: stopStationary, total: lane + stopStationary });
+    tyreAge = Object.fromEntries(wheels.map((wheel) => [wheel, tyreCalls[stint].includes(wheel) ? 0 : tyreAge[wheel]])) as WheelValues;
   }
   return { elapsed, completed, base, trendLoss, tyreLoss: degradation == null ? null : tyreLoss, liftCost, pitLane, stationary, stops };
 }

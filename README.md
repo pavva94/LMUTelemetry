@@ -210,8 +210,10 @@ release\LMUTelemetry-Setup-0.1.0.exe
 For a quick PyInstaller-only build without the installer:
 
 ```powershell
-.\packaging\build_windows_installer.cmd -SkipInstaller
+.\packaging\build_windows_exe.cmd
 ```
+
+The EXE build runs the frontend test suite, creates a fresh production frontend, packages the backend and LMU shared-memory module, verifies required bundled resources, runs the packaged smoke test, and prints the executable SHA-256 hash. Use `-SkipDependencyInstall` when the existing virtual environment and `node_modules` are already current.
 
 To set the release version without editing the Inno Setup script:
 

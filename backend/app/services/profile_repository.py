@@ -156,6 +156,8 @@ class ProfileRepository:
     min_distance_ratio = 0.75
     _all_laps_cache_key: tuple[int | None, int, str | None] | None = None
     _all_laps_cache: list[dict] | None = None
+    _overview_cache_key: tuple[int | None, int, str | None] | None = None
+    _overview_cache: dict | None = None
 
     @staticmethod
     def _identity(value: Any) -> str:
@@ -765,9 +767,16 @@ class ProfileRepository:
         }
 
     def overview(self) -> dict:
-        laps = self.all_laps()
-        result = self.revalidate()
-        return {"summary": self.summary(laps, result["best_laps"]), **result}
+        token = self._all_laps_cache_token()
+        if self.__class__._overview_cache_key == token and self.__class__._overview_cache is not None:
+            return self.__class__._overview_cache
+        candidates = self.best_lap_candidates()
+        duckdb_laps = [lap for lap in candidates if lap.get("source") == "duckdb"]
+        result = self.revalidate(candidates)
+        overview = {"summary": self.summary(duckdb_laps, result["best_laps"]), **result}
+        self.__class__._overview_cache_key = token
+        self.__class__._overview_cache = overview
+        return overview
 
     def filter_options(self, laps: list[dict] | None = None) -> dict:
         laps = laps if laps is not None else self.all_laps()
@@ -857,6 +866,7 @@ class ProfileRepository:
         """Rebuild audit/current-best tables without altering source telemetry."""
         from app.core.utils import utc_now
 
+        explicit = laps is None
         laps = laps if laps is not None else self.best_lap_candidates()
         best_laps = self._best_laps_from_laps(laps)
         now = utc_now().isoformat()
@@ -889,7 +899,11 @@ class ProfileRepository:
                 ))
             db.commit()
         counts = Counter(str(lap.get("validation_status")) for lap in laps)
-        return {"best_laps": best_laps, "data_quality": {"valid_candidates": counts["valid"], "excluded_laps": counts["invalid"] + counts["insufficient_data"], "suspicious_laps": counts["suspicious"], "personal_bests": len(best_laps), "revalidated_at": now}}
+        result = {"best_laps": best_laps, "data_quality": {"valid_candidates": counts["valid"], "excluded_laps": counts["invalid"] + counts["insufficient_data"], "suspicious_laps": counts["suspicious"], "personal_bests": len(best_laps), "revalidated_at": now}}
+        if explicit:
+            self.__class__._overview_cache_key = None
+            self.__class__._overview_cache = None
+        return result
 
     def filtered_laps(self, filters: ProfileFilters) -> dict:
         laps = self.all_laps()

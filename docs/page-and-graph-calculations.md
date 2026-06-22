@@ -51,7 +51,7 @@ Race model:
 Plan cards:
 
 - `estimated total = base driving time + measured/configured pit service time`. Lift/coast time loss remains `0` until a measured pace-cost model is supplied.
-- Pit service time is pit lane loss plus tyre service and rounded 5 L refuel service.
+- Pit service time is pit lane loss plus tyre service and continuous refuel service. No fixed stationary overhead is added.
 - `fuelMargin = finishFuelRemaining - fuel_safety_margin_liters`.
 - Risk is medium if the fuel margin is below half a lap of fuel or the source data is still below the required valid laps; tyre risk can also raise the risk.
 

@@ -461,7 +461,7 @@ export function LiveLapAnalysis() {
           });
           return stillInLap ? current : data.insights.find((item) => item.timestamp != null)?.timestamp ?? data.current_lap_data[0]?.lap_time ?? null;
         });
-        setStatus(data.laps.length ? "Live lap analysis ready" : "Complete a lap to unlock analysis");
+        setStatus(data.laps.length ? "Driver Coach ready" : "Complete a lap to unlock Driver Coach");
       } catch (exc) {
         if (!cancelled) setStatus(exc instanceof Error ? exc.message : String(exc));
       } finally {
@@ -505,13 +505,17 @@ export function LiveLapAnalysis() {
       <section className="coach-explorer" aria-labelledby="telemetry-explorer-title">
         <div className="coach-section-heading"><div><span>05 · Telemetry explorer</span><h2 id="telemetry-explorer-title">Inspect the engineering layer</h2></div><p>These full-lap views preserve the raw comparison tools. Flagged samples remain visible but are excluded from coaching baselines.</p></div>
         <div className="coach-graph-notes"><div><Gauge size={17} /><span><strong>G-force</strong><small>Robust P99: {fmt(payload.session_summary?.robust_peak_combined_g, 2, "G")}. Sustained load matters more than an isolated spike.</small></span></div><div><CircleGauge size={17} /><span><strong>Handling</strong><small>Compare the selected lap with your own clean reference; inferred balance signatures are possibilities, not setup verdicts.</small></span></div><div><Info size={17} /><span><strong>Selection sync</strong><small>Legacy event findings still move the event marker across these full-lap engineering plots.</small></span></div></div>
-        <div className="grid coach-explorer-grid">
-          <FrictionCircle current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
-          <TireHealthMatrix samples={payload.current_lap_data} selectedTimestamp={selectedTimestamp} />
-          <HandlingDiagram current={payload.current_lap_data} selectedTimestamp={selectedTimestamp} kus={payload.metrics.understeer_gradient} />
-          <PowerOutputChart current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
-          <SuspensionPlatform current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
-          <InsightCard title="Secondary diagnostics" insights={[...insights.driver, ...insights.setup]} selectedTimestamp={selectedTimestamp} onSelect={handleInsight} />
+        <div className="coach-explorer-workspace">
+          <aside className="coach-diagnostics-rail" aria-label="Secondary diagnostics">
+            <InsightCard title="Secondary diagnostics" insights={[...insights.driver, ...insights.setup]} selectedTimestamp={selectedTimestamp} onSelect={handleInsight} />
+          </aside>
+          <div className="coach-diagnostic-charts" aria-label="Engineering diagnostic charts">
+            <FrictionCircle current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
+            <TireHealthMatrix samples={payload.current_lap_data} selectedTimestamp={selectedTimestamp} />
+            <HandlingDiagram current={payload.current_lap_data} selectedTimestamp={selectedTimestamp} kus={payload.metrics.understeer_gradient} />
+            <PowerOutputChart current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
+            <SuspensionPlatform current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
+          </div>
         </div>
       </section>
       <LapQualityLedger laps={payload.laps} />

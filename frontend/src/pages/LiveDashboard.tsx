@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
+import { completedLapFuelUsed, currentLapFuelUsed } from "../lib/liveFuelHistory";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { CompetitorState, PlayerState, TelemetrySnapshot, TyreState, TyreTemps } from "../types/telemetry";
 
@@ -47,6 +48,7 @@ const isUnderYellow = (telemetry: TelemetrySnapshot | null) => {
 
 type LapSample = {
   lap: number;
+  provisional?: boolean;
   lapTime?: number;
   fuelUsed?: number;
   flWear?: number;
@@ -68,7 +70,7 @@ function representativeTemp(temp?: TyreTemps) {
 function useLiveRaceHistory(telemetry: TelemetrySnapshot | null, strategy: StrategyState | null) {
   const [laps, setLaps] = useState<LapSample[]>([]);
   const [positions, setPositions] = useState<PositionRow[]>([]);
-  const previous = useRef<{ lap?: number; fuel?: number; session?: string }>({});
+  const previous = useRef<{ lap?: number; lapStartFuel?: number; observedFromBoundary?: boolean; session?: string }>({});
   const sessionKey = `${telemetry?.session?.track_name || ""}:${telemetry?.session?.session_type || ""}`;
 
   useEffect(() => {
@@ -82,13 +84,28 @@ function useLiveRaceHistory(telemetry: TelemetrySnapshot | null, strategy: Strat
     }
     if (!previous.current.session) previous.current.session = sessionKey;
 
+    if (!finite(previous.current.lap)) {
+      const positionRow: PositionRow = { lap };
+      telemetry.competitors.forEach((car) => {
+        if (finite(car.position)) positionRow[`${car.driver_name || `Car ${car.vehicle_id}`}#${car.vehicle_id}`] = car.position;
+      });
+      setPositions([positionRow]);
+      previous.current.lap = lap;
+      previous.current.lapStartFuel = player.fuel_liters;
+      previous.current.observedFromBoundary = false;
+      return;
+    }
+
     if (previous.current.lap !== lap) {
       const completedLap = Math.max(0, lap - 1);
       if (completedLap > 0) {
         const tyres = player.tyre_state;
-        const fuelUsed = finite(previous.current.fuel) && finite(player.fuel_liters) && previous.current.fuel >= player.fuel_liters
-          ? previous.current.fuel - player.fuel_liters
-          : strategy?.fuel?.last_lap_fuel_used_liters;
+        const fuelUsed = completedLapFuelUsed({
+          lapStartFuel: previous.current.lapStartFuel,
+          currentFuel: player.fuel_liters,
+          observedFromBoundary: previous.current.observedFromBoundary === true && lap === previous.current.lap + 1,
+          fallbackFuelUsed: strategy?.fuel?.last_lap_fuel_used_liters,
+        });
         const sample: LapSample = {
           lap: completedLap,
           lapTime: player.last_lap_time,
@@ -105,11 +122,30 @@ function useLiveRaceHistory(telemetry: TelemetrySnapshot | null, strategy: Strat
       });
       setPositions((current) => [...current.filter((row) => row.lap !== lap), positionRow].sort((a, b) => a.lap - b.lap).slice(-60));
       previous.current.lap = lap;
+      previous.current.lapStartFuel = player.fuel_liters;
+      previous.current.observedFromBoundary = true;
     }
-    previous.current.fuel = player.fuel_liters;
+    if (!finite(previous.current.lapStartFuel)) previous.current.lapStartFuel = player.fuel_liters;
   }, [sessionKey, strategy?.fuel?.last_lap_fuel_used_liters, telemetry]);
 
-  return { laps, positions };
+  const player = telemetry?.player;
+  const currentLap = player?.lap_number ?? telemetry?.session?.current_lap;
+  const tyres = player?.tyre_state;
+  const liveLap: LapSample | undefined = finite(currentLap) && player ? {
+    lap: currentLap,
+    provisional: true,
+    lapTime: player.current_lap_time,
+    fuelUsed: currentLapFuelUsed(previous.current.lap === currentLap ? previous.current.lapStartFuel : player.fuel_liters, player.fuel_liters),
+    flWear: tyres?.wear_fl, frWear: tyres?.wear_fr, rlWear: tyres?.wear_rl, rrWear: tyres?.wear_rr,
+    flTemp: representativeTemp(tyres?.temp_fl), frTemp: representativeTemp(tyres?.temp_fr),
+    rlTemp: representativeTemp(tyres?.temp_rl), rrTemp: representativeTemp(tyres?.temp_rr),
+  } : undefined;
+  const livePosition: PositionRow | undefined = finite(currentLap) ? { lap: currentLap } : undefined;
+  if (livePosition) telemetry?.competitors.forEach((car) => {
+    if (finite(car.position)) livePosition[`${car.driver_name || `Car ${car.vehicle_id}`}#${car.vehicle_id}`] = car.position;
+  });
+
+  return { laps, positions, liveLap, livePosition };
 }
 
 function RaceHeader({ telemetry, connected, averageLap }: { telemetry: TelemetrySnapshot | null; connected: boolean; averageLap?: number }) {
@@ -339,7 +375,7 @@ function EmptyState({ label, compact = false }: { label: string; compact?: boole
 }
 
 const TrendChart = memo(function TrendChart({ title, eyebrow, data, lines, averageLine, invert = false, formatter }: { title: string; eyebrow: string; data: Record<string, unknown>[]; lines: { key: string; label: string; colour: string }[]; averageLine?: number; invert?: boolean; formatter?: (value: number) => string }) {
-  return <section className="trend-card"><div className="live-section-heading"><div><span>{eyebrow}</span><h3>{title}</h3></div></div>{data.length > 1 ? <ResponsiveContainer width="100%" height={230}><LineChart data={data} margin={{ top: 6, right: 10, left: -12, bottom: 0 }}><CartesianGrid strokeDasharray="3 4" vertical={false} /><XAxis dataKey="lap" tickLine={false} /><YAxis reversed={invert} tickLine={false} tickFormatter={formatter} domain={["auto", "auto"]} /><Tooltip formatter={(value: number, name: string) => [formatter ? formatter(value) : fmt(value, 2), name]} /><Legend />{finite(averageLine) && <ReferenceLine y={averageLine} stroke="#edf4f8" strokeDasharray="5 5" label="Average" />}{lines.map((line) => <Line key={line.key} type="monotone" dataKey={line.key} name={line.label} stroke={line.colour} strokeWidth={2.3} dot={{ r: 2 }} connectNulls />)}</LineChart></ResponsiveContainer> : <EmptyState label="Trend begins after two completed laps." />}</section>;
+  return <section className="trend-card"><div className="live-section-heading"><div><span>{eyebrow}</span><h3>{title}</h3></div></div>{data.length > 0 ? <ResponsiveContainer width="100%" height={230}><LineChart data={data} margin={{ top: 6, right: 10, left: -12, bottom: 0 }}><CartesianGrid strokeDasharray="3 4" vertical={false} /><XAxis dataKey="lap" tickLine={false} /><YAxis reversed={invert} tickLine={false} tickFormatter={formatter} domain={["auto", "auto"]} /><Tooltip formatter={(value: number, name: string) => [formatter ? formatter(value) : fmt(value, 2), name]} /><Legend />{finite(averageLine) && <ReferenceLine y={averageLine} stroke="#edf4f8" strokeDasharray="5 5" label="Average" />}{lines.map((line) => <Line key={line.key} type="monotone" dataKey={line.key} name={line.label} stroke={line.colour} strokeWidth={2.3} dot={{ r: 2 }} connectNulls />)}</LineChart></ResponsiveContainer> : <EmptyState label="Waiting for live telemetry." />}</section>;
 });
 
 function RacePositionChart({ positions, competitors }: { positions: PositionRow[]; competitors: CompetitorState[] }) {
@@ -351,7 +387,7 @@ function RacePositionChart({ positions, competitors }: { positions: PositionRow[
   const player = competitors.find((car) => car.is_player);
   const playerKey = drivers.find((key) => key.endsWith(`#${player?.vehicle_id}`));
   return <section className="trend-card position-chart"><div className="live-section-heading"><div><span>Race evolution</span><h3>Position history</h3></div>{drivers.length > 1 && <select value={focus} onChange={(event) => setFocus(event.target.value)}><option value="player">Focus current driver</option><option value="all">Show all drivers</option>{drivers.map((driver) => <option value={driver} key={driver}>{driver.split("#")[0]}</option>)}</select>}</div>
-    {positions.length > 1 ? <ResponsiveContainer width="100%" height={310}><LineChart data={positions} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}><CartesianGrid strokeDasharray="3 4" vertical={false} /><XAxis dataKey="lap" tickLine={false} /><YAxis reversed domain={[1, "dataMax"]} allowDecimals={false} tickLine={false} /><Tooltip /><Legend formatter={(value) => String(value).split("#")[0]} />{drivers.map((driver, index) => {
+    {positions.length > 0 ? <ResponsiveContainer width="100%" height={310}><LineChart data={positions} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}><CartesianGrid strokeDasharray="3 4" vertical={false} /><XAxis dataKey="lap" tickLine={false} /><YAxis reversed domain={[1, "dataMax"]} allowDecimals={false} tickLine={false} /><Tooltip /><Legend formatter={(value) => String(value).split("#")[0]} />{drivers.map((driver, index) => {
       const selected = focus === "all" || focus === driver || (focus === "player" && driver === playerKey);
       return <Line key={driver} type="linear" dataKey={driver} name={driver.split("#")[0]} stroke={driver === playerKey ? "#f3b642" : `hsl(${(index * 47) % 360} 62% 62%)`} strokeWidth={driver === playerKey ? 3.5 : selected ? 2 : 1} strokeOpacity={selected ? 1 : .18} dot={false} connectNulls />;
     })}</LineChart></ResponsiveContainer> : <EmptyState label="Position history builds as race laps change." />}
@@ -359,9 +395,9 @@ function RacePositionChart({ positions, competitors }: { positions: PositionRow[
 }
 
 function LiveGraphs({ laps, positions, competitors }: { laps: LapSample[]; positions: PositionRow[]; competitors: CompetitorState[] }) {
-  const fuelAverage = average(laps.map((row) => row.fuelUsed).filter(finite));
+  const fuelAverage = average(laps.filter((row) => !row.provisional).map((row) => row.fuelUsed).filter(finite));
   const fuelData = laps.map((row) => ({ ...row, average: fuelAverage }));
-  return <section className="live-trends"><div className="live-section-heading trends-heading"><div><span>Stint analysis</span><h2>Race evolution</h2></div><small>Completed laps only</small></div><div className="trend-grid">
+  return <section className="live-trends"><div className="live-section-heading trends-heading"><div><span>Stint analysis</span><h2>Race evolution</h2></div><small>Live lap + completed laps</small></div><div className="trend-grid">
     <TrendChart eyebrow="Consumption" title="Fuel usage" data={fuelData} lines={[{ key: "fuelUsed", label: "Fuel / lap", colour: "#55c7f7" }]} averageLine={fuelAverage} formatter={(value) => `${value.toFixed(2)} L`} />
     <TrendChart eyebrow="Degradation" title="Tyre condition" data={laps} lines={tyreKeys.map((key) => ({ key: `${key}Wear`, label: tyreLabels[key], colour: tyreColours[key] }))} formatter={(value) => `${Math.round(value * 100)}%`} />
     <TrendChart eyebrow="Pace" title="Lap-time trend" data={laps} lines={[{ key: "lapTime", label: "Lap time", colour: "#f3b642" }]} formatter={(value) => formatRaceTime(value)} />
@@ -371,7 +407,9 @@ function LiveGraphs({ laps, positions, competitors }: { laps: LapSample[]; posit
 }
 
 export function LiveDashboard({ telemetry, strategy, recommendation, connected, competitors = [] }: { telemetry: TelemetrySnapshot | null; strategy: StrategyState | null; recommendation: RecommendationPayload | null; connected: boolean; readOnlyLabel?: string; competitors?: CompetitorState[] }) {
-  const { laps, positions } = useLiveRaceHistory(telemetry, strategy);
+  const { laps, positions, liveLap, livePosition } = useLiveRaceHistory(telemetry, strategy);
+  const graphLaps = liveLap ? [...laps.filter((row) => row.lap !== liveLap.lap), liveLap].sort((a, b) => a.lap - b.lap) : laps;
+  const graphPositions = livePosition ? [...positions.filter((row) => row.lap !== livePosition.lap), livePosition].sort((a, b) => a.lap - b.lap) : positions;
   const mergedCompetitors = useMemo(() => {
     const merged = new Map(competitors.map((car) => [car.vehicle_id, car]));
     telemetry?.competitors?.forEach((car) => merged.set(car.vehicle_id, car));
@@ -390,6 +428,6 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected, 
       <FuelCard telemetry={telemetry} strategy={strategy} />
       <AlertsCard telemetry={telemetry} recommendation={recommendation} />
     </div>
-    <LiveGraphs laps={laps} positions={positions} competitors={mergedCompetitors} />
+    <LiveGraphs laps={graphLaps} positions={graphPositions} competitors={mergedCompetitors} />
   </div>;
 }

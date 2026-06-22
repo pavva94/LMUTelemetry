@@ -24,7 +24,7 @@ const liveItems = [
   ["one-lap", "Standings", Timer],
   ["race-history", "Session History", History],
   ["xy-plotter", "X-Y Plotter", LineChart],
-  ["lap-analysis", "Lap Analysis", Microscope],
+  ["lap-analysis", "Driver Coach", Microscope],
   ["pit", "Pit Window", Flag],
   ["settings", "Settings", Settings],
 ] as const;

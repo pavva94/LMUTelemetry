@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSettings } from "../types/lmuDuckdb";
+import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import type { ProfileLap, ProfileOverview, ProfileSummary } from "../types/profile";
 
 const DEFAULT_FOLDER = "G:\\SteamLibrary\\steamapps\\common\\Le Mans Ultimate\\UserData\\Telemetry";
@@ -71,6 +72,7 @@ const emptyLapFilters = (): LapFilters => ({
 });
 
 export function UserProfile() {
+  const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
   const [summary, setSummary] = useState<ProfileSummary | null>(null);
   const [bestLaps, setBestLaps] = useState<ProfileLap[]>([]);
   const [quality, setQuality] = useState<ProfileOverview["data_quality"] | null>(null);
@@ -87,7 +89,7 @@ export function UserProfile() {
   const loadOverview = async () => {
     setLoadingOverview(true);
     try {
-      const overview = await api.profileOverview();
+      const overview = await runDuckdbJob<ProfileOverview>(() => api.startProfileOverviewJob());
       setSummary(overview.summary);
       setBestLaps(overview.best_laps);
       setQuality(overview.data_quality);
@@ -114,7 +116,7 @@ export function UserProfile() {
     setSyncing(true);
     try {
       await api.saveLmuDuckdbSettings(folder.trim());
-      const result = await api.syncLmuDuckdb();
+      const result = await runDuckdbJob<LmuDuckdbSettings>(() => api.startDuckdbSyncJob());
       setSettings(result);
       if (result.folder_path) setFolder(result.folder_path);
       await loadOverview();
@@ -160,7 +162,7 @@ export function UserProfile() {
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={syncing || loadingOverview} title={syncing ? "Syncing DuckDB sessions" : "Loading profile"} detail={syncing ? "Scanning the LMU telemetry folder and refreshing the local cache." : "Reading cached DuckDB profile totals and best laps."} />
+      <LoadingOverlay show={syncing || loadingOverview} title={duckdbProgress?.phase || (syncing ? "Syncing DuckDB sessions" : "Loading profile")} detail={duckdbProgress?.message || (syncing ? "Scanning the LMU telemetry folder and refreshing the local cache." : "Reading cached DuckDB profile totals and best laps.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       {error && <section className="card span-12"><div className="error-box">{error}</div></section>}
       <section className="card span-12">
         <h2>LMU DuckDB Source</h2>

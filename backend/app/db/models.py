@@ -133,6 +133,7 @@ class LmuDuckdbSessionModel(Base):
     warnings_json: Mapped[Optional[str]] = mapped_column(Text)
     summary_json: Mapped[Optional[str]] = mapped_column(Text)
     pit_events_json: Mapped[Optional[str]] = mapped_column(Text)
+    laps_json: Mapped[Optional[str]] = mapped_column(Text)
 
 
 class LmuDuckdbLapModel(Base):

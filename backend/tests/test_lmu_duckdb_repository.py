@@ -350,6 +350,30 @@ def test_sync_caches_new_sessions_and_skips_unchanged(monkeypatch, tmp_path) -> 
         assert db.query(LmuDuckdbSessionModel).filter_by(active=True).count() == 1
 
 
+def test_review_reuses_validated_cache_and_stale_signature_falls_back(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(lmu_duckdb_repository, "SessionLocal", factory)
+    db_path = tmp_path / "session_tables.duckdb"
+    _make_channel_duckdb(db_path)
+    baseline_session = lmu_duckdb_repository.scan_folder(str(tmp_path))["sessions"][0]
+    baseline = lmu_duckdb_repository.review_session(str(tmp_path), baseline_session["id"], sample_limit=10)
+    lmu_duckdb_repository.sync_folder(str(tmp_path))
+
+    monkeypatch.setattr(lmu_duckdb_repository, "_review_file", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("full review called")))
+    cached = lmu_duckdb_repository.review_session(None, baseline_session["id"], sample_limit=10)
+
+    assert cached["laps"] == baseline["laps"]
+    assert cached["summary"] == baseline["summary"]
+    assert cached["pit_events"] == baseline["pit_events"]
+    assert set(cached["available_fields"]) == set(baseline["available_fields"])
+
+    conn = duckdb.connect(str(db_path))
+    conn.execute("create table cache_signature_change(value integer)")
+    conn.close()
+    with pytest.raises(AssertionError, match="full review called"):
+        lmu_duckdb_repository.review_session(None, baseline_session["id"], sample_limit=10)
+
+
 def test_sync_reuses_cache_after_processing_changed_file(monkeypatch, tmp_path) -> None:
     factory = _session_factory()
     monkeypatch.setattr(lmu_duckdb_repository, "SessionLocal", factory)

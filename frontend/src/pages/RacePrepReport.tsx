@@ -2,12 +2,13 @@ import { useEffect, useMemo, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
+import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
 import { duckdbSessionLabel, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { buildRacePrepReport, type RacePrepReport as RacePrepReportModel, type Wheel } from "../lib/racePrepReport";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
-import type { LmuDuckdbSession } from "../types/lmuDuckdb";
+import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview } from "../types/session";
 import type { StrategyState } from "../types/strategy";
 
@@ -60,6 +61,7 @@ function ChannelBadges({ labels }: { labels: string[] }) {
 }
 
 export function RacePrepReport({ strategy }: Props) {
+  const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
   const [sessions, setSessions] = useState<LmuDuckdbSession[]>([]);
   const [selected, setSelected] = useState("current");
   const [sessionSearch, setSessionSearch] = useState("");
@@ -70,7 +72,7 @@ export function RacePrepReport({ strategy }: Props) {
 
   useEffect(() => {
     setSessionListLoading(true);
-    api.lmuDuckdbSessions(250)
+    runDuckdbJob<LmuDuckdbScanResponse>(() => api.startDuckdbSessionsJob(250))
       .then((payload) => {
         setSessions(payload.sessions);
         setStatus(payload.total ? "DuckDB sessions loaded" : "No synced DuckDB sessions");
@@ -83,7 +85,7 @@ export function RacePrepReport({ strategy }: Props) {
     let cancelled = false;
     const load = () => {
       setReportLoading(true);
-      const request = selected === "current" ? api.review() : api.reviewCachedLmuDuckdbSession(selected);
+      const request = selected === "current" ? api.review() : runDuckdbJob<SessionReview>(() => api.startDuckdbReviewJob(selected));
       request
         .then((data) => {
           if (!cancelled) {
@@ -119,7 +121,7 @@ export function RacePrepReport({ strategy }: Props) {
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={sessionListLoading || (reportLoading && (selected !== "current" || !review))} title={reportLoading ? "Loading session report" : "Loading session list"} detail={selected === "current" ? "Preparing the current live session report." : "Reading the selected DuckDB session and building the report."} />
+      <LoadingOverlay show={sessionListLoading || (reportLoading && (selected !== "current" || !review))} title={selected !== "current" && duckdbProgress?.phase ? duckdbProgress.phase : reportLoading ? "Loading session report" : "Loading session list"} detail={selected !== "current" && duckdbProgress?.message ? duckdbProgress.message : selected === "current" ? "Preparing the current live session report." : "Reading the selected DuckDB session and building the report."} percentage={selected !== "current" || sessionListLoading ? duckdbProgress?.percentage : undefined} error={duckdbProgress?.error} />
       <section className="card span-12">
         <SectionTitle title="Session Report" help="Reviews the current live session or a synced LMU DuckDB session with pace, fuel, tyre, environment, and engineering evidence." />
         <div className="section-toolbar report-toolbar">

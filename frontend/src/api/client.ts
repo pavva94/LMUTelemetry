@@ -1,7 +1,7 @@
 import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { SavedSession, SessionDashboard, SessionReview } from "../types/session";
-import type { LmuDuckdbScanResponse, LmuDuckdbSettings } from "../types/lmuDuckdb";
+import type { DuckdbJobStatus, LmuDuckdbScanResponse, LmuDuckdbSettings } from "../types/lmuDuckdb";
 import type { LiveLapAnalysis } from "../types/liveLapAnalysis";
 import type { MotecSession, MotecSample } from "../types/motec";
 import type { ProfileLap, ProfileLapResponse, ProfileOverview, ProfileSummary } from "../types/profile";
@@ -80,6 +80,13 @@ export const api = {
     if (lapB) params.set("lap_b", lapB);
     return getJson<{ session_id: string; laps: string[]; points: Array<Record<string, number | string | boolean | null>>; warnings: string[] }>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/trajectory?${params}`);
   },
+  startDuckdbSessionsJob: (limit = 250, offset = 0) => postJson<DuckdbJobStatus>(`/api/lmu-duckdb/jobs/sessions?limit=${limit}&offset=${offset}`, {}),
+  startDuckdbSyncJob: (path?: string) => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/sync", path ? { path } : {}),
+  startDuckdbReviewJob: (id: string, limit = REVIEW_SAMPLE_LIMIT) => postJson<DuckdbJobStatus>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review-jobs?limit=${limit}`, {}),
+  startDuckdbHistoryJob: (sessionIds: string[]) => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/history", { session_ids: sessionIds }),
+  startProfileOverviewJob: () => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/profile-overview", {}),
+  duckdbJobStatus: (id: string) => getJson<DuckdbJobStatus>(`/api/lmu-duckdb/jobs/${encodeURIComponent(id)}`),
+  duckdbJobResult: <T>(id: string) => getJson<T>(`/api/lmu-duckdb/jobs/${encodeURIComponent(id)}/result`),
   profileOverview: () => getJson<ProfileOverview>("/api/profile/overview"),
   profileSummary: () => getJson<ProfileSummary>("/api/profile/summary"),
   profileBestLaps: () => getJson<ProfileLap[]>("/api/profile/best-laps"),

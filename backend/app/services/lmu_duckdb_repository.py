@@ -4,10 +4,13 @@ import hashlib
 import gc
 import json
 import math
+from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from threading import Lock
+from typing import Any, Callable
 
 from sqlalchemy import delete, func, select
 
@@ -30,6 +33,24 @@ FOLDER_SETTING_KEY = "lmu_duckdb_folder"
 SYNC_STATUS_SETTING_KEY = "lmu_duckdb_last_sync_status"
 SYNC_AT_SETTING_KEY = "lmu_duckdb_last_sync_at"
 DEFAULT_WINDOWS_TELEMETRY_FOLDER = Path("G:/SteamLibrary/steamapps/common/Le Mans Ultimate/UserData/Telemetry")
+ProgressCallback = Callable[[str, str, int, int, int], None]
+_REVIEW_CACHE_LIMIT = 8
+_review_cache: OrderedDict[tuple[str, str, int], dict] = OrderedDict()
+_review_cache_lock = Lock()
+
+
+def _report(progress: ProgressCallback | None, phase: str, message: str, completed: int, total: int, percentage: int) -> None:
+    if progress:
+        progress(phase, message, completed, total, percentage)
+
+
+def _clear_review_cache(session_id: str | None = None) -> None:
+    with _review_cache_lock:
+        if session_id is None:
+            _review_cache.clear()
+            return
+        for key in [key for key in _review_cache if key[0] == session_id]:
+            _review_cache.pop(key, None)
 
 
 CHANNEL_ALIASES: dict[str, tuple[str, ...]] = {
@@ -1250,6 +1271,126 @@ def _session_model_to_dict(session: LmuDuckdbSessionModel) -> dict:
     }
 
 
+def _cached_lap_to_dict(lap: LmuDuckdbLapModel) -> dict:
+    row = {
+        "lap_number": int(lap.lap_number) if str(lap.lap_number).isdigit() else lap.lap_number,
+        "lap_time": lap.lap_time,
+        "valid_lap": lap.valid_lap,
+        "in_pit": lap.in_pit,
+        "distance_km": lap.distance_km,
+        "fuel_start": lap.fuel_start,
+        "fuel_end": lap.fuel_end,
+        "fuel_used": lap.fuel_used,
+        "fuel_added": lap.fuel_added,
+        "top_speed": lap.max_speed,
+        "speed_kph": lap.average_speed,
+        "track_temp": lap.track_temp,
+        "ambient_temp": lap.ambient_temp,
+        "engine_oil_temp": lap.engine_oil_temp,
+        "engine_water_temp": lap.engine_water_temp,
+    }
+    for wheel in WHEELS:
+        row[f"tyre_wear_end_{wheel}"] = getattr(lap, f"tyre_wear_{wheel}")
+        row[f"tyre_pressure_{wheel}"] = getattr(lap, f"tyre_pressure_{wheel}")
+        row[f"brake_temp_{wheel}"] = getattr(lap, f"brake_temp_{wheel}")
+    return row
+
+
+def _cached_review_parts(session_id: str, file_path: Path) -> dict | None:
+    signature = _file_signature(file_path)
+    with SessionLocal() as db:
+        session = db.get(LmuDuckdbSessionModel, session_id)
+        if session is None or not session.active or session.signature != signature:
+            return None
+        lap_models = db.scalars(
+            select(LmuDuckdbLapModel)
+            .where(LmuDuckdbLapModel.session_id == session_id)
+            .order_by(LmuDuckdbLapModel.id.asc())
+        ).all()
+        try:
+            laps = json.loads(session.laps_json or "[]")
+        except Exception:
+            laps = []
+        if not laps:
+            laps = [_cached_lap_to_dict(lap) for lap in lap_models]
+        session_data = _session_model_to_dict(session)
+        try:
+            summary = json.loads(session.summary_json or "null")
+        except Exception:
+            summary = None
+        try:
+            pit_events = json.loads(session.pit_events_json or "[]")
+        except Exception:
+            pit_events = []
+        try:
+            warnings = json.loads(session.warnings_json or "[]")
+        except Exception:
+            warnings = []
+    return {
+        "signature": signature,
+        "session": session_data,
+        "laps": laps,
+        "summary": summary,
+        "pit_events": pit_events,
+        "warnings": warnings,
+    }
+
+
+def _display_rows(file_path: Path, sample_limit: int) -> tuple[list[dict], list[dict], list[str], Any]:
+    warnings: list[str] = []
+    conn = _open(file_path)
+    try:
+        channel_info = _channel_layout(conn)
+        if channel_info is not None:
+            rows, row_warnings = _select_channel_rows(conn, channel_info, row_limit=max(1, sample_limit))
+            info = channel_info
+        else:
+            info, row_warnings = _best_table(conn)
+            if info is None:
+                return [], _channel_manifest(conn, None), row_warnings, None
+            raw_rows, select_warnings = _select_rows(conn, info, row_limit=max(1, sample_limit))
+            row_warnings.extend(select_warnings)
+            rows = _review_rows(raw_rows, info)
+        warnings.extend(row_warnings)
+        manifest = _channel_manifest(conn, channel_info if channel_info is not None else None)
+    finally:
+        _close(conn)
+    return _downsample_evenly(rows, sample_limit), manifest, warnings, info
+
+
+def _review_from_validated_cache(file_path: Path, session_id: str, sample_limit: int, progress: ProgressCallback | None) -> dict | None:
+    cached = _cached_review_parts(session_id, file_path)
+    if cached is None:
+        return None
+    key = (session_id, cached["signature"], sample_limit)
+    with _review_cache_lock:
+        hit = _review_cache.get(key)
+        if hit is not None:
+            _review_cache.move_to_end(key)
+            _report(progress, "Preparing page", "Using prepared validated session", 1, 1, 95)
+            return deepcopy(hit)
+    _report(progress, "Reading telemetry", "Reading chart samples from DuckDB", 0, 1, 30)
+    rows, manifest, read_warnings, info = _display_rows(file_path, sample_limit)
+    _report(progress, "Processing database", "Combining validated results with chart data", 1, 1, 85)
+    result = {
+        "session": cached["session"],
+        "telemetry_samples": rows,
+        "recommendations": [],
+        "laps": cached["laps"],
+        "pit_events": cached["pit_events"],
+        "summary": cached["summary"],
+        "channel_manifest": manifest,
+        "available_fields": _available_fields(info, rows),
+        "warnings": list(dict.fromkeys([*cached["warnings"], *(warning for warning in read_warnings if "sampled every" not in warning)])),
+    }
+    with _review_cache_lock:
+        _review_cache[key] = deepcopy(result)
+        _review_cache.move_to_end(key)
+        while len(_review_cache) > _REVIEW_CACHE_LIMIT:
+            _review_cache.popitem(last=False)
+    return result
+
+
 def _store_review(db, file_path: Path, review: dict, signature: str, now: str) -> None:
     session_data = review["session"]
     summary = review.get("summary") or {}
@@ -1290,12 +1431,14 @@ def _store_review(db, file_path: Path, review: dict, signature: str, now: str) -
     model.warnings_json = _json(review.get("warnings") or [])
     model.summary_json = _json(summary)
     model.pit_events_json = _json(review.get("pit_events") or [])
+    model.laps_json = _json(review.get("laps") or [])
     track = session_data.get("track_name") or "Unknown track"
     layout = session_data.get("track_layout") or ""
     car = session_data.get("vehicle_model") or session_data.get("vehicle_name") or "Unknown car"
     car_class = session_data.get("vehicle_class") or "Unknown class"
+    lap_models = []
     for lap in review.get("laps") or []:
-        db.add(
+        lap_models.append(
             LmuDuckdbLapModel(
                 session_id=session_id,
                 lap_number=str(lap.get("lap_number") or ""),
@@ -1336,6 +1479,8 @@ def _store_review(db, file_path: Path, review: dict, signature: str, now: str) -
                 finish_status=model.classified_status,
             )
         )
+    if lap_models:
+        db.bulk_save_objects(lap_models)
 
 
 def scan_folder(path: str, limit: int = DEFAULT_SCAN_LIMIT, offset: int = 0) -> dict:
@@ -1396,13 +1541,14 @@ def sessions_from_cache_or_setting(limit: int = DEFAULT_SCAN_LIMIT, offset: int 
     return scanned
 
 
-def sync_folder(path: str | None = None) -> dict:
+def sync_folder(path: str | None = None, progress: ProgressCallback | None = None) -> dict:
     folder_path = path or _configured_folder_path()
     if not folder_path:
         raise FileNotFoundError("No LMU DuckDB telemetry folder is configured.")
     folder = _folder(folder_path)
     now = datetime.utcnow().isoformat()
     candidates = _scan_candidates(folder)
+    _report(progress, "Loading database", f"Found {len(candidates)} DuckDB files", 0, max(1, len(candidates)), 8)
     signatures = {str(file_path.resolve()): _file_signature(file_path) for file_path in candidates}
     present_keys = {_file_key(file_path) for file_path in candidates}
     processed = 0
@@ -1418,23 +1564,29 @@ def sync_folder(path: str | None = None) -> dict:
                 select(LmuDuckdbSessionModel.file_key, LmuDuckdbSessionModel.signature, LmuDuckdbSessionModel.active)
             ).all()
         }
-        for file_path in candidates:
+        for index, file_path in enumerate(candidates):
             signature = signatures[str(file_path.resolve())]
             cached = cached_by_file_key.get(_file_key(file_path))
             if cached and cached["signature"] == signature and cached["active"]:
                 skipped += 1
+                percent = 10 + round(((index + 1) / max(1, len(candidates))) * 80)
+                _report(progress, "Validating telemetry", f"Checked {file_path.name}", index + 1, len(candidates), percent)
                 continue
             try:
+                _report(progress, "Reading telemetry", f"Reading {file_path.name}", index, len(candidates), 10 + round((index / max(1, len(candidates))) * 80))
                 review = _review_file(file_path, sample_limit=0)
                 _store_review(db, file_path, review, signature, now)
                 db.commit()
                 db.expunge_all()
+                _clear_review_cache(review["session"]["id"])
                 processed += 1
                 warnings.extend(f"{file_path.name}: {warning}" for warning in review.get("warnings") or [])
             except Exception as exc:
                 db.rollback()
                 failed += 1
                 warnings.append(f"{file_path.name}: {exc}")
+            percent = 10 + round(((index + 1) / max(1, len(candidates))) * 80)
+            _report(progress, "Validating telemetry", f"Processed {index + 1} of {len(candidates)} files", index + 1, len(candidates), percent)
         for cached in db.scalars(select(LmuDuckdbSessionModel).where(LmuDuckdbSessionModel.active.is_(True))).all():
             if cached.file_key not in present_keys:
                 cached.active = False
@@ -1444,15 +1596,18 @@ def sync_folder(path: str | None = None) -> dict:
         _set_setting(db, SYNC_STATUS_SETTING_KEY, status, now)
         _set_setting(db, SYNC_AT_SETTING_KEY, now, now)
         db.commit()
+    _report(progress, "Processing database", "Updating the local DuckDB index", len(candidates), max(1, len(candidates)), 94)
     result = get_settings()
     result.update({"processed": processed, "skipped": skipped, "inactive": inactive, "failed": failed, "warnings": warnings[:200]})
     return result
 
 
-def _review_file(file_path: Path, sample_limit: int = 5000) -> dict:
+def _review_file(file_path: Path, sample_limit: int = 5000, progress: ProgressCallback | None = None) -> dict:
     warnings: list[str] = []
+    _report(progress, "Loading database", f"Opening {file_path.name}", 0, 1, 8)
     conn = _open(file_path)
     try:
+        _report(progress, "Reading telemetry", "Discovering telemetry channels", 0, 1, 20)
         metadata = _metadata(conn)
         channel_info = _channel_layout(conn)
         row_limit = _row_limit_for_review(sample_limit)
@@ -1485,11 +1640,13 @@ def _review_file(file_path: Path, sample_limit: int = 5000) -> dict:
         channel_manifest = _channel_manifest(conn, channel_info if channel_info is not None else None)
     finally:
         _close(conn)
+    _report(progress, "Validating telemetry", "Validating laps and telemetry quality", 0, 1, 68)
     laps = _build_laps(rows)
     session = _file_session(file_path, info, warnings, metadata)
     session["latest_lap_number"] = max((int(lap["lap_number"]) for lap in laps), default=None)
     session["latest_game_time"] = rows[-1].get("game_time") if rows else None
     session["ended_at_game_time"] = session["latest_game_time"]
+    _report(progress, "Processing database", "Building session summaries and charts", 1, 1, 88)
     return {
         "session": session,
         "telemetry_samples": _downsample(rows, sample_limit),
@@ -1503,7 +1660,7 @@ def _review_file(file_path: Path, sample_limit: int = 5000) -> dict:
     }
 
 
-def review_session(path: str | None, session_id: str, sample_limit: int = 5000) -> dict:
+def review_session(path: str | None, session_id: str, sample_limit: int = 5000, progress: ProgressCallback | None = None) -> dict:
     file_path = None
     if path:
         folder = _folder(path)
@@ -1512,7 +1669,28 @@ def review_session(path: str | None, session_id: str, sample_limit: int = 5000) 
         file_path = _find_session_by_id(session_id)
     if file_path is None:
         raise KeyError(session_id)
-    return _review_file(file_path, sample_limit=sample_limit)
+    if not path:
+        fast = _review_from_validated_cache(file_path, session_id, sample_limit, progress)
+        if fast is not None:
+            return fast
+    return _review_file(file_path, sample_limit=sample_limit, progress=progress)
+
+
+def comparable_history(session_ids: list[str], progress: ProgressCallback | None = None) -> dict:
+    reviews = []
+    total = max(1, len(session_ids))
+    for index, session_id in enumerate(session_ids):
+        _report(progress, "Loading database", f"Loading comparable session {index + 1} of {len(session_ids)}", index, total, 5 + round((index / total) * 85))
+        review = review_session(None, session_id, sample_limit=1)
+        reviews.append(review)
+        _report(progress, "Processing database", f"Processed comparable session {index + 1} of {len(session_ids)}", index + 1, total, 5 + round(((index + 1) / total) * 85))
+    return {
+        "telemetry_samples": [sample for review in reviews for sample in review.get("telemetry_samples") or []],
+        "laps": [lap for review in reviews for lap in review.get("laps") or []],
+        "pit_events": [event for review in reviews for event in review.get("pit_events") or []],
+        "recommendations": [],
+        "session_count": len(reviews),
+    }
 
 
 def trajectory_session(session_id: str, lap_a: str | None = None, lap_b: str | None = None, max_points: int = 1600) -> dict:

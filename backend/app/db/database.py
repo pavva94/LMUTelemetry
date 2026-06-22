@@ -141,7 +141,10 @@ def _ensure_sqlite_columns() -> None:
                     connection.execute(text(f"ALTER TABLE session_aggregates ADD COLUMN {name} {column_type}"))
 
     if "lmu_duckdb_sessions" in table_names:
+        existing = {column["name"] for column in inspector.get_columns("lmu_duckdb_sessions")}
         with engine.begin() as connection:
+            if "laps_json" not in existing:
+                connection.execute(text("ALTER TABLE lmu_duckdb_sessions ADD COLUMN laps_json TEXT"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_sessions_file_key ON lmu_duckdb_sessions (file_key)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_sessions_active_modified ON lmu_duckdb_sessions (active, modified_at)"))
 

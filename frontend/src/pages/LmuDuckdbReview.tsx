@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
+import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
 import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { toFiniteNumber } from "../lib/sessionAnalysis";
 import { chartLabelFormatter, chartValueFormatter, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceTime } from "../lib/timeFormat";
-import type { LmuDuckdbSession } from "../types/lmuDuckdb";
+import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview as Review } from "../types/session";
 
 type Row = Record<string, number | string | boolean | null | undefined>;
@@ -646,6 +647,7 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
 }
 
 export function LmuDuckdbReview() {
+  const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
   const [folder, setFolder] = useState(DEFAULT_FOLDER);
   const [sessions, setSessions] = useState<LmuDuckdbSession[]>([]);
   const [selectedId, setSelectedId] = useState("");
@@ -669,7 +671,7 @@ export function LmuDuckdbReview() {
       setTotal(null);
     }
     try {
-      const payload = await api.lmuDuckdbSessions(SCAN_LIMIT, offset);
+      const payload = await runDuckdbJob<LmuDuckdbScanResponse>(() => api.startDuckdbSessionsJob(SCAN_LIMIT, offset));
       setSessions(payload.sessions);
       setWarnings(payload.warnings || []);
       setNextOffset(payload.next_offset ?? null);
@@ -729,7 +731,7 @@ export function LmuDuckdbReview() {
     setReview(null);
     setReviewLoading(true);
     setStatus("Loading selected DuckDB session");
-    api.reviewCachedLmuDuckdbSession(selectedId, 300)
+    runDuckdbJob<Review>(() => api.startDuckdbReviewJob(selectedId, 300))
       .then((data) => {
         if (!mounted) return;
         setReview(data);
@@ -826,7 +828,7 @@ export function LmuDuckdbReview() {
 
   return (
     <div className="duckdb-workspace">
-      <LoadingOverlay show={busy || reviewLoading} title={reviewLoading ? "Loading DuckDB session" : "Loading DuckDB sessions"} detail={reviewLoading ? "Opening the selected native telemetry file and preparing review charts." : "Loading cached telemetry sessions from the local index."} />
+      <LoadingOverlay show={busy || reviewLoading} title={duckdbProgress?.phase || (reviewLoading ? "Loading DuckDB session" : "Loading DuckDB sessions")} detail={duckdbProgress?.message || (reviewLoading ? "Opening the selected native telemetry file and preparing review charts." : "Loading cached telemetry sessions from the local index.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       <section className="duckdb-browser">
         <SectionTitle title="Session Review" help="Read-only review of cached Le Mans Ultimate DuckDB sessions. Raw chart samples are loaded from the selected DuckDB file on demand." />
         <div className="duckdb-path-grid">

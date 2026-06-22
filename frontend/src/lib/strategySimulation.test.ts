@@ -15,7 +15,6 @@ const baseInput: StrategySimulationInput = {
   fuelSafetyMarginLiters: 2,
   safetyPolicy: "balanced",
   pitLaneLossSeconds: 28,
-  baseStationarySeconds: 2,
   tyreChangeSecondsPerTyre: 3,
   refuelSecondsPer5Liters: 1.2,
   serviceModel: "sequential",
@@ -28,12 +27,12 @@ const baseInput: StrategySimulationInput = {
 };
 
 describe("strategy simulation", () => {
-  it("uses continuous fuel-loading time and sequential service", () => {
-    expect(stopServiceTime({ pitLaneLossSeconds: 28, baseStationarySeconds: 2, tyresChanged: 4, tyreChangeSecondsPerTyre: 3, fuelAddedLiters: 21, refuelSecondsPer5Liters: 2 })).toBeCloseTo(50.4, 3);
+  it("uses continuous fuel-loading time and sequential service without a fixed stationary overhead", () => {
+    expect(stopServiceTime({ pitLaneLossSeconds: 28, tyresChanged: 4, tyreChangeSecondsPerTyre: 3, fuelAddedLiters: 21, refuelSecondsPer5Liters: 2 })).toBeCloseTo(48.4, 3);
   });
 
   it("supports parallel tyre and fuel service", () => {
-    expect(stopServiceTime({ pitLaneLossSeconds: 28, baseStationarySeconds: 2, tyresChanged: 4, tyreChangeSecondsPerTyre: 3, fuelAddedLiters: 50, refuelSecondsPer5Liters: 2, serviceModel: "parallel" })).toBe(50);
+    expect(stopServiceTime({ pitLaneLossSeconds: 28, tyresChanged: 4, tyreChangeSecondsPerTyre: 3, fuelAddedLiters: 50, refuelSecondsPer5Liters: 2, serviceModel: "parallel" })).toBe(48);
   });
 
   it("calculates start fuel instead of accepting a user guess", () => {
@@ -62,6 +61,22 @@ describe("strategy simulation", () => {
     expect(stopped).toBeDefined();
     expect(stopped!.raceLaps).toBeLessThanOrEqual(noStop.raceLaps);
     expect(stopped!.calculationBreakdown.pitTimeSeconds).toBeGreaterThan(0);
+  });
+
+  it("charges the pit-lane driving loss once for every stop", () => {
+    const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: 120, maxStops: 5 });
+    plans.forEach((plan) => {
+      expect(plan.calculationBreakdown.pitLaneTimeSeconds).toBe(plan.stops * baseInput.pitLaneLossSeconds);
+    });
+  });
+
+  it("does not reset tyre degradation when no tyres are changed", () => {
+    const degradation = 0.1;
+    const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: 60, fuelPerLap: 0.5, tankCapacityLiters: 100, tyreChangePolicy: "never", tyrePaceDegradationPerLap: degradation, maxStops: 3 });
+    plans.forEach((plan) => {
+      const expected = degradation * plan.raceLaps * (plan.raceLaps - 1) / 2;
+      expect(plan.tyreDegradationLossSeconds).toBeCloseTo(expected, 2);
+    });
   });
 
   it("finishes the lap that crosses the duration target", () => {

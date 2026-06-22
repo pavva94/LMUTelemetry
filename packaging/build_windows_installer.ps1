@@ -1,5 +1,6 @@
 param(
     [switch]$SkipDependencyInstall,
+    [switch]$SkipFrontendTests,
     [switch]$SkipFrontendBuild,
     [switch]$SkipSmokeTest,
     [switch]$SkipInstaller,
@@ -14,6 +15,9 @@ $VenvPython = Join-Path $RepoRoot "backend\.venv\Scripts\python.exe"
 $Python = if (Test-Path $VenvPython) { $VenvPython } else { "python" }
 $FrontendIndex = Join-Path $RepoRoot "frontend\dist\index.html"
 $AppExe = Join-Path $RepoRoot "dist\LMUTelemetry\LMUTelemetry.exe"
+$PackagedFrontendIndex = Join-Path $RepoRoot "dist\LMUTelemetry\_internal\frontend\dist\index.html"
+$PackagedConfig = Join-Path $RepoRoot "dist\LMUTelemetry\_internal\config\default_strategy.yaml"
+$PackagedTelemetryModule = Join-Path $RepoRoot "dist\LMUTelemetry\_internal\pyLMUSharedMemory\lmu_data.py"
 
 function Invoke-Step {
     param(
@@ -94,6 +98,19 @@ try {
     }
 
     if (-not $SkipFrontendBuild) {
+        if (-not $SkipFrontendTests) {
+            Invoke-Step "Test frontend" {
+                Push-Location "frontend"
+                try {
+                    npm.cmd run test:run
+                    Assert-NativeSuccess "npm run test:run"
+                }
+                finally {
+                    Pop-Location
+                }
+            }
+        }
+
         Invoke-Step "Build frontend" {
             Push-Location "frontend"
             try {
@@ -113,6 +130,9 @@ try {
         Assert-NativeSuccess "PyInstaller"
     }
     Assert-FileExists $AppExe "Packaged application executable"
+    Assert-FileExists $PackagedFrontendIndex "Packaged frontend entry point"
+    Assert-FileExists $PackagedConfig "Packaged default strategy configuration"
+    Assert-FileExists $PackagedTelemetryModule "Packaged LMU shared-memory telemetry module"
 
     if (-not $SkipSmokeTest) {
         Invoke-Step "Smoke test packaged application" {
@@ -146,6 +166,10 @@ try {
     Write-Host ""
     Write-Host "Release artifacts are in:" -ForegroundColor Green
     Write-Host "  $AppExe"
+    $exeInfo = Get-Item -LiteralPath $AppExe
+    $exeHash = Get-FileHash -LiteralPath $AppExe -Algorithm SHA256
+    Write-Host ("  Size: {0:N2} MB" -f ($exeInfo.Length / 1MB))
+    Write-Host "  SHA256: $($exeHash.Hash)"
     if (-not $SkipInstaller) {
         Write-Host "  $RepoRoot\release\LMUTelemetry-Setup-$AppVersion.exe"
     }

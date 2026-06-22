@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
+import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
 import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { average, median, standardDeviation, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
 import { simulateStrategies, type PaceEvidence, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
-import type { LmuDuckdbSession } from "../types/lmuDuckdb";
+import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview } from "../types/session";
 import type { StrategyState } from "../types/strategy";
 import type { TelemetrySnapshot } from "../types/telemetry";
@@ -23,7 +24,6 @@ type FormState = {
   tyre_change_seconds_per_tyre: number;
   refuel_seconds_per_5_liters: number;
   max_tyre_wear: number;
-  pit_stationary_seconds: number;
   safety_car_pit_loss_seconds: number;
   fuel_safety_margin_laps: number;
 };
@@ -214,7 +214,6 @@ function seededForm(strategy: StrategyState | null, telemetry?: TelemetrySnapsho
     tyre_change_seconds_per_tyre: numberFrom(assumptions.tyre_change_seconds_per_tyre, current?.tyre_change_seconds_per_tyre ?? 3),
     refuel_seconds_per_5_liters: numberFrom(assumptions.refuel_seconds_per_5_liters, current?.refuel_seconds_per_5_liters ?? 1.2),
     max_tyre_wear: numberFrom(assumptions.max_tyre_wear, current?.max_tyre_wear ?? 0.75),
-    pit_stationary_seconds: numberFrom(assumptions.pit_stationary_seconds, current?.pit_stationary_seconds ?? 12),
     safety_car_pit_loss_seconds: numberFrom(assumptions.safety_car_pit_loss_seconds, current?.safety_car_pit_loss_seconds ?? 16),
     fuel_safety_margin_laps: numberFrom(assumptions.fuel_safety_margin_laps, current?.fuel_safety_margin_laps ?? 1),
   };
@@ -420,6 +419,7 @@ function StrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
 }
 
 export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategyState | null; telemetry?: TelemetrySnapshot | null }) {
+  const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
   const seededSession = useRef<string | null>(null);
   const appliedSessionModel = useRef<string | null>(null);
   const appliedLiveModel = useRef<string | null>(null);
@@ -445,7 +445,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
 
   useEffect(() => {
     setSessionListLoading(true);
-    api.lmuDuckdbSessions(250)
+    runDuckdbJob<LmuDuckdbScanResponse>(() => api.startDuckdbSessionsJob(250))
       .then((payload) => {
         setSessions(payload.sessions);
         setSourceStatus(payload.total ? "DuckDB sessions loaded" : "No synced DuckDB sessions");
@@ -479,7 +479,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     setModelSource("session");
     setSessionLoading(true);
     setSourceStatus("Loading DuckDB session");
-    api.reviewCachedLmuDuckdbSession(selectedSessionId)
+    runDuckdbJob<SessionReview>(() => api.startDuckdbReviewJob(selectedSessionId))
       .then((review) => {
         if (!cancelled) {
           setSessionReview(review);
@@ -563,11 +563,11 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     setSessionLoading(true);
     setSourceStatus(`Loading ${comparable.length} comparable sessions`);
     try {
-      const reviews = await Promise.all(comparable.map((session) => api.reviewCachedLmuDuckdbSession(session.id)));
-      setHistoryReview({ telemetry_samples: reviews.flatMap((review) => review.telemetry_samples), laps: reviews.flatMap((review) => review.laps), pit_events: reviews.flatMap((review) => review.pit_events), recommendations: reviews.flatMap((review) => review.recommendations) });
-      setHistoryCount(reviews.length);
+      const history = await runDuckdbJob<SessionReview & { session_count: number }>(() => api.startDuckdbHistoryJob(comparable.map((session) => session.id)));
+      setHistoryReview(history);
+      setHistoryCount(history.session_count);
       setModelSource("history");
-      setSourceStatus(`Using ${reviews.length} comparable ${selectedSession.track_name || "track"} / ${selectedSession.vehicle_name || selectedSession.vehicle_model || "car"} sessions`);
+      setSourceStatus(`Using ${history.session_count} comparable ${selectedSession.track_name || "track"} / ${selectedSession.vehicle_name || selectedSession.vehicle_model || "car"} sessions`);
     } catch (error) {
       setSourceStatus(error instanceof Error ? error.message : "Comparable history unavailable");
     } finally {
@@ -629,7 +629,6 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     fuelSafetyMarginLiters: fuelSafetyMarginLiters,
     safetyPolicy,
     pitLaneLossSeconds: form.pit_loss_seconds,
-    baseStationarySeconds: form.pit_stationary_seconds,
     tyreChangeSecondsPerTyre: form.tyre_change_seconds_per_tyre,
     refuelSecondsPer5Liters: form.refuel_seconds_per_5_liters,
     serviceModel,
@@ -656,7 +655,6 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     ["race_duration_minutes", "Race duration", "min", 1],
     ["tank_capacity_liters", "Tank capacity", "L", 0.1],
     ["pit_loss_seconds", "Pit lane driving loss", "sec", 0.1],
-    ["pit_stationary_seconds", "Base stationary overhead", "sec", 0.1],
     ["tyre_change_seconds_per_tyre", "Change one tyre", "sec", 0.1],
     ["refuel_seconds_per_5_liters", "Load 5L fuel", "sec", 0.1],
     ["max_tyre_wear", "Max tyre wear", "fraction", 0.01],
@@ -664,7 +662,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={sessionListLoading || sessionLoading} title={sessionLoading ? "Loading DuckDB session" : "Loading session list"} detail={sessionLoading ? "Reading the selected session and calculating strategy inputs." : "Loading cached DuckDB sessions for the planner."} />
+      <LoadingOverlay show={sessionListLoading || sessionLoading} title={duckdbProgress?.phase || (sessionLoading ? "Loading DuckDB session" : "Loading session list")} detail={duckdbProgress?.message || (sessionLoading ? "Reading the selected session and calculating strategy inputs." : "Loading cached DuckDB sessions for the planner.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       <section className="card span-12 strategy-source-panel">
         <div>
           <span className="eyebrow">PRE-RACE ENGINEERING</span>
@@ -710,7 +708,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           </label>
           <label><span className="label">Safety reserve policy</span><select value={safetyPolicy} onChange={(event) => setSafetyPolicy(event.target.value as typeof safetyPolicy)}><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option></select><span className="subvalue">Changes planning rate, reserve, confidence, and risk</span></label>
           <label><span className="label">Finish reserve unit</span><select value={reserveUnit} onChange={(event) => setReserveUnit(event.target.value as typeof reserveUnit)}><option value="laps">Equivalent laps</option><option value="liters">Litres</option></select><input type="number" min="0" step="0.1" value={reserveUnit === "laps" ? form.fuel_safety_margin_laps : form.fuel_safety_margin_liters} onChange={(event) => update(reserveUnit === "laps" ? "fuel_safety_margin_laps" : "fuel_safety_margin_liters", event.target.value)} /><span className="subvalue">{fmt(fuelSafetyMarginLiters, 2, " L")} base reserve before policy adjustment</span></label>
-          <label><span className="label">Pit service model</span><select value={serviceModel} onChange={(event) => setServiceModel(event.target.value as typeof serviceModel)}><option value="sequential">Sequential: fuel + tyres</option><option value="parallel">Parallel: slower job wins</option></select><span className="subvalue">Base overhead remains separate</span></label>
+          <label><span className="label">Pit service model</span><select value={serviceModel} onChange={(event) => setServiceModel(event.target.value as typeof serviceModel)}><option value="sequential">Sequential: fuel + tyres</option><option value="parallel">Parallel: slower job wins</option></select><span className="subvalue">Controls how tyre and refuelling work overlap</span></label>
           <label><span className="label">Tyre change policy</span><select value={tyrePolicy} onChange={(event) => setTyrePolicy(event.target.value as typeof tyrePolicy)}><option value="automatic">Automatic by corner</option><option value="all">All four at every stop</option><option value="never">Never (exploration)</option></select><span className="subvalue">Automatic changes only projected threshold crossings</span></label>
           {inputFields.map(([key, label, unit, step]) => (
             <label key={key}>
@@ -743,7 +741,6 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           normal_lap_time: form.normal_lap_time,
           race_start_new_tyres: form.race_start_new_tyres,
           pit_loss_seconds: form.pit_loss_seconds,
-          pit_stationary_seconds: form.pit_stationary_seconds,
           tyre_change_seconds_per_tyre: form.tyre_change_seconds_per_tyre,
           refuel_seconds_per_5_liters: form.refuel_seconds_per_5_liters,
           safety_car_pit_loss_seconds: form.safety_car_pit_loss_seconds,
