@@ -38,7 +38,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Resolve release version
         id: version
@@ -77,14 +77,14 @@ jobs:
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.13"
           cache: pip
           cache-dependency-path: backend/requirements.txt
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
           cache: npm
@@ -124,7 +124,7 @@ jobs:
           $rows | Set-Content -LiteralPath $checksumFile -Encoding ascii
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: LMUTelemetry-Windows-${{ steps.version.outputs.version }}
           path: |
@@ -144,8 +144,12 @@ jobs:
           $checksums = "release\SHA256SUMS-$env:APP_VERSION.txt"
           $assets = @($installer, $portable, $checksums)
 
-          gh release view $env:RELEASE_TAG *> $null
-          if ($LASTEXITCODE -eq 0) {
+          $existingTags = @(gh release list --limit 1000 --json tagName --jq '.[].tagName')
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not list existing GitHub Releases (exit code $LASTEXITCODE)."
+          }
+
+          if ($existingTags -contains $env:RELEASE_TAG) {
             gh release upload $env:RELEASE_TAG @assets --clobber
           }
           else {
