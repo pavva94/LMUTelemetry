@@ -10,7 +10,6 @@ import {
   GitCompare,
   History,
   LineChart,
-  FileSpreadsheet,
   Settings,
   Signal,
   Timer,
@@ -34,10 +33,6 @@ const planItems = [
   ["race-prep", "Session Report", FileText],
 ] as const;
 
-const csvItems = [
-  ["motec", "MoTeC Workspace", FileSpreadsheet],
-] as const;
-
 const profileItems = [
   ["profile", "User Profile", UserRound],
   ["review", "Session Review", BarChart3],
@@ -46,11 +41,10 @@ const profileItems = [
 const modes = [
   ["live", "Live Mode", "Real-time telemetry", Gauge, liveItems],
   ["plan", "Plan Mode", "Strategy and session reports", FileText, planItems],
-  ["csv", "CSV Analysis", "Offline MoTeC-style tools", FileSpreadsheet, csvItems],
   ["profile", "User Profile", "DuckDB career and review", UserRound, profileItems],
 ] as const;
 
-const items = [...liveItems, ...planItems, ...csvItems, ...profileItems] as const;
+const items = [...liveItems, ...planItems, ...profileItems] as const;
 
 export type PageKey = (typeof items)[number][0];
 type ModeKey = (typeof modes)[number][0];
@@ -67,7 +61,6 @@ const pageDescriptions: Record<PageKey, string> = {
   "lap-analysis": "Whole-session coaching from every clean lap: where time is lost, what repeats, and what to try next.",
   pit: "Pit-window guidance based on current strategy assumptions and live session state.",
   settings: "Configuration for connection, display, recording behavior, and strategy assumptions.",
-  motec: "Offline CSV analysis workspace for imported MoTeC-style files and their persisted summaries.",
   profile: "DuckDB-only career profile and personal records built from the configured Le Mans Ultimate telemetry folder.",
   review: "Read-only DuckDB session review using cached file metadata and raw samples loaded on demand from the selected database.",
 };
@@ -75,7 +68,6 @@ const pageDescriptions: Record<PageKey, string> = {
 const firstPageByMode: Record<ModeKey, PageKey> = {
   live: "live",
   plan: "planner",
-  csv: "motec",
   profile: "profile",
 };
 
@@ -98,7 +90,7 @@ export function Layout({
   const [, modeLabel, modeDescription, ActiveModeIcon, activeItems] = activeMode;
   const activePage = items.find(([key]) => key === page);
   const activePageLabel = activePage?.[1] || "Dashboard";
-  const isOfflineMode = activeMode[0] === "csv" || activeMode[0] === "profile" || activeMode[0] === "plan";
+  const isOfflineMode = activeMode[0] === "profile" || activeMode[0] === "plan";
   const statusText = isOfflineMode ? "Offline analysis" : connected ? "Live socket" : "Reconnecting";
   const statusClass = isOfflineMode ? "blue" : connected ? "green" : "red";
   return (

@@ -30,7 +30,6 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 [Dirs]
 Name: "{localappdata}\LMUTelemetry"
 Name: "{localappdata}\LMUTelemetry\sessions"
-Name: "{localappdata}\LMUTelemetry\motec"
 Name: "{localappdata}\LMUTelemetry\logs"
 
 [Files]

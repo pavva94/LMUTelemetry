@@ -191,18 +191,6 @@ def live_audit(path: Path) -> dict[str, Any]:
     }
 
 
-def motec_audit(path: Path) -> dict[str, Any]:
-    connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
-    connection.row_factory = sqlite3.Row
-    counts = table_counts(connection)
-    schema = {
-        table: [dict(row) for row in connection.execute(f'PRAGMA table_info("{table}")')]
-        for table in counts
-    }
-    connection.close()
-    return {"path": str(path.resolve()), "size_bytes": path.stat().st_size, "table_counts": counts, "schema": schema}
-
-
 def native_raw_evidence(path: Path) -> dict[str, Any]:
     import duckdb
 
@@ -239,21 +227,15 @@ def main() -> None:
     parser.add_argument("--app-metrics", action="store_true", help="Include application profile calculations from the real stores.")
     args = parser.parse_args()
 
-    payload = {
-        "live": live_audit(args.data_dir / "sessions" / "lmu_strategy.sqlite3"),
-        "motec": motec_audit(args.data_dir / "motec" / "motec.sqlite3"),
-    }
+    payload = {"live": live_audit(args.data_dir / "sessions" / "lmu_strategy.sqlite3")}
     if args.app_metrics:
         backend_root = Path(__file__).resolve().parents[1]
         sys.path.insert(0, str(backend_root))
         from app.services.profile_repository import ProfileRepository
-        from app.services import motec_repository
-
         profile = ProfileRepository()
         payload["application"] = {
             "profile_summary": profile.summary(),
             "profile_best_laps": profile.best_laps()[:25],
-            "motec_sessions": [motec_repository.get_session(session["id"]) for session in motec_repository.list_sessions()],
         }
     if args.duckdb_file:
         backend_root = Path(__file__).resolve().parents[1]

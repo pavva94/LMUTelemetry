@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-import sqlite3
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from typing import Any
@@ -13,7 +12,6 @@ from sqlalchemy import func, select
 from app.db.database import SessionLocal
 from app.db.models import LapSummaryModel, LapValidationModel, LmuDuckdbLapModel, LmuDuckdbSessionModel, PersonalBestLapModel, SessionAggregateModel, SessionModel, TelemetrySampleModel
 from app.db.repository import Repository
-from app.services.motec_repository import DB_PATH as MOTEC_DB_PATH, init_motec_db
 
 
 def _num(value: Any) -> float | None:
@@ -377,64 +375,6 @@ class ProfileRepository:
                     rows.append(row)
             return rows
 
-    def _motec_laps(self) -> list[dict]:
-        init_motec_db()
-        if not MOTEC_DB_PATH.exists():
-            return []
-        rows: list[dict] = []
-        with sqlite3.connect(MOTEC_DB_PATH) as db:
-            db.row_factory = sqlite3.Row
-            sessions = db.execute("select * from motec_sessions order by imported_at asc").fetchall()
-            for session in sessions:
-                lap_rows = db.execute("select * from motec_laps where session_id = ? order by cast(lap_number as real)", (session["id"],)).fetchall()
-                for lap in lap_rows:
-                    distance = lap["distance_km"]
-                    duration = _num(lap["duration"])
-                    rows.append(
-                        {
-                            "id": f"csv:{session['id']}:{lap['lap_number']}",
-                            "source": "csv",
-                            "session_id": session["id"],
-                            "session_name": session["name"],
-                            "source_file": session["name"],
-                            "date": session["imported_at"],
-                            "track": session["track_name"] or "Unknown track",
-                            "layout": session["track_layout"] or "",
-                            "car": session["car_name"] or "Unknown car",
-                            "car_class": session["car_class"] or "Unknown class",
-                            "session_type": session["session_type"] if "session_type" in session.keys() and session["session_type"] else "CSV Import",
-                            "lap_number": lap["lap_number"],
-                            "lap_time": duration,
-                            "valid_lap": None,
-                            "distance_km": distance,
-                            "fuel_start": lap["fuel_start"],
-                            "fuel_end": lap["fuel_end"],
-                            "fuel_used": lap["fuel_start"] - lap["fuel_end"] if lap["fuel_start"] is not None and lap["fuel_end"] is not None and lap["fuel_start"] >= lap["fuel_end"] else None,
-                            "tyre_compound": None,
-                            "tyre_wear_fl": lap["tyre_wear_fl"],
-                            "tyre_wear_fr": lap["tyre_wear_fr"],
-                            "tyre_wear_rl": lap["tyre_wear_rl"],
-                            "tyre_wear_rr": lap["tyre_wear_rr"],
-                            "tyre_pressure_fl": lap["tyre_pressure_fl"],
-                            "tyre_pressure_fr": lap["tyre_pressure_fr"],
-                            "tyre_pressure_rl": lap["tyre_pressure_rl"],
-                            "tyre_pressure_rr": lap["tyre_pressure_rr"],
-                            "brake_temp_fl": lap["brake_temp_fl"],
-                            "brake_temp_fr": lap["brake_temp_fr"],
-                            "brake_temp_rl": lap["brake_temp_rl"],
-                            "brake_temp_rr": lap["brake_temp_rr"],
-                            "track_temp": lap["track_temp"],
-                            "ambient_temp": lap["ambient_temp"],
-                            "engine_oil_temp": lap["engine_oil_temp"],
-                            "engine_water_temp": lap["engine_water_temp"],
-                            "max_speed": lap["max_speed"],
-                            "average_speed": lap["average_speed"] if lap["average_speed"] is not None else (distance / (duration / 3600) if distance is not None and duration and duration > 0 else None),
-                            "finish_position": session["finish_position"],
-                            "finish_status": session["finish_status"],
-                        }
-                    )
-            return rows
-
     def _duckdb_laps(self) -> list[dict]:
         with SessionLocal() as db:
             rows = db.execute(
@@ -503,7 +443,7 @@ class ProfileRepository:
 
     def best_lap_candidates(self) -> list[dict]:
         """All historical sources share one validation path for PB selection."""
-        return self._with_lap_quality(self._live_laps() + self._motec_laps() + self._duckdb_laps())
+        return self._with_lap_quality(self._live_laps() + self._duckdb_laps())
 
     def _with_lap_quality(self, laps: list[dict]) -> list[dict]:
         grouped: dict[tuple[str, str, str, str], list[dict]] = defaultdict(list)
@@ -641,7 +581,7 @@ class ProfileRepository:
     def _persisted_session_counts(self) -> dict[str, int]:
         with SessionLocal() as db:
             duckdb_sessions = db.scalar(select(func.count(LmuDuckdbSessionModel.id)).where(LmuDuckdbSessionModel.active.is_(True))) or 0
-        return {"live": 0, "csv": 0, "duckdb": int(duckdb_sessions), "total": int(duckdb_sessions)}
+        return {"live": 0, "duckdb": int(duckdb_sessions), "total": int(duckdb_sessions)}
 
     def _live_session_distances(self) -> dict[str, float]:
         with SessionLocal() as db:
@@ -674,15 +614,6 @@ class ProfileRepository:
                     distance = _integrate_distance([_sample_dict(sample) for sample in samples_by_session.get(session_id, [])], "game_time", "speed_kph")
                     distances[f"live:{session_id}"] = distance or 0.0
             return distances
-
-    def _motec_session_distances(self) -> dict[str, float]:
-        init_motec_db()
-        if not MOTEC_DB_PATH.exists():
-            return {}
-        with sqlite3.connect(MOTEC_DB_PATH) as db:
-            db.row_factory = sqlite3.Row
-            rows = db.execute("select session_id, sum(coalesce(distance_km, 0)) as distance from motec_laps group by session_id").fetchall()
-            return {f"csv:{row['session_id']}": float(row["distance"] or 0.0) for row in rows}
 
     def _career_session_distances(self) -> dict[str, float]:
         with SessionLocal() as db:
@@ -756,7 +687,6 @@ class ProfileRepository:
                 "positioned_race_sessions": len(positioned_races),
                 "status_race_sessions": len(status_races),
                 "live_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "live"}), persisted_sessions["live"]),
-                "csv_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "csv"}), persisted_sessions["csv"]),
                 "duckdb_sessions": max(len({lap["session_id"] for lap in laps if lap["source"] == "duckdb"}), persisted_sessions["duckdb"]),
                 "best_lap_count": len(best_laps),
             },

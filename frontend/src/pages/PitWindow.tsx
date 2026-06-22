@@ -373,7 +373,7 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
 
       <section className="card span-12">
         <SectionTitle title="Pace Model" help="Shows the clean recent lap evidence used by the live strategy simulation." />
-        <div className="motec-value-grid">
+        <div className="analysis-value-grid">
           <div><span className="label">Last clean lap</span><strong>{formatRaceTime(paceEvidence.lastLapTime)}</strong></div>
           <div><span className="label">Last 7 average</span><strong>{formatRaceTime(paceEvidence.last7LapAverage)}</strong></div>
           <div><span className="label">Last 10 average</span><strong>{formatRaceTime(paceEvidence.last10LapAverage)}</strong></div>
@@ -385,7 +385,7 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
 
       <section className="card span-12">
         <SectionTitle title="Live Model Inputs" help="Summarizes the live data feeding the strategy options. Confidence improves as fuel and tyre samples accumulate." />
-        <div className="motec-value-grid">
+        <div className="analysis-value-grid">
           <div><span className="label">Current lap</span><strong>{text(absoluteCurrentLap)}</strong><span className="subvalue">absolute race lap</span></div>
           <div><span className="label">Current fuel</span><strong>{fmt(currentFuel, 1, " L")}</strong><span className="subvalue">{fmt(tankCapacity, 1, " L")} tank</span></div>
           <div><span className="label">Fuel use</span><strong>{fmt(Number.isFinite(fuelPerLap) ? fuelPerLap : null, 3, " L/lap")}</strong><span className="subvalue">{strategy?.fuel.valid_laps_observed ?? 0}/{strategy?.fuel.valid_laps_required ?? 3} valid laps</span></div>

@@ -88,10 +88,9 @@ def test_context_boundaries_create_separate_personal_bests(change):
     assert len(ProfileRepository()._best_laps_from_laps(rows)) == 2
 
 
-def test_source_types_share_the_same_validation_rules():
+def test_live_and_duckdb_sources_share_the_same_validation_rules():
     rows = [
         lap(source="live", session_id="live", average_speed=0),
-        lap(source="csv", session_id="csv", average_speed=0),
         lap(source="duckdb", session_id="duck", average_speed=0),
     ]
     ProfileRepository()._with_lap_quality(rows)

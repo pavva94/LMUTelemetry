@@ -318,8 +318,6 @@ def test_finalize_stores_result_from_latest_sample_without_snapshot(monkeypatch)
 def test_profile_uses_only_active_duckdb_lap_cache(monkeypatch, tmp_path) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
-    monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
-    monkeypatch.setattr(profile_repository_module, "MOTEC_DB_PATH", tmp_path / "missing.sqlite3")
     ProfileRepository._all_laps_cache_key = None
     ProfileRepository._all_laps_cache = None
     with factory() as db:
@@ -345,8 +343,6 @@ def test_profile_uses_only_active_duckdb_lap_cache(monkeypatch, tmp_path) -> Non
 def test_profile_summary_counts_duckdb_sessions_without_completed_laps(monkeypatch, tmp_path) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
-    monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
-    monkeypatch.setattr(profile_repository_module, "MOTEC_DB_PATH", tmp_path / "missing.sqlite3")
     ProfileRepository._all_laps_cache_key = None
     ProfileRepository._all_laps_cache = None
     with factory() as db:
@@ -358,15 +354,12 @@ def test_profile_summary_counts_duckdb_sessions_without_completed_laps(monkeypat
 
     assert summary["totals"]["total_sessions"] == 1
     assert summary["totals"]["live_sessions"] == 0
-    assert summary["totals"]["csv_sessions"] == 0
     assert summary["totals"]["duckdb_sessions"] == 1
 
 
 def test_profile_total_distance_includes_invalid_duckdb_laps(monkeypatch, tmp_path) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
-    monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
-    monkeypatch.setattr(profile_repository_module, "MOTEC_DB_PATH", tmp_path / "missing.sqlite3")
     ProfileRepository._all_laps_cache_key = None
     ProfileRepository._all_laps_cache = None
     with factory() as db:
@@ -397,8 +390,6 @@ def test_profile_total_distance_includes_invalid_duckdb_laps(monkeypatch, tmp_pa
 def test_profile_does_not_invent_zero_results_without_classification_data(monkeypatch, tmp_path) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
-    monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
-    monkeypatch.setattr(profile_repository_module, "MOTEC_DB_PATH", tmp_path / "missing.sqlite3")
     ProfileRepository._all_laps_cache_key = None
     ProfileRepository._all_laps_cache = None
     with factory() as db:

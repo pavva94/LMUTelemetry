@@ -176,7 +176,7 @@ export function UserProfile() {
           <Metric label="Warnings" value={text(settings?.warning_count)} />
           <Metric label="Last sync" value={dateText(settings?.last_sync_at)} />
         </div>
-        {(settings?.warnings || []).slice(0, 5).map((warning) => <p className="motec-warning" key={warning}>{warning}</p>)}
+        {(settings?.warnings || []).slice(0, 5).map((warning) => <p className="analysis-warning" key={warning}>{warning}</p>)}
       </section>
       <section className="card span-12">
         <h2>Career Overview</h2>
@@ -306,7 +306,7 @@ function LapTable({
               <th><ColumnFilter value={filters.ambient} onChange={(value) => updateFilter("ambient", value)} placeholder="Ambient" /></th>
               <th><ColumnFilter value={filters.engine} onChange={(value) => updateFilter("engine", value)} placeholder="Oil/water" /></th>
               <th><ColumnFilter value={filters.speed} onChange={(value) => updateFilter("speed", value)} placeholder="Speed" /></th>
-              <th><ColumnSelect value={filters.source} onChange={(value) => updateFilter("source", value)} options={["duckdb", "live", "csv"]} /></th>
+              <th><ColumnSelect value={filters.source} onChange={(value) => updateFilter("source", value)} options={["duckdb", "live"]} /></th>
             </tr>
           </thead>
           <tbody>
@@ -438,7 +438,6 @@ function compareLapRows(a: ProfileLap, b: ProfileLap, sort: string, direction: s
 
 function sourceBadge(source: ProfileLap["source"]) {
   if (source === "live") return <span className="badge blue">Live</span>;
-  if (source === "csv") return <span className="badge amber">CSV</span>;
   return <span className="badge green">DuckDB</span>;
 }
 

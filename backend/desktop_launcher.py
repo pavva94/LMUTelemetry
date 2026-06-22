@@ -68,7 +68,7 @@ def _prepare_environment(use_mock: bool) -> None:
     os.environ.setdefault("USE_MOCK_TELEMETRY", "true" if use_mock else "false")
     data_dir = app_data_dir()
     logs = log_dir()
-    for path in (data_dir / "sessions", data_dir / "motec", logs):
+    for path in (data_dir / "sessions", logs):
         path.mkdir(parents=True, exist_ok=True)
 
 

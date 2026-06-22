@@ -745,7 +745,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
 
       <section className="card span-12">
         <SectionTitle title="Model Status" help="Summarizes the live data feeding the race simulation. More valid fuel and tyre laps improve confidence." />
-        <div className="motec-value-grid">
+        <div className="analysis-value-grid">
           <div><span className="label">Model source</span><strong>{activeModel.source === "session" ? "DuckDB session" : "Live"}</strong><span className="subvalue">{activeModel.label}</span></div>
           <div><span className="label">Pace model</span><strong>{formatRaceTime(paceEvidence.weightedRecentPace)}</strong><span className="subvalue">{paceEvidence.method || paceBasis} · {paceEvidence.source}</span></div>
           <div><span className="label">Pace windows</span><strong>{formatRaceTime(paceEvidence.last7LapAverage)} / {formatRaceTime(paceEvidence.last10LapAverage)}</strong><span className="subvalue">7-lap / 10-lap averages</span></div>

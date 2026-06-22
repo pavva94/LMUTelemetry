@@ -3,7 +3,6 @@ import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { SavedSession, SessionDashboard, SessionReview } from "../types/session";
 import type { DuckdbJobStatus, LmuDuckdbScanResponse, LmuDuckdbSettings } from "../types/lmuDuckdb";
 import type { LiveLapAnalysis } from "../types/liveLapAnalysis";
-import type { MotecSession, MotecSample } from "../types/motec";
 import type { ProfileLap, ProfileLapResponse, ProfileOverview, ProfileSummary } from "../types/profile";
 
 export const API_BASE = "";
@@ -62,8 +61,6 @@ export const api = {
     if (!response.ok) throw new Error("assumption update failed");
     return response.json() as Promise<StrategyState>;
   },
-  motecSessions: () => getJson<MotecSession[]>("/api/motec/sessions"),
-  motecSession: (id: string) => getJson<MotecSession>(`/api/motec/sessions/${id}`),
   scanLmuDuckdbFolder: (path: string, limit = 250, offset = 0) =>
     postJson<LmuDuckdbScanResponse>(`/api/lmu-duckdb/sessions?limit=${limit}&offset=${offset}`, { path }),
   lmuDuckdbSettings: () => getJson<LmuDuckdbSettings>("/api/lmu-duckdb/settings"),
@@ -98,20 +95,5 @@ export const api = {
       if (value !== null && value !== undefined && value !== "") search.set(key, String(value));
     });
     return getJson<ProfileLapResponse>(`/api/profile/laps?${search.toString()}`);
-  },
-  motecImport: async (file: File, metadata: Record<string, string>) => {
-    const params = new URLSearchParams({ filename: file.name, ...metadata });
-    const response = await fetch(`${API_BASE}/api/motec/sessions/import?${params.toString()}`, {
-      method: "POST",
-      headers: { "Content-Type": "text/csv" },
-      body: file,
-    });
-    if (!response.ok) throw new Error((await response.text()) || "CSV import failed");
-    return response.json() as Promise<MotecSession>;
-  },
-  motecSamples: (sessionId: string, channels: string[], lap?: string, maxPoints = 3000) => {
-    const params = new URLSearchParams({ channels: channels.join(","), max_points: String(maxPoints) });
-    if (lap) params.set("lap", lap);
-    return getJson<{ totalSamples: number; returnedSamples: number; decimation: number; samples: MotecSample[] }>(`/api/motec/sessions/${sessionId}/samples?${params}`);
   },
 };

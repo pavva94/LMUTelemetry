@@ -276,7 +276,7 @@ function LatestValues({ rows, fields }: { rows: Row[]; fields: Array<[string, st
   const latest = [...rows].reverse().find((row) => fields.some(([key]) => row[key] != null));
   if (!latest) return <EmptyState detail="No values were found for this section in the selected DuckDB file." />;
   return (
-    <div className="motec-value-grid">
+    <div className="analysis-value-grid">
       {fields.map(([key, label]) => (
         <div key={key}><span className="label">{label}</span><strong>{text(latest[key])}</strong></div>
       ))}
@@ -843,7 +843,7 @@ export function LmuDuckdbReview() {
           <button className="primary" disabled={busy} onClick={() => void loadPage(0)}>Refresh list</button>
           <input value={status} readOnly />
         </div>
-        {warnings.map((warning) => <p className="motec-warning" key={warning}>{warning}</p>)}
+        {warnings.map((warning) => <p className="analysis-warning" key={warning}>{warning}</p>)}
         <div className="duckdb-pager">
           <button disabled={busy || currentOffset <= 0} onClick={() => void loadPage(Math.max(0, currentOffset - SCAN_LIMIT))}>Previous {SCAN_LIMIT}</button>
           <button disabled={busy || nextOffset == null} onClick={() => nextOffset != null && void loadPage(nextOffset)}>Next {SCAN_LIMIT}</button>
@@ -885,7 +885,7 @@ export function LmuDuckdbReview() {
       {metadataRows.length > 0 && (
         <section className="card span-12">
           <SectionTitle title="Database Metadata" help="Values read from the native DuckDB metadata table for the selected session." />
-          <div className="motec-value-grid">
+          <div className="analysis-value-grid">
             {metadataRows.map(([key, value]) => <div key={key}><span className="label">{key}</span><strong title={value}>{metadataValueText(key, value)}</strong></div>)}
           </div>
         </section>

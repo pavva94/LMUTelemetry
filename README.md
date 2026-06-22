@@ -2,7 +2,7 @@
 
 Local-first telemetry and race-engineering app for Le Mans Ultimate.
 
-LMU Telemetry currently runs as a FastAPI backend plus a React/Vite frontend. The backend owns live telemetry collection, session logging, native LMU DuckDB scanning, and API/WebSocket state. The frontend is the local UI for live dashboards, DuckDB-backed profile/review pages, strategy tools, and CSV/MoTeC analysis.
+LMU Telemetry currently runs as a FastAPI backend plus a React/Vite frontend. The backend owns live telemetry collection, session logging, native LMU DuckDB scanning, and API/WebSocket state. The frontend is the local UI for live dashboards, DuckDB-backed profile/review pages, and strategy tools.
 
 ## Product Modes
 
@@ -10,7 +10,6 @@ LMU Telemetry currently runs as a FastAPI backend plus a React/Vite frontend. Th
 - **User Profile**: summarizes the configured LMU DuckDB telemetry folder into career overview, distance by class, most used cars, most driven tracks, and best laps.
 - **Session Review**: opens native LMU DuckDB sessions read-only, including lap summaries, fuel usage, tyres, brakes, ride heights, inputs, events, channel availability, and detailed telemetry charts.
 - **Strategy Planner / Session Report**: can work from live data or load cached DuckDB sessions from the configured telemetry folder.
-- **CSV / MoTeC Analysis**: imports large MoTeC-style CSV exports for offline lap comparison, engineering plots, fuel strategy, and rule-based Race Engineer hints.
 
 ## Runtime Model
 
@@ -111,7 +110,6 @@ Development currently stores local data under the repository:
 
 ```text
 data/sessions/lmu_strategy.sqlite3
-data/motec/
 ```
 
 Native LMU DuckDB files stay in the user-selected LMU telemetry folder. The app stores only the configured folder path, session metadata, and lap/profile cache rows in its local SQLite database; raw DuckDB telemetry is read on demand and downsampled for review charts.
@@ -145,10 +143,6 @@ LMU_TELEMETRY_DATA_DIR=C:\path\to\data
 - `GET /api/competitors`
 - `GET /api/recommendations/current`
 - `POST /api/strategy/assumptions`
-- `GET /api/motec/sessions`
-- `POST /api/motec/sessions/import`
-- `GET /api/motec/sessions/{session_id}`
-- `GET /api/motec/sessions/{session_id}/samples`
 - `WS /ws/telemetry`
 - `WS /ws/strategy`
 - `WS /ws/recommendations`
@@ -228,6 +222,17 @@ LMU_TELEMETRY_DATA_DIR=C:\path\to\data
 LMU_TELEMETRY_LOG_DIR=C:\path\to\logs
 ```
 
+### GitHub releases
+
+Pushing a semantic version tag builds and publishes a GitHub Release automatically:
+
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The release contains a versioned Windows installer, a portable ZIP, and a SHA-256 checksum file. Pushes to the `release` branch build the same files as workflow artifacts without publishing a GitHub Release. The workflow can also be started manually with a version and an optional **Publish release** switch.
+
 ## Troubleshooting
 
 ### No live telemetry is detected
@@ -244,4 +249,4 @@ Those fields depend on LMU shared-memory wheel channels. New recordings store av
 
 ### SQLite cannot open database file
 
-Make sure the app can create and write to `data/sessions/` and `data/motec/`, or set `LMU_TELEMETRY_DATA_DIR` to a writable folder.
+Make sure the app can create and write to `data/sessions/`, or set `LMU_TELEMETRY_DATA_DIR` to a writable folder.

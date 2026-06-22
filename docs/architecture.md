@@ -1,6 +1,6 @@
 # Architecture
 
-LMU Telemetry is a local-first FastAPI + React application for Le Mans Ultimate live telemetry, strategy modelling, native DuckDB session review, DuckDB-backed user profile summaries, and offline MoTeC-style CSV analysis.
+LMU Telemetry is a local-first FastAPI + React application for Le Mans Ultimate live telemetry, strategy modelling, native DuckDB session review, and DuckDB-backed user profile summaries.
 
 The current runtime is a separate backend and Vite frontend for development. Telemetry collection belongs to the backend service, so live logging continues as long as the backend process remains alive.
 
@@ -13,7 +13,6 @@ The current runtime is a separate backend and Vite frontend for development. Tel
   - `LMUTelemetryCollector` reads LMU shared memory through `pyLMUSharedMemory`.
 - **Live storage**: SQLAlchemy models in `backend/app/db/models.py` persist sessions, telemetry samples, lap summaries, pit events, recommendations, and assumptions. Development uses `data/sessions/lmu_strategy.sqlite3`.
 - **LMU DuckDB storage**: `backend/app/services/lmu_duckdb_repository.py` scans the configured LMU telemetry folder, caches session metadata/lap summaries in SQLite, and reads selected DuckDB files read-only on demand for review charts.
-- **CSV/MoTeC storage**: `backend/app/services/motec_repository.py` streams CSV imports into SQLite. Development uses `data/motec/motec.sqlite3`.
 - **Frontend**: `frontend/src/App.tsx` chooses pages, subscribes to WebSocket telemetry and strategy, periodically fetches live state, and loads DuckDB profile/review data through the backend API. In development it is served by Vite.
 
 ## Runtime Modes
@@ -47,7 +46,7 @@ The current runtime is a separate backend and Vite frontend for development. Tel
    - `WS /ws/recommendations`
 8. `SessionLogger` persists samples at `log_hz` and stores each new recommendation type/priority/lap.
 9. DuckDB sync scans the configured LMU telemetry folder by file signature and opens only new or changed files to refresh cached session/lap summaries.
-10. Frontend pages render live state, DuckDB-backed profile/review state, or imported CSV state.
+10. Frontend pages render live state or DuckDB-backed profile/review state.
 
 The frontend is a viewer/control surface for the backend state. It is not required for logging to continue.
 
@@ -78,13 +77,6 @@ Live and saved session APIs include:
 - `GET /api/session/review/{session_id}/dashboard`
 - `POST /api/session/current/finalize`
 
-MoTeC APIs include:
-
-- `GET /api/motec/sessions`
-- `POST /api/motec/sessions/import`
-- `GET /api/motec/sessions/{session_id}`
-- `GET /api/motec/sessions/{session_id}/samples`
-
 DuckDB/profile APIs include:
 
 - `GET /api/lmu-duckdb/settings`
@@ -99,4 +91,4 @@ DuckDB/profile APIs include:
 
 ## Frontend Routing
 
-`App.tsx` maps one page key to one page component. Live pages use WebSocket data plus `/api/competitors`. User Profile and Session Review use the configured DuckDB folder and cache. Strategy Planner and Session Report can use live state or load cached DuckDB sessions. MoTeC pages fetch imported session metadata and decimated samples from the backend.
+`App.tsx` maps one page key to one page component. Live pages use WebSocket data plus `/api/competitors`. User Profile and Session Review use the configured DuckDB folder and cache. Strategy Planner and Session Report can use live state or load cached DuckDB sessions.

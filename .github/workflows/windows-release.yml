@@ -4,16 +4,77 @@ on:
   push:
     branches:
       - release
+    tags:
+      - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version without the v prefix (for example 0.2.0)"
+        required: true
+        default: "0.1.0"
+        type: string
+      publish_release:
+        description: "Publish or update a GitHub Release"
+        required: true
+        default: false
+        type: boolean
+      prerelease:
+        description: "Mark the GitHub Release as a prerelease"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-windows-installer:
-    name: Build Windows installer
+  build-windows-release:
+    name: Build Windows release
     runs-on: windows-latest
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
+
+      - name: Resolve release version
+        id: version
+        shell: powershell
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_PUBLISH_RELEASE: ${{ inputs.publish_release }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          if ("${{ github.ref_type }}" -eq "tag") {
+            $version = "${{ github.ref_name }}" -replace '^v', ''
+            $publish = "true"
+            $tag = "${{ github.ref_name }}"
+          }
+          elseif ("${{ github.event_name }}" -eq "workflow_dispatch") {
+            $version = $env:INPUT_VERSION
+            $publish = $env:INPUT_PUBLISH_RELEASE.ToLowerInvariant()
+            $tag = "v$version"
+          }
+          else {
+            $version = "0.1.0-ci.${{ github.run_number }}"
+            $publish = "false"
+            $tag = "v$version"
+          }
+
+          $prerelease = if ($env:INPUT_PRERELEASE) { $env:INPUT_PRERELEASE.ToLowerInvariant() } else { "false" }
+
+          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            throw "Invalid release version '$version'. Expected a value such as 0.2.0 or 0.2.0-beta.1."
+          }
+
+          "APP_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "RELEASE_TAG=$tag" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "PUBLISH_RELEASE=$publish" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "IS_PRERELEASE=$prerelease" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -44,20 +105,62 @@ jobs:
             git clone --depth 1 https://github.com/TinyPedal/pyLMUSharedMemory.git backend\pyLMUSharedMemory
           }
 
-      - name: Build installer
+      - name: Build and validate installer
         shell: powershell
-        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\packaging\build_windows_installer.ps1
+        run: .\packaging\build_windows_installer.ps1 -AppVersion $env:APP_VERSION
 
-      - name: Upload installer
+      - name: Create portable ZIP and checksums
+        shell: powershell
+        run: |
+          $portable = "release\LMUTelemetry-Windows-Portable-$env:APP_VERSION.zip"
+          Compress-Archive -LiteralPath "dist\LMUTelemetry" -DestinationPath $portable -CompressionLevel Optimal -Force
+
+          $installer = "release\LMUTelemetry-Setup-$env:APP_VERSION.exe"
+          $checksumFile = "release\SHA256SUMS-$env:APP_VERSION.txt"
+          $rows = @($installer, $portable) | ForEach-Object {
+            $hash = Get-FileHash -LiteralPath $_ -Algorithm SHA256
+            "$($hash.Hash.ToLowerInvariant())  $([System.IO.Path]::GetFileName($_))"
+          }
+          $rows | Set-Content -LiteralPath $checksumFile -Encoding ascii
+
+      - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: LMUTelemetry-Windows-Installer
-          path: release/LMUTelemetry-Setup-*.exe
+          name: LMUTelemetry-Windows-${{ steps.version.outputs.version }}
+          path: |
+            release/LMUTelemetry-Setup-*.exe
+            release/LMUTelemetry-Windows-Portable-*.zip
+            release/SHA256SUMS-*.txt
           if-no-files-found: error
 
-      - name: Upload portable app bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: LMUTelemetry-Windows-AppBundle
-          path: dist/LMUTelemetry/**
-          if-no-files-found: error
+      - name: Publish GitHub Release
+        if: env.PUBLISH_RELEASE == 'true'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $installer = "release\LMUTelemetry-Setup-$env:APP_VERSION.exe"
+          $portable = "release\LMUTelemetry-Windows-Portable-$env:APP_VERSION.zip"
+          $checksums = "release\SHA256SUMS-$env:APP_VERSION.txt"
+          $assets = @($installer, $portable, $checksums)
+
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:RELEASE_TAG @assets --clobber
+          }
+          else {
+            $flags = @(
+              "release", "create", $env:RELEASE_TAG,
+              "--target", "${{ github.sha }}",
+              "--title", "LMU Telemetry $env:APP_VERSION",
+              "--generate-notes"
+            )
+            if ($env:IS_PRERELEASE -eq "true" -or $env:APP_VERSION -match '-') {
+              $flags += "--prerelease"
+            }
+            gh @flags @assets
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub Release publication failed with exit code $LASTEXITCODE."
+          }

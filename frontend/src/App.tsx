@@ -5,7 +5,6 @@ import { Layout, type PageKey } from "./components/Layout";
 import { LiveDashboard } from "./pages/LiveDashboard";
 import { LiveLapAnalysis } from "./pages/LiveLapAnalysis";
 import { LmuDuckdbReview } from "./pages/LmuDuckdbReview";
-import { MotecWorkspace } from "./pages/MotecWorkspace";
 import { PitWindow } from "./pages/PitWindow";
 import {
   CircleMap,
@@ -36,7 +35,6 @@ export default function App() {
     <Layout page={page} setPage={setPage} connected={telemetryConnected || strategyConnected}>
       <ErrorBoundary key={page}>
         {page === "live" && <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} competitors={currentCompetitors} />}
-        {page === "motec" && <MotecWorkspace />}
         {page === "profile" && <UserProfile />}
         {page === "circle-map" && <CircleMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "lap-compare" && <LapCompare telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}

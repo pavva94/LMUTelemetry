@@ -109,7 +109,6 @@ Use a Windows app data path such as:
 
 ```text
 %LOCALAPPDATA%\LMUTelemetry\data\sessions\lmu_strategy.sqlite3
-%LOCALAPPDATA%\LMUTelemetry\data\motec\
 ```
 
 Keep an environment override for development:

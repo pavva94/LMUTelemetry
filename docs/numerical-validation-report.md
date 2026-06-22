@@ -6,7 +6,6 @@ Audit completed: 2026-06-20. Scope: every non-graph numerical surface in the LMU
 
 - Initial live-store snapshot: `data/sessions/lmu_strategy.sqlite3` — 90,424 samples, 263 detected laps, 22 finalized aggregates, 64 sessions. The final running-app snapshot contained 91,867 samples, 278 laps, 24 aggregates, and 68 sessions after normal collector startup/finalization during validation.
 - Final native LMU cache/folder snapshot: 619 active DuckDB sessions and 4,019 cached detected laps (611 / 3,975 at the initial inventory; newer files were synced during validation).
-- MoTeC store: `data/motec/motec.sqlite3` — 4 sessions, 21 detected laps, 129,880 samples.
 - Repeatable read-only harness: `backend/.venv/Scripts/python.exe backend/scripts/audit_real_data.py --app-metrics [--duckdb-file FILE]`.
 - Regression verification: 79 backend tests and 36 frontend tests passed; the production frontend build passed.
 
@@ -30,7 +29,6 @@ The initial recomputation found 21 of 22 stored live aggregates disagreed with c
 | Pit/strategy totals | Explicit driving time + measured/configured pit service. Fuel feasibility simulates tank capacity and safety margin per stint. | Traffic penalty, tyre pace loss, and lift/coast pace cost are zero/unavailable unless measured or explicitly configured. | s, L | Removed fixed 8/4 s traffic and 0.2× lift/coast inventions. |
 | Profile totals | Native cache sessions/laps; distance includes actual recorded travel. Completed driving time includes lap number ≥1, 40–900 s, and absent or ≥0.5 km distance; ranking records use the stricter eligibility rule. | Detected, broadly completed, and ranking-valid lap counts are shown separately. Classification counts are unavailable without evidence, not zero. | km, s, laps, sessions | Corrected numeric-string parsing, 19.4 h of partial/corrupt duration inflation, and false stationary “best laps”. |
 | Profile rankings | Group by track/layout/car/class; fastest eligible lap per key. | Lap number ≥1, time 40–900 s and 0.85×–1.35× robust session median, distance absent or ≥0.5 km. | s | Corrected. |
-| MoTeC laps | Duration from per-lap min/max time, then shared plausibility checks plus session median band and distance checks. | Lap 0, partial tails, gross timing outliers, and tiny-distance rows excluded from selectors/summaries. | s, km | Corrected; invalid rows remain visible with reasons. |
 | Formatting | Round milliseconds before carrying seconds/minutes; durations ≥1 h use `h:mm:ss.mmm`. | Null, empty string, and booleans are unavailable, never numeric zero. | display | Corrected across profile/session/strategy surfaces. |
 
 Sample-derived temperature, pressure, brake temperature, and tyre-wear cards are labelled “Sample avg” to make their weighting explicit. Tyre pressure is labelled kPa. Time tables retain full numeric precision internally and round only at display.
@@ -53,11 +51,9 @@ Native file `Silverstone Circuit_P_2026-06-19T19_36_08Z.duckdb` was parsed throu
 | Tyre life remaining | 94.37428866037015% | 100 − used percent |
 | Tyre pressure | 153.32377955075893 kPa | Raw channel metadata unit `kPa` |
 
-MoTeC proof sessions produced 5/7 valid practice laps, 4/6 valid qualifying laps, and 0/1 valid in the custom Bahrain capture. Lap 0, a 485.98 s timing outlier, and partial 12–13 s tails are excluded rather than silently averaged.
-
 ## Page audit disposition
 
-Live Dashboard, Race Info, Strategy Planner, Pit Window, Session Review, User Profile, Race Prep, Race Engineering pages, native DuckDB review, and MoTeC Workspace were traced through API/parser → calculation → formatter. Competitor values remain direct telemetry/model outputs; missing gaps/results remain unavailable. All user-facing derived values now have either an auditable formula above, a direct-source definition, or an explicit unavailable state.
+Live Dashboard, Race Info, Strategy Planner, Pit Window, Session Review, User Profile, Race Prep, Race Engineering pages, and native DuckDB review were traced through API/parser → calculation → formatter. Competitor values remain direct telemetry/model outputs; missing gaps/results remain unavailable. All user-facing derived values now have either an auditable formula above, a direct-source definition, or an explicit unavailable state.
 
 ## Known limitations
 
