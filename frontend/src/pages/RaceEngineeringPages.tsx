@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 import { api } from "../api/client";
+import { CompetitorTable } from "../components/CompetitorTable";
 import { SectionTitle } from "../components/SectionTitle";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { toFiniteNumber } from "../lib/sessionAnalysis";
@@ -439,75 +440,6 @@ export function buildStints(laps: Field[]) {
   });
 }
 
-export function RaceInfo({ telemetry, strategy }: EngineeringProps) {
-  const { review } = useSessionReview();
-  const player = telemetry?.player;
-  const fuel = strategy?.fuel;
-  const tyres = telemetry?.player?.tyre_state;
-  const tyreModel = strategy?.tyres;
-  const fuelLapsNeeded = Math.max(0, (fuel?.valid_laps_required ?? 3) - (fuel?.valid_laps_observed ?? 0));
-  const rows = sampleWithLive(review, telemetry, 80);
-  const lapRows = sampleLapRows(review);
-  const playerCar = (telemetry?.competitors || []).find((c) => c.is_player);
-  const lastLap = player?.last_lap_time ?? playerCar?.last_lap_time;
-  const bestLap = player?.best_lap_time ?? playerCar?.best_lap_time;
-  const frontWear = avgNumbers([tyres?.wear_fl, tyres?.wear_fr]);
-  const rearWear = avgNumbers([tyres?.wear_rl, tyres?.wear_rr]);
-  const leftWear = avgNumbers([tyres?.wear_fl, tyres?.wear_rl]);
-  const rightWear = avgNumbers([tyres?.wear_fr, tyres?.wear_rr]);
-  const lapsNeeded = Math.max(0, (tyreModel?.laps_required ?? 3) - (tyreModel?.observed_laps ?? 0));
-  return (
-    <div className="page grid">
-      <section className="card span-4">
-        <SectionTitle title="Fuel Strategy" help="Estimates fuel range, margin, and pit pressure. A negative margin means the current pace or consumption cannot safely reach the target." />
-        <Metric label="Current fuel" value={`${fmt(player?.fuel_liters)} L`} />
-        <Metric label="Fuel capacity" value={`${fmt(player?.fuel_capacity_liters)} L`} />
-        <Metric label="Virtual energy" value={pct(player?.hybrid_state?.virtual_energy_fraction)} sub={text(player?.hybrid_state?.motor_state)} />
-        <Metric label="Battery / regen" value={`${fmt(player?.hybrid_state?.battery_percent, 0, "%")} / ${fmt(player?.hybrid_state?.regen_kw, 1, " kW")}`} />
-        <Metric label="Last lap used" value={`${fmt(fuel?.last_lap_fuel_used_liters, 2)} L`} />
-        <Metric label="Recent clean-lap average" value={`${fmt(fuel?.fuel_per_lap_liters, 2)} L`} sub={fuel?.fuel_use_stddev_liters != null ? `σ ${fmt(fuel.fuel_use_stddev_liters, 3)} L, ${fuel?.confidence || "low"} confidence` : fuelLapsNeeded > 0 ? `Need ${fuelLapsNeeded} more valid lap${fuelLapsNeeded === 1 ? "" : "s"}` : `${fuel?.valid_laps_observed ?? 0} valid laps, ${fuel?.confidence || "low"} confidence`} />
-        <Metric label="Laps remaining" value={fmt(fuel?.fuel_laps_remaining)} />
-        <Metric label="Needed to finish" value={`${fmt(fuel?.required_fuel_to_finish)} L`} />
-        <Metric label="Fuel margin" value={`${fmt(fuel?.fuel_delta_to_finish)} L`} />
-        <Metric label="Suggested pit lap" value={text(strategy?.pit_window?.optimal_pit_lap)} />
-      </section>
-      <section className="card span-4">
-        <SectionTitle title="Tyre Strategy" help="Tracks tyre wear rate and remaining life. Faster rear wear suggests traction stress; faster front wear suggests understeer or overworking entry speed." />
-        <FourCornerTyres tyres={tyres} />
-        <Metric label="Wear per lap" value={pct(tyreModel?.wear_rate_per_lap)} sub={`${tyreModel?.confidence || "low"} confidence`} />
-        <Metric label="Estimated life" value={`${fmt(tyreModel?.estimated_remaining_tyre_life_laps)} laps`} sub={lapsNeeded > 0 ? `${lapsNeeded} more clean lap${lapsNeeded === 1 ? "" : "s"} for a stable estimate` : "Estimate stabilized"} />
-        <Metric label="Front/rear delta" value={frontWear != null && rearWear != null ? pct(frontWear - rearWear) : "--"} />
-        <Metric label="Left/right delta" value={leftWear != null && rightWear != null ? pct(leftWear - rightWear) : "--"} />
-      </section>
-      <section className="card span-4">
-        <SectionTitle title="Pit Strategy" help="Combines fuel, tyre life, and traffic into a pit window. The safest stop is inside the window with acceptable rejoin traffic." />
-        <Metric label="Current stint lap" value={text(strategy?.stint?.current_stint_lap)} />
-        <Metric label="Pit window" value={`${text(strategy?.pit_window?.earliest_viable_pit_lap)}-${text(strategy?.pit_window?.latest_safe_pit_lap)}`} />
-        <Metric label="Remaining stint laps" value={fmt(strategy?.tyres?.estimated_remaining_tyre_life_laps)} />
-        <Metric label="Pit stop count" value={text(playerCar?.pitstops)} />
-        <Metric label="Pit status" value={text(playerCar?.pit_state || (playerCar?.in_pits ? "In pit" : "Not pitting"))} />
-      </section>
-      <section className="card span-6">
-        <SectionTitle title="Lap Pace Trend" help="Shows completed-lap pace and fuel used. Rising lap times with stable fuel usually point to tyre degradation, traffic, or consistency loss." />
-        <BasicLineChart data={lapRows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"]]} />
-      </section>
-      <section className="card span-6">
-        <SectionTitle title="Stint Summary" help="Summarizes current stint pace and top speed. Compare best, last, and average pace to judge whether the stint is improving or fading." />
-        <div className="header-grid two">
-          <Metric label="Current lap" value={text(player?.lap_number)} />
-          <Metric label="Current lap time" value={lapTime(player?.current_lap_time)} />
-          <Metric label="Last lap" value={lapTime(lastLap)} />
-          <Metric label="Best lap" value={lapTime(bestLap)} />
-          <Metric label="Current stint" value={text(strategy?.stint?.current_stint_lap)} />
-          <Metric label="Top speed" value={fmt(maxField(rows, "speed_kph"), 0, " km/h")} />
-          <Metric label="Saved laps" value={lapRows.length} />
-        </div>
-        <p className="muted">Lap pace is derived from the recorded live session samples. Use Session Review to open older saved sessions.</p>
-      </section>
-    </div>
-  );
-}
-
 export function Driving({ telemetry }: EngineeringProps) {
   const player = telemetry?.player;
   return (
@@ -766,42 +698,8 @@ export function LapCompare({ telemetry }: EngineeringProps) {
 }
 
 export function OneLapTiming({ competitors }: EngineeringProps) {
-  const [filter, setFilter] = useState("overall");
-  const playerPosition = competitors.find((car) => car.is_player)?.position ?? 0;
-  const playerClass = competitors.find((car) => car.is_player)?.vehicle_class;
-  const rows = competitors.filter((car) => {
-    if (filter === "same-class") return car.vehicle_class === playerClass;
-    if (filter === "ahead") return (car.position ?? 999) < playerPosition;
-    if (filter === "behind") return (car.position ?? 0) > playerPosition;
-    if (filter === "pit") return Boolean(car.in_pits);
-    if (filter === "track") return !car.in_pits;
-    return true;
-  });
-  return (
-    <div className="page grid">
-      <section className="card span-12">
-        <SectionTitle title="Reference Lap And Filters" help="Sets the timing comparison context. Use same-class and ahead/behind filters to focus on the cars that matter tactically." />
-        <div className="control-row">
-          <select defaultValue="player-best"><option value="player-best">Player best</option><option value="session-best">Session best</option><option value="saved">Saved lap</option></select>
-          <select value={filter} onChange={(event) => setFilter(event.target.value)}>
-            <option value="overall">Overall</option>
-            <option value="same-class">Same class only</option>
-            <option value="ahead">Cars ahead</option>
-            <option value="behind">Cars behind</option>
-            <option value="pit">In pit</option>
-            <option value="track">Not in pit</option>
-          </select>
-          <span className="muted">{rows.length} cars</span>
-        </div>
-      </section>
-      <section className="card span-12">
-        <SectionTitle title="Timing Table" help="Shows current pace and position for visible cars. Look for pit state, invalid laps, and sector loss to understand who is genuinely fast." />
-        <CompetitorRows competitors={rows} limit={60} showGap={false} />
-      </section>
-    </div>
-  );
+  return <div className="page grid standings-page"><CompetitorTable competitors={competitors} /></div>;
 }
-
 export function FieldSpread({ telemetry, competitors }: EngineeringProps) {
   const cars = competitors.length ? competitors : telemetry?.competitors || [];
   const [sameClassOnly, setSameClassOnly] = useState(false);

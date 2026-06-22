@@ -12,7 +12,6 @@ import {
   LapCompare,
   OneLapTiming,
   RaceHistory,
-  RaceInfo,
   SettingsPage,
   XYPlotter,
 } from "./pages/RaceEngineeringPages";
@@ -39,7 +38,6 @@ export default function App() {
         {page === "live" && <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} competitors={currentCompetitors} />}
         {page === "motec" && <MotecWorkspace />}
         {page === "profile" && <UserProfile />}
-        {page === "race-info" && <RaceInfo telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "circle-map" && <CircleMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "lap-compare" && <LapCompare telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "one-lap" && <OneLapTiming telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}

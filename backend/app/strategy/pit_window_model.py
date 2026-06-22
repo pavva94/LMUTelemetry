@@ -19,12 +19,19 @@ class PitWindowModel:
         lap = snapshot.player.lap_number if snapshot.player else None
         if lap is None:
             return PitWindowState(explanation=["No player lap available."])
-        latest_candidates = [v for v in [stint_state.fuel_limited_stint_end_lap, stint_state.tyre_limited_stint_end_lap] if v is not None]
-        latest = min(latest_candidates) - 1 if latest_candidates else None
-        earliest = lap if fuel_state.fuel_laps_remaining and fuel_state.fuel_laps_remaining > self.assumptions.fuel_safety_margin_laps else None
-        optimal = None
-        if earliest is not None and latest is not None:
-            optimal = max(earliest, min(latest, lap + 2))
+        limit_candidates = [
+            ("fuel", stint_state.fuel_limited_stint_end_lap),
+            ("tyres", stint_state.tyre_limited_stint_end_lap),
+        ]
+        available_limits = [(name, value) for name, value in limit_candidates if value is not None]
+        limiting_name, limiting_lap = min(available_limits, key=lambda item: item[1]) if available_limits else (None, None)
+        # Stint limits represent the projected exhaustion/maximum-wear lap. Stop one lap
+        # earlier so the estimate retains a real on-track buffer instead of running dry.
+        latest = max(lap, limiting_lap - 1) if limiting_lap is not None else None
+        earliest = max(lap, latest - 2) if latest is not None else None
+        # Under green, use the end of the calculated window. An FCY/SC is the only
+        # reason to recommend stopping early purely for reduced pit loss.
+        optimal = lap if latest is not None and _under_yellow(snapshot) and lap <= latest else latest
         player_pos = snapshot.player.position
         effective_pit_loss = self.assumptions.safety_car_pit_loss_seconds if _under_yellow(snapshot) else self.assumptions.pit_loss_seconds
         gaps = [
@@ -39,7 +46,7 @@ class PitWindowModel:
         traffic_risk = "high" if len(rejoin_nearby) >= 3 else "medium" if rejoin_nearby else "low" if gaps else "unknown"
         explanation = []
         if latest is not None:
-            explanation.append(f"Latest safe lap is {latest} from fuel/tyre limits with a one-lap buffer.")
+            explanation.append(f"Estimated stop is lap {optimal}; {limiting_name} limit the stint, with a one-lap buffer.")
         if traffic_risk == "high":
             explanation.append("Projected rejoin is in dense traffic.")
         if gaps and projected_rejoin is not None:

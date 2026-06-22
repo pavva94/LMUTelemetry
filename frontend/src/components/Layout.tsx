@@ -19,7 +19,6 @@ import {
 
 const liveItems = [
   ["live", "Live Dashboard", Gauge],
-  ["race-info", "Race Info", Activity],
   ["circle-map", "Circle Map", CircleDot],
   ["lap-compare", "Lap Compare", GitCompare],
   ["one-lap", "Standings", Timer],
@@ -58,7 +57,6 @@ type ModeKey = (typeof modes)[number][0];
 
 const pageDescriptions: Record<PageKey, string> = {
   live: "Live telemetry for the current LMU session: speed, inputs, tyres, brakes, fuel, warnings, and real-time strategy signals.",
-  "race-info": "Live race context built from the current telemetry stream, focused on fuel, tyres, pace, and position while the session is running.",
   "circle-map": "Live competitor placement and traffic awareness based on current shared-memory telemetry.",
   "lap-compare": "Live and recent lap traces for comparing pace, inputs, fuel, tyres, and setup channels from the active session.",
   "one-lap": "Current-session standings and timing built from live competitor telemetry.",

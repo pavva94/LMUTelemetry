@@ -363,6 +363,7 @@ def _normalize_competitor(vehicle: Any, telemetry: Any, is_player: bool) -> Comp
         best_lap_time=completed_lap_time(attr(vehicle, "mBestLapTime", default=None)),
         last_lap_time=completed_lap_time(attr(vehicle, "mLastLapTime", default=None)),
         estimated_lap_time=completed_lap_time(attr(vehicle, "mEstimatedLapTime", default=None)),
+        count_lap_flag=attr(vehicle, "mCountLapFlag", default=None),
         finish_status=finish_status_name(attr(vehicle, "mFinishStatus", default=None)),
         pitstops=attr(vehicle, "mNumPitstops", default=None),
         in_pits=bool(attr(vehicle, "mInPits", default=False)),

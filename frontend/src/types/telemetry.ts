@@ -152,6 +152,7 @@ export type CompetitorState = {
   best_lap_time?: number;
   last_lap_time?: number;
   estimated_lap_time?: number;
+  count_lap_flag?: number;
   finish_status?: string;
   pitstops?: number;
   pit_state?: string;
