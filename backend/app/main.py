@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from contextlib import suppress
 from contextlib import asynccontextmanager
 
@@ -57,7 +58,11 @@ def _sync_lmu_duckdb_on_startup() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    duckdb_sync_task = asyncio.create_task(asyncio.to_thread(_sync_lmu_duckdb_on_startup))
+    if os.getenv("LMU_TELEMETRY_SKIP_DUCKDB_SYNC", "").lower() == "true":
+        logger.info("Skipping LMU DuckDB startup sync for packaged smoke test.")
+        duckdb_sync_task = asyncio.create_task(asyncio.sleep(0))
+    else:
+        duckdb_sync_task = asyncio.create_task(asyncio.to_thread(_sync_lmu_duckdb_on_startup))
     app.state.duckdb_sync_task = duckdb_sync_task
     service = TelemetryService(get_settings())
     app.state.telemetry_service = service

@@ -195,8 +195,10 @@ Prerequisites on the build machine:
 From the project root:
 
 ```powershell
-.\packaging\build_windows_installer.ps1
+.\packaging\build_windows_installer.cmd
 ```
+
+The `.cmd` entry point works even when local PowerShell script execution is disabled. It builds the frontend, packages the app, runs a headless smoke test against the packaged backend and frontend, and then compiles the installer.
 
 Outputs:
 
@@ -208,7 +210,13 @@ release\LMUTelemetry-Setup-0.1.0.exe
 For a quick PyInstaller-only build without the installer:
 
 ```powershell
-.\packaging\build_windows_installer.ps1 -SkipInstaller
+.\packaging\build_windows_installer.cmd -SkipInstaller
+```
+
+To set the release version without editing the Inno Setup script:
+
+```powershell
+.\packaging\build_windows_installer.cmd -AppVersion 0.2.0
 ```
 
 The installed app writes user data under `%LOCALAPPDATA%\LMUTelemetry`, not the install folder. Override this for diagnostics with:

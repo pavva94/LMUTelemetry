@@ -1,5 +1,7 @@
 #define MyAppName "LMU Telemetry"
-#define MyAppVersion "0.1.0"
+#ifndef MyAppVersion
+  #define MyAppVersion "0.1.0"
+#endif
 #define MyAppPublisher "LMU Telemetry"
 #define MyAppExeName "LMUTelemetry.exe"
 

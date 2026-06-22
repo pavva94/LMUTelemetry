@@ -83,7 +83,35 @@ function absoluteStopLap(currentLap: number | null, stopLap: number) {
   return currentLap == null ? stopLap : Math.max(currentLap, Math.round(currentLap + stopLap));
 }
 
-function LivePlanCard({
+function tyreLife(value: number | null | undefined) {
+  return value == null || !Number.isFinite(value) ? null : Math.max(0, Math.min(1, 1 - value));
+}
+
+function tyreLifeTone(value: number | null) {
+  if (value == null) return "unknown";
+  if (value <= 0.25) return "critical";
+  if (value <= 0.5) return "warning";
+  return "healthy";
+}
+
+function TyreLifeIndicator({ wheel, wear, change }: { wheel: Wheel; wear: number | null | undefined; change: boolean }) {
+  const life = tyreLife(wear);
+  const lifePercent = life == null ? 0 : Math.round(life * 100);
+  return (
+    <div className={`tyre-life ${tyreLifeTone(life)}${change ? " change" : ""}`}>
+      <div className="tyre-life-heading">
+        <strong>{wheelLabels[wheel]}</strong>
+        <span>{life == null ? "--" : `${lifePercent}%`}</span>
+      </div>
+      <div className="tyre-life-shape" aria-hidden="true">
+        <span style={{ height: `${lifePercent}%` }} />
+      </div>
+      <small>{change ? "Change" : "Keep"}</small>
+    </div>
+  );
+}
+
+function LivePlanOption({
   plan,
   index,
   currentLap,
@@ -98,36 +126,21 @@ function LivePlanCard({
 }) {
   const firstStop = plan.stopsDetail[0];
   return (
-    <section className={`card span-4 strategy-card${selected ? " selected" : ""}`}>
-      <div className="row">
-        <span className="badge blue">Live option {index + 1}</span>
-        <span className={`badge ${riskBadge(plan.risk)}`}>{plan.risk} risk</span>
-      </div>
-      <h2>{firstStop ? `Pit lap ${absoluteStopLap(currentLap, firstStop.lap)}` : "Run to finish"}</h2>
-      <div className="strategy-card-main">
-        <strong>{formatDuration(plan.totalTimeSeconds)}</strong>
-        <span>{plan.stops} stop{plan.stops === 1 ? "" : "s"} from now - up to {plan.maxTyresChangedPerStop} tyre{plan.maxTyresChangedPerStop === 1 ? "" : "s"} when needed</span>
-      </div>
-      <div className="header-grid two">
-        <div><span className="label">Driving time</span><strong>{formatDuration(plan.baseRaceTimeSeconds)}</strong><span className="subvalue">{fmt(plan.calculationBreakdown.simulationPaceSeconds, 3, " s/lap")}</span></div>
-        <div><span className="label">Next stop</span><strong>{firstStop ? `Lap ${absoluteStopLap(currentLap, firstStop.lap)}` : "None"}</strong><span className="subvalue">{firstStop ? `in ${firstStop.lap} lap${firstStop.lap === 1 ? "" : "s"}` : "fuel and tyres can finish"}</span></div>
-        <div><span className="label">Pit time</span><strong>{fmt(plan.pitTimeSeconds, 1, " s")}</strong></div>
-        <div><span className="label">Pace loss</span><strong>{fmt(plan.projectedPaceLossSeconds + (plan.tyreDegradationLossSeconds ?? 0), 1, " s")}</strong><span className="subvalue">trend {fmt(plan.projectedPaceLossSeconds, 1, " s")} / tyres {fmt(plan.tyreDegradationLossSeconds, 1, " s")}</span></div>
-        <div><span className="label">Traffic loss</span><strong>{fmt(plan.trafficLossSeconds, 1, " s")}</strong></div>
-        <div><span className="label">Confidence</span><strong>{plan.confidence}</strong></div>
-        <div><span className="label">Fuel to add</span><strong>{firstStop ? fmt(firstStop.fuelAddedLiters, 1, " L") : "0 L"}</strong><span className="subvalue">{firstStop ? `${fmt(firstStop.fuelRemainingLiters, 1, " L")} left before stop` : `${fmt(plan.finishFuelRemainingLiters, 1, " L")} at finish`}</span></div>
-        <div><span className="label">Tyres</span><strong>{firstStop ? tyreChangeWearText(firstStop) : "None"}</strong></div>
-        <div><span className="label">Finish fuel</span><strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")}</strong></div>
-        <div><span className="label">Lift/coast</span><strong>{fmt(plan.liftCoastSavePercent, 1, "%")}</strong></div>
-      </div>
-      <div className="metric compact">
-        <span className="label">Live reasoning</span>
-        {plan.reasons.map((reason) => <span className="subvalue" key={reason}>{reason}</span>)}
-      </div>
-      <button className={`strategy-select${selected ? " active-control" : ""}`} type="button" onClick={onSelect}>
-        {selected ? "Selected live strategy" : "Select live strategy"}
-      </button>
-    </section>
+    <button
+      className={`live-plan-option${selected ? " selected" : ""}`}
+      type="button"
+      onClick={onSelect}
+      aria-pressed={selected}
+    >
+      <span className="live-plan-option-top">
+        <b>Option {index + 1}</b>
+        <i className={`badge ${riskBadge(plan.risk)}`}>{plan.risk}</i>
+      </span>
+      <strong>{firstStop ? `Pit lap ${absoluteStopLap(currentLap, firstStop.lap)}` : "Run to finish"}</strong>
+      <span className="live-plan-option-time">{formatDuration(plan.totalTimeSeconds)}</span>
+      <span>{plan.stops} stop{plan.stops === 1 ? "" : "s"} · {firstStop ? `add ${fmt(firstStop.fuelAddedLiters, 1, " L")}` : `${fmt(plan.finishFuelRemainingLiters, 1, " L")} finish fuel`}</span>
+      <small>{firstStop?.tyresToChange.length ? `${firstStop.tyresToChange.map((wheel) => wheelLabels[wheel]).join(" + ")} tyres` : "No tyre change at next stop"}</small>
+    </button>
   );
 }
 
@@ -137,12 +150,23 @@ function LiveStrategyTimeline({ plan, currentLap }: { plan?: StrategyCandidate; 
   }
   return (
     <div className="strategy-timeline">
+      <div className="strategy-visual-summary">
+        <div><span className="label">Selected plan</span><strong>{formatDuration(plan.totalTimeSeconds)}</strong></div>
+        <div><span className="label">Stops remaining</span><strong>{plan.stops}</strong></div>
+        <div><span className="label">Race remaining</span><strong>{fmt(plan.raceLaps, 1, " laps")}</strong></div>
+        <div><span className="label">Fuel at finish</span><strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")}</strong></div>
+      </div>
       <div className="strategy-track">
-        {Array.from({ length: plan.stops + 1 }, (_, index) => (
-          <span className="strategy-stint" key={index} style={{ width: `${100 / (plan.stops + 1)}%` }}>
-            Stint {index + 1}
+        {Array.from({ length: plan.stops + 1 }, (_, index) => {
+          const stint = plan.stintWear[index];
+          const stintLaps = stint ? stint.endLap - stint.startLap + 1 : plan.raceLaps / (plan.stops + 1);
+          return (
+          <span className="strategy-stint" key={index} style={{ width: `${(stintLaps / plan.raceLaps) * 100}%` }}>
+            <strong>Stint {index + 1}</strong>
+            <small>{Math.round(stintLaps)} laps</small>
           </span>
-        ))}
+          );
+        })}
         {plan.stopsDetail.map((stop, index) => (
           <span
             className="strategy-marker"
@@ -150,32 +174,56 @@ function LiveStrategyTimeline({ plan, currentLap }: { plan?: StrategyCandidate; 
             style={{ left: `${Math.min(98, Math.max(2, (stop.lap / plan.raceLaps) * 100))}%` }}
           >
             <strong>Lap {absoluteStopLap(currentLap, stop.lap)}</strong>
-            <small>{fmt(stop.fuelRemainingLiters, 1, " L")} left - add {fmt(stop.fuelAddedLiters, 1, " L")} - {tyreChangeWearText(stop)} - {fmt(stop.stopTimeSeconds, 1, " s")}</small>
+            <small>Pit {index + 1}</small>
           </span>
         ))}
       </div>
-      <div className="strategy-summary-line">
-        <span>Remaining {fmt(plan.raceLaps, 1, " laps")}</span>
-        <span>Finish fuel {fmt(plan.finishFuelRemainingLiters, 1, " L")}</span>
-        <span>{plan.liftCoastSavePercent > 0 ? `Lift/coast ${fmt(plan.liftCoastSaveLitersPerLap, 3, " L/lap")}` : "No fuel save required"}</span>
-        <span>Final wear {tyreWearText(plan.projectedTyreWearByWheel)}</span>
-      </div>
       {plan.stintWear.length > 0 && (
-        <div className="table-wrap">
-          <table>
-            <thead><tr><th>Stint</th><th>Live laps</th><th>Start wear</th><th>End wear</th><th>Wear remaining</th></tr></thead>
-            <tbody>
-              {plan.stintWear.map((stint) => (
-                <tr key={stint.stint}>
-                  <td>{stint.stint}</td>
-                  <td>{stint.startLap}-{stint.endLap}</td>
-                  <td>{tyreWearText(stint.startWear)}</td>
-                  <td>{tyreWearText(stint.endWear)}</td>
-                  <td>{tyreWearText(stint.remainingWear)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+        <div className="stint-service-list">
+          {plan.stintWear.map((stint, index) => {
+            const stop = plan.stopsDetail[index];
+            const stintLaps = stint.endLap - stint.startLap + 1;
+            return (
+              <article className="stint-service" key={stint.stint}>
+                <header>
+                  <div>
+                    <span className="label">Stint {stint.stint} · {stintLaps} laps</span>
+                    <strong>{stop ? `Pit stop ${index + 1} · Lap ${absoluteStopLap(currentLap, stop.lap)}` : "Finish"}</strong>
+                  </div>
+                  {stop && <span className="badge amber">{fmt(stop.stopTimeSeconds, 1, " s")} stop</span>}
+                </header>
+                <div className="stint-service-body">
+                  <div>
+                    <span className="label">Tyre life at {stop ? "pit entry" : "finish"}</span>
+                    <div className="tyre-life-set">
+                      {wheels.map((wheel) => (
+                        <TyreLifeIndicator
+                          wheel={wheel}
+                          wear={stint.endWear[wheel]}
+                          change={Boolean(stop?.tyresToChange.includes(wheel))}
+                          key={wheel}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="service-fuel">
+                    <span className="label">Fuel service</span>
+                    {stop ? (
+                      <>
+                        <strong>{fmt(stop.fuelRemainingLiters, 1, " L")} remaining</strong>
+                        <b>+ {fmt(stop.fuelAddedLiters, 1, " L")} to add</b>
+                      </>
+                    ) : (
+                      <>
+                        <strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")} remaining</strong>
+                        <b>No service</b>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
       )}
     </div>
@@ -270,7 +318,32 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
   const firstStop = selectedPlan?.stopsDetail[0];
 
   return (
-    <div className="page grid">
+    <div className="page grid pit-window-page">
+      <section className="card span-12 pit-strategy-visualization">
+        <SectionTitle title="Live Pit Strategy Visualization" help="Shows the selected live plan as a stint timeline, then details tyre life and fuel service at every pit stop." />
+        <LiveStrategyTimeline plan={selectedPlan} currentLap={absoluteCurrentLap} />
+      </section>
+
+      <section className="card span-12 live-options-section">
+        <SectionTitle title="Live Options" help="Compare every calculated strategy without losing sight of the selected race plan." />
+        {plans.length ? (
+          <div className="live-option-rail">
+            {plans.map((plan, index) => (
+              <LivePlanOption
+                plan={plan}
+                index={index}
+                currentLap={absoluteCurrentLap}
+                selected={plan.id === activePlanId}
+                onSelect={() => setSelectedPlanId(plan.id)}
+                key={plan.id}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state"><strong>No live strategy yet</strong><span>Need live fuel, lap time, tank capacity, and tyre/fuel model data before the pit call can be simulated.</span></div>
+        )}
+      </section>
+
       <section className="card span-5">
         <SectionTitle title="Live Pit Window" help="Combines the live pit-window model with strategy simulations from your current fuel, tyre wear, and remaining race distance." />
         <div className="metric"><span className="label">Earliest</span><span className="value">Lap {pit?.earliest_viable_pit_lap ?? "--"}</span></div>
@@ -342,23 +415,6 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
         </section>
       )}
 
-      {plans.length ? plans.map((plan, index) => (
-        <LivePlanCard
-          plan={plan}
-          index={index}
-          currentLap={absoluteCurrentLap}
-          selected={plan.id === activePlanId}
-          onSelect={() => setSelectedPlanId(plan.id)}
-          key={plan.id}
-        />
-      )) : (
-        <section className="card span-12"><div className="empty-state"><strong>No live strategy yet</strong><span>Need live fuel, lap time, tank capacity, and tyre/fuel model data before the pit call can be simulated.</span></div></section>
-      )}
-
-      <section className="card span-12">
-        <SectionTitle title="Live Pit Strategy Visualization" help="Shows the selected live plan with stop lap, fuel remaining, fuel load, tyre wear at change, and stop time." />
-        <LiveStrategyTimeline plan={selectedPlan} currentLap={absoluteCurrentLap} />
-      </section>
     </div>
   );
 }

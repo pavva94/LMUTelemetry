@@ -446,9 +446,72 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .strategy-marker small { color: #f2d28a; font-size: 11px; overflow-wrap: anywhere; }
 .strategy-summary-line { display: flex; flex-wrap: wrap; gap: 8px; }
 .strategy-summary-line span { padding: 7px 9px; border: 1px solid var(--border); border-radius: 6px; background: #0b1117; color: var(--text-soft); font-size: 12px; font-weight: 800; }
+
+/* Decision-first live pit strategy */
+.pit-window-page { align-items: stretch; }
+.pit-strategy-visualization { border-top: 2px solid var(--amber); background: linear-gradient(180deg, rgba(243,182,66,.055), rgba(16,24,32,.96) 28%); }
+.strategy-visual-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.strategy-visual-summary > div { display: grid; gap: 3px; padding: 12px 14px; border-right: 1px solid var(--border); }
+.strategy-visual-summary > div:last-child { border-right: 0; }
+.strategy-visual-summary strong { color: #fff; font-size: 20px; font-variant-numeric: tabular-nums; }
+.pit-strategy-visualization .strategy-timeline { overflow: visible; }
+.pit-strategy-visualization .strategy-track { min-height: 126px; min-width: 680px; margin-top: 2px; padding: 28px 0 48px; overflow: visible; }
+.pit-strategy-visualization .strategy-stint { align-content: center; gap: 3px; min-width: 58px; background: linear-gradient(180deg, rgba(85,199,247,.18), rgba(85,199,247,.06)); }
+.pit-strategy-visualization .strategy-stint strong { font-size: 13px; }
+.pit-strategy-visualization .strategy-stint small { color: var(--muted); font-size: 10px; font-weight: 800; }
+.pit-strategy-visualization .strategy-marker { bottom: 3px; min-width: 84px; max-width: 110px; padding: 6px 7px; border-radius: 3px; }
+.pit-strategy-visualization .strategy-marker::before { height: 55px; }
+.pit-strategy-visualization .strategy-marker small { text-transform: uppercase; letter-spacing: .08em; }
+.stint-service-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }
+.stint-service { min-width: 0; border: 1px solid var(--border); border-radius: 6px; background: rgba(8,13,18,.72); }
+.stint-service > header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.stint-service > header > div { display: grid; gap: 3px; }
+.stint-service > header strong { font-size: 15px; }
+.stint-service-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(112px, .42fr); gap: 14px; padding: 12px; }
+.stint-service-body > div:first-child { display: grid; gap: 8px; }
+.tyre-life-set { display: grid; grid-template-columns: repeat(4, minmax(42px, 1fr)); gap: 6px; }
+.tyre-life { display: grid; justify-items: center; gap: 4px; min-width: 0; padding: 6px 3px; border: 1px solid transparent; border-radius: 4px; }
+.tyre-life.change { border-color: rgba(243,182,66,.62); background: rgba(243,182,66,.08); }
+.tyre-life-heading { width: 100%; display: grid; justify-items: center; gap: 1px; }
+.tyre-life-heading strong { color: var(--text); font-size: 10px; }
+.tyre-life-heading span { color: var(--text-soft); font-size: 11px; font-weight: 900; font-variant-numeric: tabular-nums; }
+.tyre-life-shape { position: relative; width: 28px; height: 48px; overflow: hidden; border: 2px solid var(--border-strong); border-radius: 6px; background: #070a0d; box-shadow: inset 0 0 0 2px rgba(255,255,255,.025); }
+.tyre-life-shape::after { content: ""; position: absolute; inset: 4px 6px; z-index: 1; border-left: 1px dashed rgba(255,255,255,.18); border-right: 1px dashed rgba(255,255,255,.18); }
+.tyre-life-shape span { position: absolute; inset: auto 0 0; background: var(--green); transition: height .18s ease; }
+.tyre-life.warning .tyre-life-shape span { background: var(--amber); }
+.tyre-life.critical .tyre-life-shape span { background: var(--red); }
+.tyre-life.unknown .tyre-life-shape span { background: var(--faint); }
+.tyre-life small { color: var(--muted); font-size: 8px; font-weight: 950; letter-spacing: .07em; text-transform: uppercase; }
+.tyre-life.change small { color: var(--amber-2); }
+.service-fuel { align-content: center; display: grid; gap: 5px; padding-left: 14px; border-left: 1px solid var(--border); }
+.service-fuel strong { color: var(--text); font-size: 16px; }
+.service-fuel b { color: var(--amber-2); font-size: 13px; }
+.live-options-section { overflow: hidden; }
+.live-option-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: 9px; overflow-x: auto; padding: 1px 1px 6px; scrollbar-width: thin; }
+.live-plan-option { min-width: 220px; display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 6px; background: #0b1117; color: var(--text-soft); text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
+.live-plan-option:hover { border-color: var(--border-strong); background: var(--surface-2); transform: translateY(-1px); }
+.live-plan-option.selected { border-color: var(--amber); background: linear-gradient(135deg, rgba(243,182,66,.14), rgba(19,29,38,.96)); box-shadow: inset 3px 0 0 var(--amber); }
+.live-plan-option-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.live-plan-option-top b { color: var(--cyan); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; }
+.live-plan-option-top i { font-style: normal; }
+.live-plan-option > strong { color: #fff; font-size: 16px; }
+.live-plan-option-time { color: var(--amber-2); font-size: 20px; font-weight: 950; font-variant-numeric: tabular-nums; }
+.live-plan-option > span:not(.live-plan-option-top) { font-size: 11px; }
+.live-plan-option > small { color: var(--muted); font-size: 10px; }
 @media (max-width: 760px) {
   .strategy-source-panel { grid-template-columns: 1fr; gap: 18px; }
   .strategy-source-identity { padding: 14px 0 0; border-left: 0; border-top: 1px solid var(--border-strong); }
+  .strategy-visual-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .strategy-visual-summary > div:nth-child(2) { border-right: 0; }
+  .strategy-visual-summary > div:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
+  .pit-strategy-visualization .strategy-timeline { overflow-x: auto; }
+  .stint-service-list { min-width: 0; grid-template-columns: 1fr; }
+  .stint-service-body { grid-template-columns: 1fr; }
+  .service-fuel { padding: 10px 0 0; border-top: 1px solid var(--border); border-left: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tyre-life-shape span, .live-plan-option { transition: none; }
 }
 
 /* Full-session driver coaching workspace */
