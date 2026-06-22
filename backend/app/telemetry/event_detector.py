@@ -76,5 +76,11 @@ def _player_in_pits(snapshot: TelemetrySnapshot | None) -> bool:
 def _under_yellow(snapshot: TelemetrySnapshot | None) -> bool:
     if not snapshot or not snapshot.session:
         return False
-    text = f"{snapshot.session.game_phase} {snapshot.session.yellow_flag_state}".lower()
+    phase = str(snapshot.session.game_phase or "").strip()
+    flag = str(snapshot.session.yellow_flag_state or "").strip()
+    # LMU exposes game phase 6 as FCY and yellow-flag procedure states 1-5 as
+    # active. State 6 means resume, so it is no longer treated as a yellow lap.
+    if phase == "6" or flag in {"1", "2", "3", "4", "5"}:
+        return True
+    text = f"{phase} {flag}".lower()
     return "yellow" in text or "safety" in text or "fcy" in text

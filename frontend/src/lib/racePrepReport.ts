@@ -273,14 +273,15 @@ function buildStintSeries(laps: Row[]): ChartRow[] {
   });
   if (current.length) stints.push(current);
   return stints.map((rows, index) => {
-    const lapTimes = rows.map((lap) => chartNumber(lap.lap_time)).filter((value): value is number => value != null);
-    const fuel = rows.map((lap) => chartNumber(lap.fuel_used)).filter((value): value is number => value != null && value > 0);
-    const tyreWearDeltas = rows.map((lap) => avg(wheels.map((wheel) => chartNumber(lap[`tyre_wear_delta_${wheel}`]))) ?? chartNumber(lap.tyre_wear_delta)).filter((value): value is number => value != null);
+    const cleanRows = rows.filter((lap) => lap.valid_lap === true && lap.in_pit !== true && (chartNumber(lap.lap_time) ?? 0) >= 40 && (chartNumber(lap.lap_time) ?? 0) <= 900);
+    const lapTimes = cleanRows.map((lap) => chartNumber(lap.lap_time)).filter((value): value is number => value != null);
+    const fuel = cleanRows.map((lap) => chartNumber(lap.fuel_used)).filter((value): value is number => value != null && value > 0);
+    const tyreWearDeltas = cleanRows.map((lap) => avg(wheels.map((wheel) => chartNumber(lap[`tyre_wear_delta_${wheel}`]))) ?? chartNumber(lap.tyre_wear_delta)).filter((value): value is number => value != null && value > 0 && value < 0.2);
     return {
       stint: index + 1,
       start_lap: chartNumber(rows[0]?.lap_number),
       end_lap: chartNumber(rows[rows.length - 1]?.lap_number),
-      lap_count: rows.length,
+      lap_count: cleanRows.length,
       average_lap: avg(lapTimes),
       best_lap: min(lapTimes),
       fuel_per_lap: avg(fuel),
@@ -725,12 +726,13 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
 
   const wear: RacePrepReport["tyres"]["wear"] = { fl: emptyWear(), fr: emptyWear(), rl: emptyWear(), rr: emptyWear() };
   for (const wheel of wheels) {
-    const [start, end] = firstLastWithValue(samples, `tyre_wear_${wheel}`, allLaps);
-    const lapDeltas = allLaps
+    const [start, end] = firstLastWithValue(samples, `tyre_wear_${wheel}`, cleanLaps);
+    const lapDeltas = cleanLaps
       .map((lap) => num(lap[`tyre_wear_delta_${wheel}`]) ?? num(lap.tyre_wear_delta))
-      .filter((value): value is number => value != null && value >= 0 && value <= 1);
-    const delta = lapDeltas.length ? lapDeltas.reduce((sum, value) => sum + Math.abs(value), 0) : start != null && end != null ? Math.abs(end - start) : null;
-    wear[wheel] = { start, end, delta, perLap: delta != null && cleanLaps.length ? delta / cleanLaps.length : null };
+      .filter((value): value is number => value != null && value > 0 && value < 0.2);
+    const perLap = avg(lapDeltas);
+    const delta = lapDeltas.length ? lapDeltas.reduce((sum, value) => sum + value, 0) : start != null && end != null && end >= start ? end - start : null;
+    wear[wheel] = { start, end, delta, perLap };
   }
   const wearDeltas = Object.fromEntries(wheels.map((wheel) => [wheel, wear[wheel].delta])) as Record<Wheel, number | null>;
   const mostWorn = bestWheel(wearDeltas, Math.max);

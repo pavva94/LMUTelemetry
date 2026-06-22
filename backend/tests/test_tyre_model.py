@@ -30,7 +30,7 @@ def test_tyre_model_learns_when_used_wear_increases() -> None:
     assert state.confidence == "high"
 
 
-def test_tyre_model_keeps_session_wear_history_after_pit_exit() -> None:
+def test_tyre_model_resets_wear_history_after_pit_exit() -> None:
     collector = MockTelemetryCollector()
     model = TyreModel(StrategyAssumptions(max_tyre_wear=0.75))
 
@@ -59,5 +59,6 @@ def test_tyre_model_keeps_session_wear_history_after_pit_exit() -> None:
     _set_player_in_pits(next_lap, False)
     state = model.update(next_lap)
 
-    assert state.observed_laps == 3
-    assert state.confidence == "high"
+    assert state.observed_laps == 1
+    assert state.confidence == "low"
+    assert state.pace_degradation_per_lap is None

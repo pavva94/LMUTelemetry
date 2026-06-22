@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
-import { formatRaceTime } from "../lib/timeFormat";
+import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSettings } from "../types/lmuDuckdb";
-import type { ProfileLap, ProfileSummary } from "../types/profile";
+import { useDuckdbJob } from "../hooks/useDuckdbJob";
+import type { ProfileLap, ProfileOverview, ProfileSummary } from "../types/profile";
 
 const DEFAULT_FOLDER = "G:\\SteamLibrary\\steamapps\\common\\Le Mans Ultimate\\UserData\\Telemetry";
 
@@ -11,6 +12,7 @@ const fmt = (value?: number | null, digits = 1, suffix = "") =>
   value == null || Number.isNaN(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
 const dateText = (value?: string | null) => value ? new Date(value).toLocaleString() : "--";
+const wearText = (value?: number | null) => fmt(value == null ? null : value * 100, 1, "%");
 
 function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return <div className="metric compact"><span className="label">{label}</span><span className="value">{value}</span>{sub && <span className="subvalue">{sub}</span>}</div>;
@@ -70,8 +72,12 @@ const emptyLapFilters = (): LapFilters => ({
 });
 
 export function UserProfile() {
+  const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
   const [summary, setSummary] = useState<ProfileSummary | null>(null);
   const [bestLaps, setBestLaps] = useState<ProfileLap[]>([]);
+  const [quality, setQuality] = useState<ProfileOverview["data_quality"] | null>(null);
+  const [excludedLaps, setExcludedLaps] = useState<ProfileLap[]>([]);
+  const [showExcluded, setShowExcluded] = useState(false);
   const [sort, setSort] = useState("date");
   const [direction, setDirection] = useState("desc");
   const [error, setError] = useState("");
@@ -83,9 +89,10 @@ export function UserProfile() {
   const loadOverview = async () => {
     setLoadingOverview(true);
     try {
-      const overview = await api.profileOverview();
+      const overview = await runDuckdbJob<ProfileOverview>(() => api.startProfileOverviewJob());
       setSummary(overview.summary);
       setBestLaps(overview.best_laps);
+      setQuality(overview.data_quality);
       setError("");
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -109,7 +116,7 @@ export function UserProfile() {
     setSyncing(true);
     try {
       await api.saveLmuDuckdbSettings(folder.trim());
-      const result = await api.syncLmuDuckdb();
+      const result = await runDuckdbJob<LmuDuckdbSettings>(() => api.startDuckdbSyncJob());
       setSettings(result);
       if (result.folder_path) setFolder(result.folder_path);
       await loadOverview();
@@ -118,6 +125,29 @@ export function UserProfile() {
       setError(exc instanceof Error ? exc.message : String(exc));
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const revalidate = async () => {
+    setLoadingOverview(true);
+    try {
+      const result = await api.revalidateProfileBestLaps();
+      setBestLaps(result.best_laps);
+      setQuality(result.data_quality);
+      setExcludedLaps(await api.excludedProfileBestLapCandidates());
+      setError("");
+    } catch (exc) {
+      setError(exc instanceof Error ? exc.message : String(exc));
+    } finally {
+      setLoadingOverview(false);
+    }
+  };
+
+  const toggleExcluded = async () => {
+    const next = !showExcluded;
+    setShowExcluded(next);
+    if (next && !excludedLaps.length) {
+      setExcludedLaps(await api.excludedProfileBestLapCandidates());
     }
   };
 
@@ -132,7 +162,7 @@ export function UserProfile() {
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={syncing || loadingOverview} title={syncing ? "Syncing DuckDB sessions" : "Loading profile"} detail={syncing ? "Scanning the LMU telemetry folder and refreshing the local cache." : "Reading cached DuckDB profile totals and best laps."} />
+      <LoadingOverlay show={syncing || loadingOverview} title={duckdbProgress?.phase || (syncing ? "Syncing DuckDB sessions" : "Loading profile")} detail={duckdbProgress?.message || (syncing ? "Scanning the LMU telemetry folder and refreshing the local cache." : "Reading cached DuckDB profile totals and best laps.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       {error && <section className="card span-12"><div className="error-box">{error}</div></section>}
       <section className="card span-12">
         <h2>LMU DuckDB Source</h2>
@@ -146,24 +176,24 @@ export function UserProfile() {
           <Metric label="Warnings" value={text(settings?.warning_count)} />
           <Metric label="Last sync" value={dateText(settings?.last_sync_at)} />
         </div>
-        {(settings?.warnings || []).slice(0, 5).map((warning) => <p className="motec-warning" key={warning}>{warning}</p>)}
+        {(settings?.warnings || []).slice(0, 5).map((warning) => <p className="analysis-warning" key={warning}>{warning}</p>)}
       </section>
       <section className="card span-12">
         <h2>Career Overview</h2>
         <div className="header-grid">
           <Metric label="Distance" value={fmt(totals.total_distance_km as number, 1, " km")} />
           <Metric label="Sessions" value={text(totals.total_sessions as number)} sub={`${text(totals.duckdb_sessions as number)} DuckDB`} />
-          <Metric label="Laps" value={text(totals.total_laps as number)} sub={`${text(totals.valid_laps as number)} valid`} />
-          <Metric label="Driving time" value={formatRaceTime(totals.total_driving_time as number)} />
+          <Metric label="Detected laps" value={text(totals.total_laps as number)} sub={`${text(totals.completed_laps as number)} completed; ${text(totals.valid_laps as number)} ranking-valid`} />
+          <Metric label="Completed driving time" value={formatDuration(totals.total_driving_time as number)} />
           <Metric label="Cars" value={text(totals.different_cars as number)} />
           <Metric label="Tracks" value={text(totals.different_tracks as number)} />
-          <Metric label="Avg session" value={formatRaceTime(totals.average_session_duration as number)} />
+          <Metric label="Avg session" value={formatDuration(totals.average_session_duration as number)} />
           <Metric label="Avg distance" value={fmt(totals.average_distance_per_session as number, 1, " km")} />
           <Metric label="Avg laps" value={fmt(totals.average_laps_per_session as number, 1)} />
-          <Metric label="Wins" value={text(totals.wins as number)} />
-          <Metric label="Podiums" value={text(totals.podiums as number)} />
-          <Metric label="Top 10" value={text(totals.top10 as number)} />
-          <Metric label="DNF/DNS/DQ" value={text(totals.dnf_dns as number)} />
+          <Metric label="Wins" value={text(totals.wins as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
+          <Metric label="Podiums" value={text(totals.podiums as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
+          <Metric label="Top 10" value={text(totals.top10 as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
+          <Metric label="DNF/DNS/DQ" value={text(totals.dnf_dns as number)} sub={`${text(totals.status_race_sessions as number)} races with status data`} />
           <Metric label="Best-lap records" value={text(totals.best_lap_count as number)} />
         </div>
       </section>
@@ -174,7 +204,21 @@ export function UserProfile() {
 
       <section className="card span-12">
         <h2>Best Laps</h2>
-        {bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU DuckDB folder is synced." />}
+        <p className="section-copy">One fastest validated lap for every session type, circuit, layout, and exact car combination. Every record links back to its source session and lap.</p>
+        <div className="header-grid profile-quality-grid">
+          <Metric label="Valid candidates" value={text(quality?.valid_candidates)} />
+          <Metric label="Personal bests" value={text(quality?.personal_bests)} />
+          <Metric label="Excluded laps" value={text(quality?.excluded_laps)} />
+          <Metric label="Needs review" value={text(quality?.suspicious_laps)} />
+        </div>
+        <div className="control-row profile-quality-actions">
+          <button type="button" onClick={() => void revalidate()}>Revalidate history</button>
+          <button type="button" className={showExcluded ? "active-control" : ""} onClick={() => void toggleExcluded()}>{showExcluded ? "Show personal bests" : "Data quality / excluded laps"}</button>
+          {quality?.revalidated_at && <span>Last validated {dateText(quality.revalidated_at)}</span>}
+        </div>
+        {showExcluded
+          ? (excludedLaps.length ? <LapTable rows={excludedLaps} sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="No excluded or suspicious laps were found." />)
+          : (bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU DuckDB folder is synced." />)}
       </section>
     </div>
   );
@@ -235,7 +279,7 @@ function LapTable({
               <th><SortButton label="Fuel" field="fuel" sort={sort} direction={direction} onSort={onSort} /></th>
               <th><SortButton label="Fuel used" field="fuel_used" sort={sort} direction={direction} onSort={onSort} /></th>
               <th><SortButton label="Tyre wear" field="tyre_wear" sort={sort} direction={direction} onSort={onSort} /></th>
-              <th>Tyre pressure</th>
+              <th>Tyre pressure (kPa)</th>
               {!compact && <th>Brake temp</th>}
               <th><SortButton label="Track temp" field="track_temp" sort={sort} direction={direction} onSort={onSort} /></th>
               <th>Ambient</th>
@@ -262,14 +306,14 @@ function LapTable({
               <th><ColumnFilter value={filters.ambient} onChange={(value) => updateFilter("ambient", value)} placeholder="Ambient" /></th>
               <th><ColumnFilter value={filters.engine} onChange={(value) => updateFilter("engine", value)} placeholder="Oil/water" /></th>
               <th><ColumnFilter value={filters.speed} onChange={(value) => updateFilter("speed", value)} placeholder="Speed" /></th>
-              <th><ColumnSelect value={filters.source} onChange={(value) => updateFilter("source", value)} options={["duckdb", "live", "csv"]} /></th>
+              <th><ColumnSelect value={filters.source} onChange={(value) => updateFilter("source", value)} options={["duckdb", "live"]} /></th>
             </tr>
           </thead>
           <tbody>
             {filteredRows.map((lap) => (
               <tr key={lap.id}>
                 <td>{dateText(lap.date)}</td>
-                <td>{text(lap.session_name)}</td>
+                <td>{text(lap.session_type)}</td>
                 <td>{text(lap.track)}</td>
                 <td>{text(lap.layout)}</td>
                 <td>{text(lap.car)}</td>
@@ -279,7 +323,7 @@ function LapTable({
                 <td>{validityBadge(lap)}</td>
                 <td>{fmt(lap.fuel_start, 2, " L")} / {fmt(lap.fuel_end, 2, " L")}</td>
                 <td>{fmt(lap.fuel_used, 2, " L")}</td>
-                <td>{fmt(lap.tyre_wear_fl, 1)} / {fmt(lap.tyre_wear_fr, 1)} / {fmt(lap.tyre_wear_rl, 1)} / {fmt(lap.tyre_wear_rr, 1)}</td>
+                <td>{wearText(lap.tyre_wear_fl)} / {wearText(lap.tyre_wear_fr)} / {wearText(lap.tyre_wear_rl)} / {wearText(lap.tyre_wear_rr)}</td>
                 <td>{fmt(lap.tyre_pressure_fl, 1)} / {fmt(lap.tyre_pressure_fr, 1)} / {fmt(lap.tyre_pressure_rl, 1)} / {fmt(lap.tyre_pressure_rr, 1)}</td>
                 {!compact && <td>{fmt(lap.brake_temp_fl, 0)} / {fmt(lap.brake_temp_fr, 0)} / {fmt(lap.brake_temp_rl, 0)} / {fmt(lap.brake_temp_rr, 0)}</td>}
                 <td>{fmt(lap.track_temp, 1, " C")}</td>
@@ -327,7 +371,7 @@ function lapFilterText(lap: ProfileLap, key: LapFilterKey) {
     case "date":
       return `${searchable(lap.date)} ${searchable(dateText(lap.date))}`;
     case "session":
-      return searchable(lap.session_name);
+      return `${searchable(lap.session_type)} ${searchable(lap.session_name)}`;
     case "track":
       return searchable(lap.track);
     case "layout":
@@ -347,7 +391,7 @@ function lapFilterText(lap: ProfileLap, key: LapFilterKey) {
     case "fuel_used":
       return searchableNumber(lap.fuel_used, 2, " L");
     case "tyre_wear":
-      return [lap.tyre_wear_fl, lap.tyre_wear_fr, lap.tyre_wear_rl, lap.tyre_wear_rr].map((value) => searchableNumber(value, 1)).join(" ");
+      return [lap.tyre_wear_fl, lap.tyre_wear_fr, lap.tyre_wear_rl, lap.tyre_wear_rr].map((value) => searchableNumber(value == null ? null : value * 100, 1, "%")).join(" ");
     case "tyre_pressure":
       return [lap.tyre_pressure_fl, lap.tyre_pressure_fr, lap.tyre_pressure_rl, lap.tyre_pressure_rr].map((value) => searchableNumber(value, 1)).join(" ");
     case "brake_temp":
@@ -394,21 +438,21 @@ function compareLapRows(a: ProfileLap, b: ProfileLap, sort: string, direction: s
 
 function sourceBadge(source: ProfileLap["source"]) {
   if (source === "live") return <span className="badge blue">Live</span>;
-  if (source === "csv") return <span className="badge amber">CSV</span>;
   return <span className="badge green">DuckDB</span>;
 }
 
 function validityBadge(lap: ProfileLap) {
-  const label = lap.valid_lap ? "Valid" : "Invalid";
+  const label = (lap.validation_status || (lap.valid_lap ? "valid" : "invalid")).replace("_", " ");
   const ratio = lap.lap_time_ratio ? `${fmt(lap.lap_time_ratio * 100, 0, "%")} of normal` : "no estimate";
-  const reason = lap.lap_quality ? lap.lap_quality.replace(/_/g, " ") : ratio;
-  return <span className={`badge ${lap.valid_lap ? "green" : "red"}`} title={`Expected lap: ${formatRaceTime(lap.expected_lap_time)}; ${ratio}; ${reason}`}>{label}</span>;
+  const reason = lap.validation_reason || (lap.lap_quality ? lap.lap_quality.replace(/_/g, " ") : ratio);
+  const color = lap.valid_lap ? "green" : lap.validation_status === "suspicious" ? "amber" : "red";
+  return <span className={`badge ${color}`} title={`${reason} Source: ${lap.source_lap_key || `${lap.source}:${lap.session_id}:${lap.lap_number}`}`}>{label}</span>;
 }
 
 function formatCell(column: string, value: unknown) {
   if (typeof value === "number") {
-    if (column.includes("distance")) return fmt(value, 1, " km");
     if (column.includes("percent")) return fmt(value, 1, "%");
+    if (column.includes("distance")) return fmt(value, 1, " km");
     if (column.includes("lap")) return column === "best_lap" ? formatRaceTime(value) : fmt(value, 0);
     return fmt(value, 1);
   }

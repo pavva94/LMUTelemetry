@@ -18,6 +18,7 @@ class TyreModel:
     def _reset_stint(self, lap: int | None, avg_wear: float) -> None:
         self._last_lap = lap
         self._last_wear = avg_wear
+        self._wear_rates = []
 
     def update(self, snapshot: TelemetrySnapshot) -> TyreStrategyState:
         player = snapshot.player
@@ -64,10 +65,10 @@ class TyreModel:
             average_wear=round(avg_wear, 3),
             wear_rate_per_lap=round(wear_rate, 4) if wear_rate else None,
             estimated_remaining_tyre_life_laps=round(remaining, 1) if remaining is not None else None,
-            pace_degradation_per_lap=round((wear_rate or 0) * 18.0, 3) if wear_rate else None,
+            pace_degradation_per_lap=None,
             tyre_risk_level=risk,
             confidence=confidence,
             observed_laps=observed_laps,
             laps_required=self.LAPS_REQUIRED,
-            reason_codes=reason_codes,
+            reason_codes=reason_codes + ["tyre_pace_degradation_unavailable"],
         )

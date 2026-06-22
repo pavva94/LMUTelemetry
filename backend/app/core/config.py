@@ -7,10 +7,11 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel
 
+from app.core.paths import app_data_dir, config_path, resource_root
 from app.schemas.strategy import StrategyAssumptions
 
 
-ROOT_DIR = Path(__file__).resolve().parents[3]
+ROOT_DIR = resource_root()
 
 
 class Settings(BaseModel):
@@ -25,12 +26,12 @@ class Settings(BaseModel):
     roll_center_height_m: float = 0.08
     track_width_m: float = 1.9
     wheelbase_m: float = 3.0
-    database_url: str = f"sqlite:///{ROOT_DIR / 'data' / 'sessions' / 'lmu_strategy.sqlite3'}"
+    database_url: str = f"sqlite:///{app_data_dir() / 'sessions' / 'lmu_strategy.sqlite3'}"
     assumptions: StrategyAssumptions = StrategyAssumptions()
 
 
 def _read_yaml_config() -> dict:
-    path = ROOT_DIR / "config" / "default_strategy.yaml"
+    path = config_path()
     if not path.exists():
         return {}
     with path.open("r", encoding="utf-8") as handle:

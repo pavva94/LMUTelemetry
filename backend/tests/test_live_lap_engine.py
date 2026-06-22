@@ -131,7 +131,7 @@ def test_payload_lists_completed_laps_even_when_marked_not_clean() -> None:
     payload = analysis_payload(buffer, config)
 
     assert [lap["lap_number"] for lap in payload["laps"]] == [1, 2, 3]
-    assert payload["selected_lap_number"] == 3
+    assert payload["selected_lap_number"] == 1
     assert payload["reference_lap_number"] == 1
     marked = {lap["lap_number"]: lap for lap in payload["laps"]}
     assert marked[1]["valid_lap"] is True
@@ -171,3 +171,36 @@ def test_live_snapshot_treats_null_byte_yellow_flag_as_clear() -> None:
     assert row["engine_torque_nm"] == 500.0
     assert row["power_kw"] == pytest.approx(314.159, rel=0.001)
     assert row["power_hp"] == pytest.approx(421.2, rel=0.001)
+
+
+def test_session_model_excludes_isolated_g_spike_from_robust_peak() -> None:
+    config = VehicleAnalysisConfig(poll_hz=10)
+    buffer = LiveLapBuffer(config)
+    first = make_lap(lap_number=1)
+    second = make_lap(lap_number=2)
+    second[220]["g_force_lat"] = 3.8
+    buffer._completed[1] = first
+    buffer._completed[2] = second
+
+    payload = analysis_payload(buffer, config, selected_lap=2)
+
+    assert payload["quality"]["flagged_samples"] >= 1
+    assert payload["metrics"]["session_peak_combined_g"] < 2.5
+    flagged = [row for row in payload["current_lap_data"] if row["sample_quality"] == "flagged"]
+    assert any("g_force_lat_isolated_spike" in row["quality_flags"] for row in flagged)
+
+
+def test_session_model_exposes_representative_pace_and_reference_roles() -> None:
+    config = VehicleAnalysisConfig(poll_hz=10)
+    buffer = LiveLapBuffer(config)
+    for lap_number, lap_time in ((1, 50.0), (2, 49.7), (3, 50.2)):
+        rows = make_lap(lap_number=lap_number)
+        rows[-1]["lap_time"] = lap_time
+        buffer._completed[lap_number] = rows
+
+    payload = analysis_payload(buffer, config)
+
+    assert payload["session_summary"]["representative_pace"] == pytest.approx(50.0)
+    assert payload["references"]["personal_best_lap"] == 2
+    assert payload["quality"]["clean_laps"] == 3
+    assert all("quality_state" in lap and "role" in lap for lap in payload["laps"])

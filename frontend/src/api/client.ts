@@ -1,9 +1,8 @@
 import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { SavedSession, SessionDashboard, SessionReview } from "../types/session";
-import type { LmuDuckdbScanResponse, LmuDuckdbSettings } from "../types/lmuDuckdb";
+import type { DuckdbJobStatus, LmuDuckdbScanResponse, LmuDuckdbSettings } from "../types/lmuDuckdb";
 import type { LiveLapAnalysis } from "../types/liveLapAnalysis";
-import type { MotecSession, MotecSample } from "../types/motec";
 import type { ProfileLap, ProfileLapResponse, ProfileOverview, ProfileSummary } from "../types/profile";
 
 export const API_BASE = "";
@@ -62,8 +61,6 @@ export const api = {
     if (!response.ok) throw new Error("assumption update failed");
     return response.json() as Promise<StrategyState>;
   },
-  motecSessions: () => getJson<MotecSession[]>("/api/motec/sessions"),
-  motecSession: (id: string) => getJson<MotecSession>(`/api/motec/sessions/${id}`),
   scanLmuDuckdbFolder: (path: string, limit = 250, offset = 0) =>
     postJson<LmuDuckdbScanResponse>(`/api/lmu-duckdb/sessions?limit=${limit}&offset=${offset}`, { path }),
   lmuDuckdbSettings: () => getJson<LmuDuckdbSettings>("/api/lmu-duckdb/settings"),
@@ -80,29 +77,23 @@ export const api = {
     if (lapB) params.set("lap_b", lapB);
     return getJson<{ session_id: string; laps: string[]; points: Array<Record<string, number | string | boolean | null>>; warnings: string[] }>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/trajectory?${params}`);
   },
+  startDuckdbSessionsJob: (limit = 250, offset = 0) => postJson<DuckdbJobStatus>(`/api/lmu-duckdb/jobs/sessions?limit=${limit}&offset=${offset}`, {}),
+  startDuckdbSyncJob: (path?: string) => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/sync", path ? { path } : {}),
+  startDuckdbReviewJob: (id: string, limit = REVIEW_SAMPLE_LIMIT) => postJson<DuckdbJobStatus>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review-jobs?limit=${limit}`, {}),
+  startDuckdbHistoryJob: (sessionIds: string[]) => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/history", { session_ids: sessionIds }),
+  startProfileOverviewJob: () => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/profile-overview", {}),
+  duckdbJobStatus: (id: string) => getJson<DuckdbJobStatus>(`/api/lmu-duckdb/jobs/${encodeURIComponent(id)}`),
+  duckdbJobResult: <T>(id: string) => getJson<T>(`/api/lmu-duckdb/jobs/${encodeURIComponent(id)}/result`),
   profileOverview: () => getJson<ProfileOverview>("/api/profile/overview"),
   profileSummary: () => getJson<ProfileSummary>("/api/profile/summary"),
   profileBestLaps: () => getJson<ProfileLap[]>("/api/profile/best-laps"),
+  revalidateProfileBestLaps: () => postJson<Pick<ProfileOverview, "best_laps" | "data_quality">>("/api/profile/best-laps/revalidate", {}),
+  excludedProfileBestLapCandidates: () => getJson<ProfileLap[]>("/api/profile/best-laps/excluded"),
   profileLaps: (params: Record<string, string | number | boolean | null | undefined>) => {
     const search = new URLSearchParams();
     Object.entries(params).forEach(([key, value]) => {
       if (value !== null && value !== undefined && value !== "") search.set(key, String(value));
     });
     return getJson<ProfileLapResponse>(`/api/profile/laps?${search.toString()}`);
-  },
-  motecImport: async (file: File, metadata: Record<string, string>) => {
-    const params = new URLSearchParams({ filename: file.name, ...metadata });
-    const response = await fetch(`${API_BASE}/api/motec/sessions/import?${params.toString()}`, {
-      method: "POST",
-      headers: { "Content-Type": "text/csv" },
-      body: file,
-    });
-    if (!response.ok) throw new Error((await response.text()) || "CSV import failed");
-    return response.json() as Promise<MotecSession>;
-  },
-  motecSamples: (sessionId: string, channels: string[], lap?: string, maxPoints = 3000) => {
-    const params = new URLSearchParams({ channels: channels.join(","), max_points: String(maxPoints) });
-    if (lap) params.set("lap", lap);
-    return getJson<{ totalSamples: number; returnedSamples: number; decimation: number; samples: MotecSample[] }>(`/api/motec/sessions/${sessionId}/samples?${params}`);
   },
 };

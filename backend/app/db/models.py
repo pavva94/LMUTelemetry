@@ -62,6 +62,40 @@ class UserLifetimeStatsModel(Base):
     updated_at: Mapped[Optional[str]] = mapped_column(String)
 
 
+class LapValidationModel(Base):
+    __tablename__ = "lap_validation_audits"
+    source_lap_key: Mapped[str] = mapped_column(String, primary_key=True)
+    source_type: Mapped[str] = mapped_column(String, nullable=False)
+    source_session_id: Mapped[str] = mapped_column(String, nullable=False)
+    source_lap_number: Mapped[str] = mapped_column(String, nullable=False)
+    context_key: Mapped[Optional[str]] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, nullable=False)
+    reason_code: Mapped[str] = mapped_column(String, nullable=False)
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    audit_json: Mapped[Optional[str]] = mapped_column(Text)
+    validated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class PersonalBestLapModel(Base):
+    __tablename__ = "personal_best_laps"
+    record_key: Mapped[str] = mapped_column(String, primary_key=True)
+    session_type: Mapped[str] = mapped_column(String, nullable=False)
+    track: Mapped[str] = mapped_column(String, nullable=False)
+    layout: Mapped[str] = mapped_column(String, nullable=False)
+    car: Mapped[str] = mapped_column(String, nullable=False)
+    car_class: Mapped[Optional[str]] = mapped_column(String)
+    lap_time: Mapped[float] = mapped_column(Float, nullable=False)
+    source_lap_key: Mapped[str] = mapped_column(String, nullable=False)
+    source_type: Mapped[str] = mapped_column(String, nullable=False)
+    source_session_id: Mapped[str] = mapped_column(String, nullable=False)
+    source_lap_number: Mapped[str] = mapped_column(String, nullable=False)
+    set_at: Mapped[Optional[str]] = mapped_column(String)
+    validation_status: Mapped[str] = mapped_column(String, nullable=False, default="valid")
+    record_json: Mapped[str] = mapped_column(Text, nullable=False)
+    history_json: Mapped[Optional[str]] = mapped_column(Text)
+    revalidated_at: Mapped[str] = mapped_column(String, nullable=False)
+
+
 class AppSettingModel(Base):
     __tablename__ = "app_settings"
     key: Mapped[str] = mapped_column(String, primary_key=True)
@@ -99,6 +133,7 @@ class LmuDuckdbSessionModel(Base):
     warnings_json: Mapped[Optional[str]] = mapped_column(Text)
     summary_json: Mapped[Optional[str]] = mapped_column(Text)
     pit_events_json: Mapped[Optional[str]] = mapped_column(Text)
+    laps_json: Mapped[Optional[str]] = mapped_column(Text)
 
 
 class LmuDuckdbLapModel(Base):

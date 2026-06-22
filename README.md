@@ -1,4 +1,4 @@
-# LMU Telemetry
+<h1><img src="website/imgs/lmu-telemetry-icon.png" alt="LMU Telemetry icon" width="32" height="32" align="center"> LMU Telemetry</h1>
 
 LMU Telemetry is a local-first telemetry and race-engineering application for Le Mans Ultimate. It turns live shared-memory data, native LMU telemetry databases, and MoTeC-style CSV exports into race control, strategy planning, lap analysis, and post-session review tools.
 

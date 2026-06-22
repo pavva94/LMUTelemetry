@@ -153,8 +153,9 @@ def test_review_session_maps_channels_and_laps(tmp_path) -> None:
     assert len(review["laps"]) == 2
     assert review["summary"]["top_speed"] == 230.0
     assert review["laps"][0]["fuel_used"] == 1.5
-    assert review["laps"][0]["tyre_wear_end_fl"] == 98.0
+    assert review["laps"][0]["tyre_wear_end_fl"] == pytest.approx(0.02)
     assert review["telemetry_samples"][0]["speed_kph"] == 100.0
+    assert review["telemetry_samples"][0]["tyre_wear_fl"] == pytest.approx(0.01)
 
 
 def test_review_summary_filters_lap_and_speed_outliers(tmp_path) -> None:
@@ -169,6 +170,20 @@ def test_review_summary_filters_lap_and_speed_outliers(tmp_path) -> None:
     assert review["summary"]["top_speed"] == pytest.approx(214.0)
     assert review["summary"]["average_fuel_per_lap"] == pytest.approx(2.0)
     assert review["summary"]["total_fuel_used"] == pytest.approx(10.0)
+
+
+def test_summary_uses_recent_five_laps_not_average_of_overlapping_averages() -> None:
+    laps = [
+        {"lap_number": index + 1, "lap_time": value, "valid_lap": True, "in_pit": False, "fuel_used": 2.0}
+        for index, value in enumerate([100.0, 100.0, 100.0, 100.0, 100.0, 110.0])
+    ]
+    info = lmu_duckdb_repository.TableInfo("main", "telemetry", [], 6, {}, {}, 0)
+
+    summary = lmu_duckdb_repository._summary([], laps, info)
+
+    assert summary["average_five_lap_pace"] == pytest.approx(102.0)
+    assert summary["valid_lap_count"] == 6
+    assert summary["pace_lap_count"] == 6
 
 
 def test_review_session_reads_lmu_table_per_channel_schema(tmp_path) -> None:
@@ -190,6 +205,7 @@ def test_review_session_reads_lmu_table_per_channel_schema(tmp_path) -> None:
     assert review["telemetry_samples"][0]["brake_temp_fl"] == 1.0
     assert review["telemetry_samples"][2]["lap_number"] == 2
     assert review["laps"][0]["fuel_used"] == 1.5
+    assert review["laps"][0]["tyre_wear_end_fl"] == pytest.approx(0.98)
     assert review["available_fields"]["position"] is False
     assert any(channel["table"] == "Ground Speed" for channel in review["channel_manifest"])
 
@@ -286,6 +302,19 @@ def test_review_session_downsamples_large_channel_tables(tmp_path) -> None:
     assert review["summary"]["sample_count"] == 1000
 
 
+def test_review_summary_is_independent_of_chart_sample_limit(tmp_path) -> None:
+    db_path = tmp_path / "sample_limit_independence.duckdb"
+    _make_outlier_duckdb(db_path)
+    session_id = lmu_duckdb_repository.scan_folder(str(tmp_path))["sessions"][0]["id"]
+
+    compact = lmu_duckdb_repository.review_session(str(tmp_path), session_id, sample_limit=2)
+    detailed = lmu_duckdb_repository.review_session(str(tmp_path), session_id, sample_limit=5000)
+
+    assert compact["summary"] == detailed["summary"]
+    assert compact["laps"] == detailed["laps"]
+    assert len(compact["telemetry_samples"]) == 2
+
+
 def test_unsupported_duckdb_file_returns_warning(tmp_path) -> None:
     db_path = tmp_path / "unsupported.duckdb"
     conn = duckdb.connect(str(db_path))
@@ -319,6 +348,30 @@ def test_sync_caches_new_sessions_and_skips_unchanged(monkeypatch, tmp_path) -> 
     assert payload["sessions"][0]["track_name"] == "Le Mans"
     with factory() as db:
         assert db.query(LmuDuckdbSessionModel).filter_by(active=True).count() == 1
+
+
+def test_review_reuses_validated_cache_and_stale_signature_falls_back(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(lmu_duckdb_repository, "SessionLocal", factory)
+    db_path = tmp_path / "session_tables.duckdb"
+    _make_channel_duckdb(db_path)
+    baseline_session = lmu_duckdb_repository.scan_folder(str(tmp_path))["sessions"][0]
+    baseline = lmu_duckdb_repository.review_session(str(tmp_path), baseline_session["id"], sample_limit=10)
+    lmu_duckdb_repository.sync_folder(str(tmp_path))
+
+    monkeypatch.setattr(lmu_duckdb_repository, "_review_file", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("full review called")))
+    cached = lmu_duckdb_repository.review_session(None, baseline_session["id"], sample_limit=10)
+
+    assert cached["laps"] == baseline["laps"]
+    assert cached["summary"] == baseline["summary"]
+    assert cached["pit_events"] == baseline["pit_events"]
+    assert set(cached["available_fields"]) == set(baseline["available_fields"])
+
+    conn = duckdb.connect(str(db_path))
+    conn.execute("create table cache_signature_change(value integer)")
+    conn.close()
+    with pytest.raises(AssertionError, match="full review called"):
+        lmu_duckdb_repository.review_session(None, baseline_session["id"], sample_limit=10)
 
 
 def test_sync_reuses_cache_after_processing_changed_file(monkeypatch, tmp_path) -> None:

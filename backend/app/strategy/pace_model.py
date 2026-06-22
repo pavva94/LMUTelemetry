@@ -91,12 +91,12 @@ class PaceModel:
 
     @staticmethod
     def _trend(laps: list[float], last_7: float | None, last_10: float | None) -> float | None:
-        if len(laps) >= 10 and last_7 is not None and last_10 is not None:
-            return last_7 - last_10
-        if len(laps) >= 4:
-            split = len(laps) // 2
-            early = PaceModel._average(laps[:split])
-            late = PaceModel._average(laps[split:])
-            if early is not None and late is not None:
-                return late - early
-        return None
+        window = laps[-10:]
+        if len(window) < 4:
+            return None
+        x_mean = (len(window) - 1) / 2
+        y_mean = sum(window) / len(window)
+        denominator = sum((index - x_mean) ** 2 for index in range(len(window)))
+        if denominator <= 0:
+            return None
+        return sum((index - x_mean) * (value - y_mean) for index, value in enumerate(window)) / denominator

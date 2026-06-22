@@ -141,7 +141,7 @@ def test_fuel_model_requires_enough_valid_session_laps_for_estimates() -> None:
     assert state.fuel_laps_remaining is not None
 
 
-def test_fuel_model_uses_all_valid_session_laps_not_only_recent_window() -> None:
+def test_fuel_model_uses_recent_clean_laps_and_rejects_realistic_outlier() -> None:
     collector = MockTelemetryCollector()
     model = FuelModel(StrategyAssumptions(normal_lap_time=100))
     state = None
@@ -153,5 +153,7 @@ def test_fuel_model_uses_all_valid_session_laps_not_only_recent_window() -> None
         _make_green(snapshot)
         state = model.update(snapshot)
     assert state is not None
-    assert state.valid_laps_observed == 6
-    assert state.fuel_per_lap_liters == 2
+    assert state.valid_laps_observed == 5
+    assert state.fuel_per_lap_liters == 1
+    assert state.fuel_use_stddev_liters == 0
+    assert "fuel_lap_rejected_outlier" in state.reason_codes

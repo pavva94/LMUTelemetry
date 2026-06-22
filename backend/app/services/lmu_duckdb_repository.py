@@ -4,15 +4,19 @@ import hashlib
 import gc
 import json
 import math
+from collections import OrderedDict
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from threading import Lock
+from typing import Any, Callable
 
 from sqlalchemy import delete, func, select
 
 from app.db.database import SessionLocal
 from app.db.models import AppSettingModel, LmuDuckdbLapModel, LmuDuckdbSessionModel
+from app.analysis.lap_quality import apply_lap_quality
 
 
 try:
@@ -29,6 +33,24 @@ FOLDER_SETTING_KEY = "lmu_duckdb_folder"
 SYNC_STATUS_SETTING_KEY = "lmu_duckdb_last_sync_status"
 SYNC_AT_SETTING_KEY = "lmu_duckdb_last_sync_at"
 DEFAULT_WINDOWS_TELEMETRY_FOLDER = Path("G:/SteamLibrary/steamapps/common/Le Mans Ultimate/UserData/Telemetry")
+ProgressCallback = Callable[[str, str, int, int, int], None]
+_REVIEW_CACHE_LIMIT = 8
+_review_cache: OrderedDict[tuple[str, str, int], dict] = OrderedDict()
+_review_cache_lock = Lock()
+
+
+def _report(progress: ProgressCallback | None, phase: str, message: str, completed: int, total: int, percentage: int) -> None:
+    if progress:
+        progress(phase, message, completed, total, percentage)
+
+
+def _clear_review_cache(session_id: str | None = None) -> None:
+    with _review_cache_lock:
+        if session_id is None:
+            _review_cache.clear()
+            return
+        for key in [key for key in _review_cache if key[0] == session_id]:
+            _review_cache.pop(key, None)
 
 
 CHANNEL_ALIASES: dict[str, tuple[str, ...]] = {
@@ -301,14 +323,22 @@ def _without_outlier_items(items: list[dict], field: str, minimum: float | None 
     return filtered
 
 
-def _tyre_wear_used(value: float | None) -> float | None:
+def _tyre_wear_used_fraction(value: float | None) -> float | None:
     if value is None or not math.isfinite(value):
         return None
     if 0 <= value <= 1:
-        return (1.0 - value) * 100.0
+        return 1.0 - value
     if 1 < value <= 100:
-        return 100.0 - value
+        return (100.0 - value) / 100.0
     return None
+
+
+def _normalize_native_tyre_wear(rows: list[dict]) -> None:
+    for row in rows:
+        for wheel in WHEELS:
+            key = f"tyre_wear_{wheel}"
+            if key in row:
+                row[key] = _tyre_wear_used_fraction(_num(row.get(key)))
 
 
 def _session_id(path: Path) -> str:
@@ -630,9 +660,10 @@ def _nearest_event(events: list[tuple[float, Any]], time_value: float, cursor: i
 
 
 def _row_limit_for_review(sample_limit: int) -> int:
-    if sample_limit <= 0:
-        return MAX_REVIEW_ROWS
-    return min(MAX_REVIEW_ROWS, max(1200, sample_limit * 4))
+    # The response point limit is a presentation concern. Calculating laps and
+    # summaries from that decimated display set changes fuel endpoints, extrema,
+    # distance, and averages when a caller requests fewer chart points.
+    return MAX_REVIEW_ROWS
 
 
 def _select_channel_rows(conn, layout: ChannelLayout, row_limit: int = MAX_REVIEW_ROWS) -> tuple[list[dict], list[str]]:
@@ -750,6 +781,8 @@ def _select_channel_rows(conn, layout: ChannelLayout, row_limit: int = MAX_REVIE
 
     for row in rows:
         row.pop("__rn", None)
+    if _norm(layout.vector_mapped.get("tyre_wear", "")) == "tyreswear":
+        _normalize_native_tyre_wear(rows)
     if "lap_number" not in rows[0] if rows else True:
         warnings.append("Lap table has no usable events; lap numbers will be inferred from Lap Dist when possible.")
     unmapped = sorted((set(layout.mapped.values()) | set(layout.vector_mapped.values())) - used_tables)
@@ -825,6 +858,9 @@ def _review_rows(raw_rows: list[dict], info: TableInfo) -> list[dict]:
                 previous_lap_distance = float(lap_distance)
             row["lap_number"] = inferred_lap
         rows.append({key: value for key, value in row.items() if value is not None and key != "lap_distance"})
+    tyre_source = info.vector_mapped.get("tyre_wear", "")
+    if _norm(tyre_source) == "tyreswear":
+        _normalize_native_tyre_wear(rows)
     return rows
 
 
@@ -834,16 +870,36 @@ def _build_laps(rows: list[dict]) -> list[dict]:
         lap_number = row.get("lap_number")
         if isinstance(lap_number, (int, float)):
             grouped.setdefault(int(lap_number), []).append(row)
+    lap_numbers = sorted(grouped)
+    official_lap_times: dict[int, float] = {}
+    for lap_number in lap_numbers:
+        values = [
+            _num(row.get("last_lap_time")) for row in grouped[lap_number]
+            if (_num(row.get("last_lap_time")) or 0) > 0
+        ]
+        if values:
+            official_lap_times[lap_number - 1] = values[-1]  # last-lap channel belongs to the preceding lap
     laps: list[dict] = []
     previous_fuel_end: float | None = None
-    for lap_number in sorted(grouped):
+    for index, lap_number in enumerate(lap_numbers):
         lap_rows = grouped[lap_number]
         first = lap_rows[0]
         last = lap_rows[-1]
         start_time = _num(first.get("game_time"))
-        end_time = _num(last.get("game_time"))
-        official = _max([_num(row.get("last_lap_time")) for row in lap_rows])
-        duration = official if official and official > 0 else (end_time - start_time if start_time is not None and end_time is not None and end_time >= start_time else None)
+        next_lap = lap_numbers[index + 1] if index + 1 < len(lap_numbers) else None
+        next_start = _num(grouped[next_lap][0].get("game_time")) if next_lap is not None else None
+        sample_end = _num(last.get("game_time"))
+        end_time = next_start if next_start is not None else sample_end
+        official = official_lap_times.get(lap_number)
+        if official and official > 0:
+            duration = official
+            timing_source = "official"
+        elif next_start is not None and start_time is not None and next_start >= start_time:
+            duration = next_start - start_time
+            timing_source = "lap_boundary"
+        else:
+            duration = sample_end - start_time if start_time is not None and sample_end is not None and sample_end >= start_time else None
+            timing_source = "partial_samples"
         fuel_start = _num(first.get("fuel_liters"))
         fuel_end = _num(last.get("fuel_liters"))
         fuel_used = fuel_start - fuel_end if fuel_start is not None and fuel_end is not None and fuel_start >= fuel_end else None
@@ -854,6 +910,7 @@ def _build_laps(rows: list[dict]) -> list[dict]:
             "start_time": start_time,
             "end_time": end_time,
             "lap_time": duration,
+            "timing_source": timing_source,
             "fuel_start": fuel_start,
             "fuel_end": fuel_end,
             "fuel_used": fuel_used,
@@ -884,7 +941,7 @@ def _build_laps(rows: list[dict]) -> list[dict]:
         laps.append(lap)
         if fuel_end is not None:
             previous_fuel_end = fuel_end
-    return laps
+    return apply_lap_quality(laps)
 
 
 def _pit_events(rows: list[dict]) -> list[dict]:
@@ -916,40 +973,36 @@ def _pit_events(rows: list[dict]) -> list[dict]:
 
 
 def _summary(rows: list[dict], laps: list[dict], info: TableInfo) -> dict:
-    completed_laps = [
-        lap for lap in laps
-        if not lap.get("in_pit") and (_num(lap.get("lap_time")) or 0) > 0
-    ]
-    clean_completed_laps = _without_outlier_items(completed_laps, "lap_time", minimum=40.0, maximum=900.0)
-    lap_times = [_num(lap.get("lap_time")) for lap in clean_completed_laps]
-    fuel_used = [_num(lap.get("fuel_used")) for lap in clean_completed_laps]
+    completed_laps = [lap for lap in laps if lap.get("valid_lap") is True]
+    pace_laps = _without_outlier_items(completed_laps, "lap_time", minimum=40.0, maximum=900.0)
+    lap_times = [_num(lap.get("lap_time")) for lap in pace_laps]
+    fuel_used = [_num(lap.get("fuel_used")) for lap in completed_laps]
     fuel_used_positive = [value for value in fuel_used if value is not None and value > 0]
     fuel_used_for_average = _without_outliers(fuel_used_positive)
-    five_lap_paces = [
-        _avg(lap_times[index:index + 5])
-        for index in range(0, max(0, len(lap_times) - 4))
-    ]
+    recent_five_lap_pace = _avg(lap_times[-5:]) if len(lap_times) >= 5 else None
     duration = None
     if len(rows) >= 2:
         start = _num(rows[0].get("game_time"))
         end = _num(rows[-1].get("game_time"))
         duration = end - start if start is not None and end is not None and end >= start else None
     tyre_remaining_values = [_num(row.get(f"tyre_wear_{wheel}")) for row in rows for wheel in WHEELS]
-    tyre_wear_used_values = [_tyre_wear_used(value) for value in tyre_remaining_values]
+    tyre_wear_used_values = [value * 100.0 for value in tyre_remaining_values if value is not None and 0 <= value <= 1]
     speed_values = _without_outliers([_num(row.get("speed_kph")) for row in rows])
     return {
         "session_id": "external",
         "completed_at": None,
         "duration_seconds": duration,
         "lap_count": len(laps),
+        "valid_lap_count": len(completed_laps),
+        "pace_lap_count": len(pace_laps),
         "total_distance_km": sum(value for value in (_num(lap.get("distance_km")) for lap in laps) if value is not None) or _distance_km(rows),
         "best_lap": min((value for value in lap_times if value is not None and value > 0), default=None),
         "average_lap": _avg(lap_times),
         "average_fuel_per_lap": _avg(fuel_used_for_average),
-        "average_five_lap_pace": _avg([value for value in five_lap_paces if value is not None]),
+        "average_five_lap_pace": recent_five_lap_pace,
         "total_fuel_used": sum(fuel_used_positive) or None,
         "average_tyre_wear": _avg(_without_outliers(tyre_wear_used_values)),
-        "average_tyre_life_remaining": _avg(_without_outliers(tyre_remaining_values)),
+        "average_tyre_life_remaining": 100.0 - (_avg(_without_outliers(tyre_wear_used_values)) or 0.0) if tyre_wear_used_values else None,
         "average_tyre_temp": _avg(_without_outliers([_num(row.get(f"tyre_temp_{wheel}")) for row in rows for wheel in WHEELS])),
         "average_tyre_pressure": _avg(_without_outliers([_num(row.get(f"tyre_pressure_{wheel}")) for row in rows for wheel in WHEELS])),
         "average_brake_temp": _avg(_without_outliers([_num(row.get(f"brake_temp_{wheel}")) for row in rows for wheel in WHEELS])),
@@ -1101,12 +1154,14 @@ def _distance_km(rows: list[dict]) -> float | None:
     for previous, current in zip(rows, rows[1:]):
         previous_time = _num(previous.get("game_time"))
         current_time = _num(current.get("game_time"))
-        speed = _num(previous.get("speed_kph"))
-        if previous_time is None or current_time is None or speed is None:
+        previous_speed = _num(previous.get("speed_kph"))
+        current_speed = _num(current.get("speed_kph"))
+        if previous_time is None or current_time is None or previous_speed is None:
             continue
         delta = current_time - previous_time
-        if delta <= 0 or delta > 120:
+        if delta <= 0 or delta > 5:
             continue
+        speed = (previous_speed + current_speed) / 2 if current_speed is not None else previous_speed
         distance += speed * delta / 3600
         usable += 1
     return distance if usable else None
@@ -1216,6 +1271,126 @@ def _session_model_to_dict(session: LmuDuckdbSessionModel) -> dict:
     }
 
 
+def _cached_lap_to_dict(lap: LmuDuckdbLapModel) -> dict:
+    row = {
+        "lap_number": int(lap.lap_number) if str(lap.lap_number).isdigit() else lap.lap_number,
+        "lap_time": lap.lap_time,
+        "valid_lap": lap.valid_lap,
+        "in_pit": lap.in_pit,
+        "distance_km": lap.distance_km,
+        "fuel_start": lap.fuel_start,
+        "fuel_end": lap.fuel_end,
+        "fuel_used": lap.fuel_used,
+        "fuel_added": lap.fuel_added,
+        "top_speed": lap.max_speed,
+        "speed_kph": lap.average_speed,
+        "track_temp": lap.track_temp,
+        "ambient_temp": lap.ambient_temp,
+        "engine_oil_temp": lap.engine_oil_temp,
+        "engine_water_temp": lap.engine_water_temp,
+    }
+    for wheel in WHEELS:
+        row[f"tyre_wear_end_{wheel}"] = getattr(lap, f"tyre_wear_{wheel}")
+        row[f"tyre_pressure_{wheel}"] = getattr(lap, f"tyre_pressure_{wheel}")
+        row[f"brake_temp_{wheel}"] = getattr(lap, f"brake_temp_{wheel}")
+    return row
+
+
+def _cached_review_parts(session_id: str, file_path: Path) -> dict | None:
+    signature = _file_signature(file_path)
+    with SessionLocal() as db:
+        session = db.get(LmuDuckdbSessionModel, session_id)
+        if session is None or not session.active or session.signature != signature:
+            return None
+        lap_models = db.scalars(
+            select(LmuDuckdbLapModel)
+            .where(LmuDuckdbLapModel.session_id == session_id)
+            .order_by(LmuDuckdbLapModel.id.asc())
+        ).all()
+        try:
+            laps = json.loads(session.laps_json or "[]")
+        except Exception:
+            laps = []
+        if not laps:
+            laps = [_cached_lap_to_dict(lap) for lap in lap_models]
+        session_data = _session_model_to_dict(session)
+        try:
+            summary = json.loads(session.summary_json or "null")
+        except Exception:
+            summary = None
+        try:
+            pit_events = json.loads(session.pit_events_json or "[]")
+        except Exception:
+            pit_events = []
+        try:
+            warnings = json.loads(session.warnings_json or "[]")
+        except Exception:
+            warnings = []
+    return {
+        "signature": signature,
+        "session": session_data,
+        "laps": laps,
+        "summary": summary,
+        "pit_events": pit_events,
+        "warnings": warnings,
+    }
+
+
+def _display_rows(file_path: Path, sample_limit: int) -> tuple[list[dict], list[dict], list[str], Any]:
+    warnings: list[str] = []
+    conn = _open(file_path)
+    try:
+        channel_info = _channel_layout(conn)
+        if channel_info is not None:
+            rows, row_warnings = _select_channel_rows(conn, channel_info, row_limit=max(1, sample_limit))
+            info = channel_info
+        else:
+            info, row_warnings = _best_table(conn)
+            if info is None:
+                return [], _channel_manifest(conn, None), row_warnings, None
+            raw_rows, select_warnings = _select_rows(conn, info, row_limit=max(1, sample_limit))
+            row_warnings.extend(select_warnings)
+            rows = _review_rows(raw_rows, info)
+        warnings.extend(row_warnings)
+        manifest = _channel_manifest(conn, channel_info if channel_info is not None else None)
+    finally:
+        _close(conn)
+    return _downsample_evenly(rows, sample_limit), manifest, warnings, info
+
+
+def _review_from_validated_cache(file_path: Path, session_id: str, sample_limit: int, progress: ProgressCallback | None) -> dict | None:
+    cached = _cached_review_parts(session_id, file_path)
+    if cached is None:
+        return None
+    key = (session_id, cached["signature"], sample_limit)
+    with _review_cache_lock:
+        hit = _review_cache.get(key)
+        if hit is not None:
+            _review_cache.move_to_end(key)
+            _report(progress, "Preparing page", "Using prepared validated session", 1, 1, 95)
+            return deepcopy(hit)
+    _report(progress, "Reading telemetry", "Reading chart samples from DuckDB", 0, 1, 30)
+    rows, manifest, read_warnings, info = _display_rows(file_path, sample_limit)
+    _report(progress, "Processing database", "Combining validated results with chart data", 1, 1, 85)
+    result = {
+        "session": cached["session"],
+        "telemetry_samples": rows,
+        "recommendations": [],
+        "laps": cached["laps"],
+        "pit_events": cached["pit_events"],
+        "summary": cached["summary"],
+        "channel_manifest": manifest,
+        "available_fields": _available_fields(info, rows),
+        "warnings": list(dict.fromkeys([*cached["warnings"], *(warning for warning in read_warnings if "sampled every" not in warning)])),
+    }
+    with _review_cache_lock:
+        _review_cache[key] = deepcopy(result)
+        _review_cache.move_to_end(key)
+        while len(_review_cache) > _REVIEW_CACHE_LIMIT:
+            _review_cache.popitem(last=False)
+    return result
+
+
 def _store_review(db, file_path: Path, review: dict, signature: str, now: str) -> None:
     session_data = review["session"]
     summary = review.get("summary") or {}
@@ -1256,12 +1431,14 @@ def _store_review(db, file_path: Path, review: dict, signature: str, now: str) -
     model.warnings_json = _json(review.get("warnings") or [])
     model.summary_json = _json(summary)
     model.pit_events_json = _json(review.get("pit_events") or [])
+    model.laps_json = _json(review.get("laps") or [])
     track = session_data.get("track_name") or "Unknown track"
     layout = session_data.get("track_layout") or ""
     car = session_data.get("vehicle_model") or session_data.get("vehicle_name") or "Unknown car"
     car_class = session_data.get("vehicle_class") or "Unknown class"
+    lap_models = []
     for lap in review.get("laps") or []:
-        db.add(
+        lap_models.append(
             LmuDuckdbLapModel(
                 session_id=session_id,
                 lap_number=str(lap.get("lap_number") or ""),
@@ -1302,6 +1479,8 @@ def _store_review(db, file_path: Path, review: dict, signature: str, now: str) -
                 finish_status=model.classified_status,
             )
         )
+    if lap_models:
+        db.bulk_save_objects(lap_models)
 
 
 def scan_folder(path: str, limit: int = DEFAULT_SCAN_LIMIT, offset: int = 0) -> dict:
@@ -1362,13 +1541,14 @@ def sessions_from_cache_or_setting(limit: int = DEFAULT_SCAN_LIMIT, offset: int 
     return scanned
 
 
-def sync_folder(path: str | None = None) -> dict:
+def sync_folder(path: str | None = None, progress: ProgressCallback | None = None) -> dict:
     folder_path = path or _configured_folder_path()
     if not folder_path:
         raise FileNotFoundError("No LMU DuckDB telemetry folder is configured.")
     folder = _folder(folder_path)
     now = datetime.utcnow().isoformat()
     candidates = _scan_candidates(folder)
+    _report(progress, "Loading database", f"Found {len(candidates)} DuckDB files", 0, max(1, len(candidates)), 8)
     signatures = {str(file_path.resolve()): _file_signature(file_path) for file_path in candidates}
     present_keys = {_file_key(file_path) for file_path in candidates}
     processed = 0
@@ -1384,23 +1564,29 @@ def sync_folder(path: str | None = None) -> dict:
                 select(LmuDuckdbSessionModel.file_key, LmuDuckdbSessionModel.signature, LmuDuckdbSessionModel.active)
             ).all()
         }
-        for file_path in candidates:
+        for index, file_path in enumerate(candidates):
             signature = signatures[str(file_path.resolve())]
             cached = cached_by_file_key.get(_file_key(file_path))
             if cached and cached["signature"] == signature and cached["active"]:
                 skipped += 1
+                percent = 10 + round(((index + 1) / max(1, len(candidates))) * 80)
+                _report(progress, "Validating telemetry", f"Checked {file_path.name}", index + 1, len(candidates), percent)
                 continue
             try:
+                _report(progress, "Reading telemetry", f"Reading {file_path.name}", index, len(candidates), 10 + round((index / max(1, len(candidates))) * 80))
                 review = _review_file(file_path, sample_limit=0)
                 _store_review(db, file_path, review, signature, now)
                 db.commit()
                 db.expunge_all()
+                _clear_review_cache(review["session"]["id"])
                 processed += 1
                 warnings.extend(f"{file_path.name}: {warning}" for warning in review.get("warnings") or [])
             except Exception as exc:
                 db.rollback()
                 failed += 1
                 warnings.append(f"{file_path.name}: {exc}")
+            percent = 10 + round(((index + 1) / max(1, len(candidates))) * 80)
+            _report(progress, "Validating telemetry", f"Processed {index + 1} of {len(candidates)} files", index + 1, len(candidates), percent)
         for cached in db.scalars(select(LmuDuckdbSessionModel).where(LmuDuckdbSessionModel.active.is_(True))).all():
             if cached.file_key not in present_keys:
                 cached.active = False
@@ -1410,15 +1596,18 @@ def sync_folder(path: str | None = None) -> dict:
         _set_setting(db, SYNC_STATUS_SETTING_KEY, status, now)
         _set_setting(db, SYNC_AT_SETTING_KEY, now, now)
         db.commit()
+    _report(progress, "Processing database", "Updating the local DuckDB index", len(candidates), max(1, len(candidates)), 94)
     result = get_settings()
     result.update({"processed": processed, "skipped": skipped, "inactive": inactive, "failed": failed, "warnings": warnings[:200]})
     return result
 
 
-def _review_file(file_path: Path, sample_limit: int = 5000) -> dict:
+def _review_file(file_path: Path, sample_limit: int = 5000, progress: ProgressCallback | None = None) -> dict:
     warnings: list[str] = []
+    _report(progress, "Loading database", f"Opening {file_path.name}", 0, 1, 8)
     conn = _open(file_path)
     try:
+        _report(progress, "Reading telemetry", "Discovering telemetry channels", 0, 1, 20)
         metadata = _metadata(conn)
         channel_info = _channel_layout(conn)
         row_limit = _row_limit_for_review(sample_limit)
@@ -1451,11 +1640,13 @@ def _review_file(file_path: Path, sample_limit: int = 5000) -> dict:
         channel_manifest = _channel_manifest(conn, channel_info if channel_info is not None else None)
     finally:
         _close(conn)
+    _report(progress, "Validating telemetry", "Validating laps and telemetry quality", 0, 1, 68)
     laps = _build_laps(rows)
     session = _file_session(file_path, info, warnings, metadata)
     session["latest_lap_number"] = max((int(lap["lap_number"]) for lap in laps), default=None)
     session["latest_game_time"] = rows[-1].get("game_time") if rows else None
     session["ended_at_game_time"] = session["latest_game_time"]
+    _report(progress, "Processing database", "Building session summaries and charts", 1, 1, 88)
     return {
         "session": session,
         "telemetry_samples": _downsample(rows, sample_limit),
@@ -1469,7 +1660,7 @@ def _review_file(file_path: Path, sample_limit: int = 5000) -> dict:
     }
 
 
-def review_session(path: str | None, session_id: str, sample_limit: int = 5000) -> dict:
+def review_session(path: str | None, session_id: str, sample_limit: int = 5000, progress: ProgressCallback | None = None) -> dict:
     file_path = None
     if path:
         folder = _folder(path)
@@ -1478,7 +1669,28 @@ def review_session(path: str | None, session_id: str, sample_limit: int = 5000) 
         file_path = _find_session_by_id(session_id)
     if file_path is None:
         raise KeyError(session_id)
-    return _review_file(file_path, sample_limit=sample_limit)
+    if not path:
+        fast = _review_from_validated_cache(file_path, session_id, sample_limit, progress)
+        if fast is not None:
+            return fast
+    return _review_file(file_path, sample_limit=sample_limit, progress=progress)
+
+
+def comparable_history(session_ids: list[str], progress: ProgressCallback | None = None) -> dict:
+    reviews = []
+    total = max(1, len(session_ids))
+    for index, session_id in enumerate(session_ids):
+        _report(progress, "Loading database", f"Loading comparable session {index + 1} of {len(session_ids)}", index, total, 5 + round((index / total) * 85))
+        review = review_session(None, session_id, sample_limit=1)
+        reviews.append(review)
+        _report(progress, "Processing database", f"Processed comparable session {index + 1} of {len(session_ids)}", index + 1, total, 5 + round(((index + 1) / total) * 85))
+    return {
+        "telemetry_samples": [sample for review in reviews for sample in review.get("telemetry_samples") or []],
+        "laps": [lap for review in reviews for lap in review.get("laps") or []],
+        "pit_events": [event for review in reviews for event in review.get("pit_events") or []],
+        "recommendations": [],
+        "session_count": len(reviews),
+    }
 
 
 def trajectory_session(session_id: str, lap_a: str | None = None, lap_b: str | None = None, max_points: int = 1600) -> dict:

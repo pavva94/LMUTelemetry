@@ -163,6 +163,7 @@ class CompetitorState(BaseModel):
     best_lap_time: float | None = None
     last_lap_time: float | None = None
     estimated_lap_time: float | None = None
+    count_lap_flag: int | None = None
     finish_status: str | None = None
     pitstops: int | None = None
     in_pits: bool | None = None

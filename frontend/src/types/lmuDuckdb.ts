@@ -30,3 +30,14 @@ export type LmuDuckdbSettings = {
   failed?: number;
   warnings?: string[];
 };
+
+export type DuckdbJobStatus = {
+  job_id: string;
+  status: "queued" | "running" | "complete" | "failed";
+  phase: string;
+  message: string;
+  completed_items: number;
+  total_items: number;
+  percentage: number;
+  error?: string | null;
+};
