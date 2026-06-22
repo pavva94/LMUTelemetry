@@ -2,6 +2,7 @@ export type FuelState = {
   last_lap_fuel_used_liters?: number;
   fuel_capacity_liters?: number;
   fuel_per_lap_liters?: number;
+  fuel_use_stddev_liters?: number;
   fuel_laps_remaining?: number;
   estimated_laps_remaining?: number;
   required_fuel_to_finish?: number;
@@ -10,6 +11,7 @@ export type FuelState = {
   valid_laps_observed?: number;
   valid_laps_required?: number;
   confidence: string;
+  reason_codes?: string[];
 };
 
 export type TyreStrategyState = {

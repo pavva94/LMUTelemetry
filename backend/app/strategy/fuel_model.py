@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from statistics import median, pstdev
+
 from app.schemas.strategy import FuelState, StrategyAssumptions
 from app.schemas.telemetry import TelemetrySnapshot
 from app.telemetry.event_detector import _player_in_pits, _under_yellow
@@ -39,6 +41,7 @@ class FuelModel:
         self._lap_start_fuel = fuel_liters
 
     def update(self, snapshot: TelemetrySnapshot) -> FuelState:
+        reason_codes: list[str] = []
         player = snapshot.player
         if not player or player.fuel_liters is None:
             return FuelState(valid_laps_required=self.VALID_LAPS_REQUIRED, confidence="low")
@@ -57,12 +60,21 @@ class FuelModel:
             if self._lap_start_fuel is not None:
                 used = self._lap_start_fuel - player.fuel_liters
                 if used > 0 and not _player_in_pits(snapshot) and not _under_yellow(snapshot) and not player.lap_invalidated:
-                    self._last_lap_usage = used
-                    self._valid_usage.append(used)
+                    baseline = median(self._valid_usage[-10:]) if len(self._valid_usage) >= 3 else None
+                    if baseline is not None and not baseline * 0.5 <= used <= baseline * 1.5:
+                        reason_codes.append("fuel_lap_rejected_outlier")
+                    else:
+                        self._last_lap_usage = used
+                        self._valid_usage.append(used)
+                        reason_codes.append("fuel_lap_accepted")
+                else:
+                    reason_codes.append("fuel_lap_rejected_invalid_or_pit")
             self._last_lap = lap
             self._lap_start_fuel = player.fuel_liters
 
-        fuel_per_lap = (sum(self._valid_usage) / len(self._valid_usage)) if self._valid_usage else None
+        recent_usage = self._valid_usage[-5:]
+        fuel_per_lap = (sum(recent_usage) / len(recent_usage)) if recent_usage else None
+        fuel_stddev = pstdev(recent_usage) if len(recent_usage) >= 2 else None
         observed_laps = len(self._valid_usage)
         estimated_laps = None
         normal_lap_time = self._normal_lap_time(snapshot)
@@ -76,6 +88,7 @@ class FuelModel:
                 valid_laps_observed=observed_laps,
                 valid_laps_required=self.VALID_LAPS_REQUIRED,
                 confidence="low",
+                reason_codes=reason_codes + ["fuel_history_below_three_laps"],
             )
         fuel_laps = player.fuel_liters / fuel_per_lap
         required = ((estimated_laps or 0) * fuel_per_lap) + self.assumptions.fuel_safety_margin_liters
@@ -86,6 +99,7 @@ class FuelModel:
             last_lap_fuel_used_liters=round(self._last_lap_usage, 3) if self._last_lap_usage is not None else None,
             fuel_capacity_liters=round(fuel_capacity, 3) if fuel_capacity is not None else None,
             fuel_per_lap_liters=round(fuel_per_lap, 3),
+            fuel_use_stddev_liters=round(fuel_stddev, 3) if fuel_stddev is not None else None,
             fuel_laps_remaining=round(fuel_laps, 2),
             estimated_laps_remaining=round(estimated_laps, 2) if estimated_laps is not None else None,
             required_fuel_to_finish=round(required, 2),
@@ -93,7 +107,8 @@ class FuelModel:
             recommended_fuel_save_per_lap=round(save, 3) if save else None,
             valid_laps_observed=observed_laps,
             valid_laps_required=self.VALID_LAPS_REQUIRED,
-            confidence=confidence,
+            confidence="high" if observed_laps >= 5 else "medium",
+            reason_codes=reason_codes + ["fuel_recent_five_lap_mean"],
         )
 
     def _normal_lap_time(self, snapshot: TelemetrySnapshot) -> float | None:

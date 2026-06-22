@@ -22,6 +22,7 @@ class FuelState(BaseModel):
     last_lap_fuel_used_liters: float | None = None
     fuel_capacity_liters: float | None = None
     fuel_per_lap_liters: float | None = None
+    fuel_use_stddev_liters: float | None = None
     fuel_laps_remaining: float | None = None
     estimated_laps_remaining: float | None = None
     required_fuel_to_finish: float | None = None
@@ -30,6 +31,7 @@ class FuelState(BaseModel):
     valid_laps_observed: int = 0
     valid_laps_required: int = 3
     confidence: str = "low"
+    reason_codes: list[str] = Field(default_factory=list)
 
 
 class TyreStrategyState(BaseModel):

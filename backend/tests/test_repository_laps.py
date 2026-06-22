@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -70,6 +71,56 @@ def test_lap_summary_uses_lap_start_boundaries_when_official_value_is_stale() ->
 
     assert laps[0]["lap_time"] == 91.234
     assert abs(laps[0]["end_time"] - 91.234) < 0.001
+
+
+def test_lap_quality_rejects_real_data_derived_partial_pit_and_implausible_laps() -> None:
+    # The local database contained -1 s and 2816.7 s rows marked valid, plus
+    # partial final laps and pit laps. These values are reduced real-data cases.
+    laps = [
+        {"lap_number": 1, "lap_time": -1.0, "valid_lap": True, "in_pit": False, "under_yellow": False},
+        {"lap_number": 2, "lap_time": 105.94, "valid_lap": True, "in_pit": False, "under_yellow": False, "timing_source": "official"},
+        {"lap_number": 3, "lap_time": 106.20, "valid_lap": True, "in_pit": True, "under_yellow": False, "timing_source": "official"},
+        {"lap_number": 4, "lap_time": 2816.73, "valid_lap": True, "in_pit": False, "under_yellow": False},
+        {"lap_number": 5, "lap_time": 64.0, "valid_lap": True, "in_pit": False, "under_yellow": False, "timing_source": "partial_samples"},
+    ]
+
+    valid = Repository()._valid_laps(laps)
+
+    assert [lap["lap_number"] for lap in valid] == [2]
+    assert laps[0]["invalid_reasons"] == ["lap_time_outside_40_900_seconds"]
+    assert "pit_lap" in laps[2]["invalid_reasons"]
+    assert "incomplete_lap" in laps[4]["invalid_reasons"]
+
+
+def test_lap_quality_uses_session_median_only_after_three_clean_laps() -> None:
+    laps = [
+        {"lap_number": 1, "lap_time": 104.9, "valid_lap": True, "timing_source": "official"},
+        {"lap_number": 2, "lap_time": 105.2, "valid_lap": True, "timing_source": "official"},
+        {"lap_number": 3, "lap_time": 105.0, "valid_lap": True, "timing_source": "official"},
+        {"lap_number": 4, "lap_time": 260.0, "valid_lap": True, "timing_source": "official"},
+    ]
+
+    valid = Repository()._valid_laps(laps)
+
+    assert [lap["lap_number"] for lap in valid] == [1, 2, 3]
+    assert laps[3]["invalid_reasons"] == ["lap_time_outside_session_pace_band"]
+
+
+def test_session_aggregate_excludes_pit_lap_fuel_drop(monkeypatch) -> None:
+    factory = temp_session_factory()
+    monkeypatch.setattr(repository_module, "SessionLocal", factory)
+    repository = Repository()
+    with factory() as db:
+        session = SessionModel(id="fuel-audit", created_at="2026-01-01T00:00:00")
+        db.add(session)
+        laps = [
+            {"lap_number": 1, "lap_time": 105.0, "fuel_used": 2.7, "valid_lap": True, "timing_source": "official", "in_pit": False},
+            # Reduced from a real row that fell from 88 L to 1 L on a pit lap.
+            {"lap_number": 2, "lap_time": 1891.6, "fuel_used": 87.0, "valid_lap": True, "timing_source": "official", "in_pit": True},
+        ]
+        aggregate = repository._store_session_aggregate(db, session.id, session, [], laps, [], [])
+
+        assert aggregate.total_fuel_used == 2.7
 
 
 def test_lap_summary_captures_position_at_lap_end() -> None:
@@ -267,8 +318,6 @@ def test_finalize_stores_result_from_latest_sample_without_snapshot(monkeypatch)
 def test_profile_uses_only_active_duckdb_lap_cache(monkeypatch, tmp_path) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
-    monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
-    monkeypatch.setattr(profile_repository_module, "MOTEC_DB_PATH", tmp_path / "missing.sqlite3")
     ProfileRepository._all_laps_cache_key = None
     ProfileRepository._all_laps_cache = None
     with factory() as db:
@@ -294,8 +343,6 @@ def test_profile_uses_only_active_duckdb_lap_cache(monkeypatch, tmp_path) -> Non
 def test_profile_summary_counts_duckdb_sessions_without_completed_laps(monkeypatch, tmp_path) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
-    monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
-    monkeypatch.setattr(profile_repository_module, "MOTEC_DB_PATH", tmp_path / "missing.sqlite3")
     ProfileRepository._all_laps_cache_key = None
     ProfileRepository._all_laps_cache = None
     with factory() as db:
@@ -307,15 +354,12 @@ def test_profile_summary_counts_duckdb_sessions_without_completed_laps(monkeypat
 
     assert summary["totals"]["total_sessions"] == 1
     assert summary["totals"]["live_sessions"] == 0
-    assert summary["totals"]["csv_sessions"] == 0
     assert summary["totals"]["duckdb_sessions"] == 1
 
 
 def test_profile_total_distance_includes_invalid_duckdb_laps(monkeypatch, tmp_path) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
-    monkeypatch.setattr(profile_repository_module, "init_motec_db", lambda: None)
-    monkeypatch.setattr(profile_repository_module, "MOTEC_DB_PATH", tmp_path / "missing.sqlite3")
     ProfileRepository._all_laps_cache_key = None
     ProfileRepository._all_laps_cache = None
     with factory() as db:
@@ -327,12 +371,53 @@ def test_profile_total_distance_includes_invalid_duckdb_laps(monkeypatch, tmp_pa
             TelemetrySampleModel(session_id="distance", timestamp="2026-01-01T00:02:00", lap_number=2, game_time=120.0, speed_kph=180),
         ])
         db.add(LmuDuckdbSessionModel(id="distance-duck", file_key="distance-duck", file_path="C:/telemetry/distance.duckdb", file_name="distance.duckdb", file_size_bytes=100, signature="sig", active=True, created_at="2026-01-01T00:00:00", track_name="Spa", session_type="Practice", vehicle_name="Porsche", vehicle_class="GTE", sample_count=10))
-        db.add(LmuDuckdbLapModel(session_id="distance-duck", lap_number="1", date="2026-01-01T00:00:00", track="Spa", car="Porsche", car_class="GTE", session_type="Practice", lap_time=72.0, valid_lap=False, distance_km=3.0))
+        db.add_all([
+            LmuDuckdbLapModel(session_id="distance-duck", lap_number="1", date="2026-01-01T00:00:00", track="Spa", car="Porsche", car_class="GTE", session_type="Practice", lap_time=72.0, valid_lap=False, distance_km=3.0),
+            LmuDuckdbLapModel(session_id="distance-duck", lap_number="0", date="2026-01-01T00:00:00", track="Spa", car="Porsche", car_class="GTE", session_type="Practice", lap_time=946.0, valid_lap=False, distance_km=0.0),
+        ])
         db.commit()
 
     summary = ProfileRepository().summary()
 
     assert summary["totals"]["total_distance_km"] == 3.0
     assert summary["distance_by_class"][0]["distance_km"] == 3.0
-    assert summary["totals"]["total_laps"] == 1
+    assert summary["totals"]["total_laps"] == 2
+    assert summary["totals"]["completed_laps"] == 1
+    assert summary["totals"]["total_driving_time"] == 72.0
     assert summary["totals"]["valid_laps"] == 0
+
+
+def test_profile_does_not_invent_zero_results_without_classification_data(monkeypatch, tmp_path) -> None:
+    factory = temp_session_factory()
+    monkeypatch.setattr(profile_repository_module, "SessionLocal", factory)
+    ProfileRepository._all_laps_cache_key = None
+    ProfileRepository._all_laps_cache = None
+    with factory() as db:
+        db.add(LmuDuckdbSessionModel(id="race", file_key="race", file_path="C:/race.duckdb", file_name="race.duckdb", file_size_bytes=1, signature="sig", active=True, created_at="2026-01-01", session_type="Race", sample_count=1))
+        db.add(LmuDuckdbLapModel(session_id="race", lap_number="1", track="Spa", car="Porsche", car_class="GTE", session_type="Race", lap_time=100, valid_lap=True, distance_km=7, tyre_wear_fl=80))
+        db.commit()
+
+    profile = ProfileRepository()
+    summary = profile.summary()
+    lap = profile.all_laps()[0]
+
+    assert summary["totals"]["wins"] is None
+    assert summary["totals"]["dnf_dns"] is None
+    assert summary["totals"]["positioned_race_sessions"] == 0
+    assert lap["tyre_wear_fl"] == pytest.approx(0.2)
+
+
+def test_profile_rejects_real_data_derived_stationary_and_partial_records() -> None:
+    rows = [
+        {"source": "duckdb", "session_id": "stationary", "lap_number": None, "lap_time": 60.0, "distance_km": 0.00001, "valid_lap": True},
+        {"source": "duckdb", "session_id": "partial", "lap_number": "1", "lap_time": 41.01, "distance_km": 1.96, "valid_lap": True},
+        {"source": "duckdb", "session_id": "partial", "lap_number": "2", "lap_time": 53.18, "distance_km": 2.22, "valid_lap": True},
+        {"source": "duckdb", "session_id": "partial", "lap_number": "3", "lap_time": 53.30, "distance_km": 2.23, "valid_lap": True},
+    ]
+
+    audited = ProfileRepository()._with_lap_quality(rows)
+
+    assert audited[0]["valid_lap"] is False
+    assert audited[0]["lap_quality"] == "missing_or_out_lap_number"
+    assert audited[1]["valid_lap"] is False
+    assert audited[1]["lap_quality"] == "partial_or_out_lap"

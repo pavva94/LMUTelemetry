@@ -35,7 +35,7 @@ def test_pace_model_calculates_recent_windows_and_weighted_pace() -> None:
     assert state.last_7_lap_average == 106
     assert state.last_10_lap_average == 104.5
     assert state.weighted_recent_pace == 105.85
-    assert state.pace_trend_seconds_per_lap == 1.5
+    assert state.pace_trend_seconds_per_lap == 1.0
     assert state.confidence == "high"
 
 

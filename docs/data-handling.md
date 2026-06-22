@@ -2,7 +2,7 @@
 
 This app stores telemetry locally. There is no external telemetry upload in the current implementation.
 
-In development, app-owned data lives under the repository `data` folder unless `LMU_TELEMETRY_DATA_DIR` points somewhere else. Native LMU DuckDB files stay in the user-selected LMU telemetry folder and are opened read-only.
+In development, app-owned data lives under the repository `data` folder unless `LMU_TELEMETRY_DATA_DIR` points somewhere else. In packaged Windows builds, app-owned data lives under `%LOCALAPPDATA%\LMUTelemetry`. Native LMU DuckDB files stay in the user-selected LMU telemetry folder and are opened read-only.
 
 ## Live Telemetry Input
 
@@ -11,7 +11,7 @@ Live data comes from one of two collectors:
 - Mock data when `USE_MOCK_TELEMETRY=true` or `dev.use_mock_telemetry` is true.
 - LMU shared memory when mock mode is disabled and `pyLMUSharedMemory` is available.
 
-Development can default to mock telemetry. Disable mock mode when testing against real LMU shared memory.
+Development can default to mock telemetry. The packaged Windows launcher defaults to real LMU shared memory and keeps mock telemetry behind its `--mock` diagnostic flag.
 
 `LMUTelemetryCollector` reconnects at most once every `2s` when shared memory is unavailable. Failed reads return a disconnected `TelemetrySnapshot` instead of crashing the backend.
 
@@ -44,6 +44,12 @@ Development live telemetry is stored in:
 
 ```text
 data/sessions/lmu_strategy.sqlite3
+```
+
+Packaged Windows live telemetry is stored in:
+
+```text
+%LOCALAPPDATA%\LMUTelemetry\sessions\lmu_strategy.sqlite3
 ```
 
 The data root should be overrideable with:
@@ -88,36 +94,3 @@ Sync uses absolute path, file size, and modified timestamp as the file signature
 - Removed files are marked inactive so profile totals reflect the current configured folder.
 
 The cache stores session metadata, discovered channel information, sample counts, summaries, and one lap row per detected lap. Raw telemetry samples are not imported into SQLite. Session Review reads the selected DuckDB file on demand, selects only the channel groups needed by the visible review sections, and downsamples in SQL before returning chart payloads.
-
-## CSV / MoTeC Storage
-
-Development CSV analysis sessions are stored in:
-
-```text
-data/motec/motec.sqlite3
-```
-
-The importer requires metadata:
-
-- `session_name`
-- `track_name`
-- `car_name`
-- `car_class`
-- `session_type`
-
-CSV format:
-
-- Row 1: channel names.
-- Row 2: units.
-- Row 3 onward: samples.
-
-The backend streams the request body line by line, parses CSV safely with Python `csv.reader`, stores samples in batches of 5000, and stores each sample as JSON plus indexed session/lap/time columns.
-
-## Sample Decimation
-
-`GET /api/motec/sessions/{id}/samples` returns decimated samples:
-
-- `max_points` is clamped between `100` and `10000`.
-- Decimation step is `ceil(total / max_points)`.
-- Returned rows satisfy `row_index % step = 0`.
-- Returned fields include requested channels plus base channels: `Time`, `Session Elapsed Time`, `Lap Number`, and `Lap-relative time`.

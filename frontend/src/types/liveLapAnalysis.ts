@@ -9,6 +9,12 @@ export type LiveLapSummary = {
   lap_invalidated?: boolean | null;
   in_pits?: boolean | null;
   yellow_flag?: boolean | null;
+  quality_state?: "Valid" | "Valid but noisy" | "Partially unreliable" | "Invalid for performance analysis";
+  quality_score?: number | null;
+  flagged_samples?: number | null;
+  timestamp_gaps?: number | null;
+  gap_to_representative?: number | null;
+  role?: string | null;
 };
 
 export type LiveLapSample = {
@@ -52,6 +58,66 @@ export type LiveLapSample = {
   tyre_temp_rr_center?: number | null;
   tyre_temp_rr_outer?: number | null;
   front_rear_slip_delta?: number | null;
+  distance_pct?: number | null;
+  sample_quality?: "valid" | "flagged";
+  quality_flags?: string[];
+};
+
+export type CoachingConfidence = "High" | "Medium" | "Low";
+export type CoachingTrend = "Improving" | "Stable" | "Worsening";
+
+export type CornerOpportunity = {
+  id: number;
+  label: string;
+  start_pct: number;
+  end_pct: number;
+  category: string;
+  phase: string;
+  opportunity: number;
+  confidence: CoachingConfidence;
+  confidence_score: number;
+  affected_laps: number;
+  clean_laps: number;
+  affected_lap_numbers?: number[];
+  trend: CoachingTrend;
+  signals?: Array<{
+    category: string;
+    phase: string;
+    opportunity: number;
+  }>;
+};
+
+export type CoachingFinding = {
+  id: string;
+  corner_id: number;
+  title: string;
+  summary: string;
+  what_happened: string;
+  why_it_matters: string;
+  primary_action: string;
+  supporting_action?: string | null;
+  avoid?: string | null;
+  category: string;
+  phase: string;
+  opportunity: number;
+  confidence: CoachingConfidence;
+  confidence_score: number;
+  affected_laps: number;
+  clean_laps: number;
+  affected_lap_numbers?: number[];
+  trend: CoachingTrend;
+  start_pct: number;
+  end_pct: number;
+  reference_lap?: number | null;
+  relevant_channels: Array<"speed" | "brake" | "throttle" | "steering" | "g_force">;
+  metrics: {
+    segment_time_delta?: number | null;
+    brake_release_delta_pct?: number | null;
+    throttle_delta_pct?: number | null;
+    exit_speed_delta?: number | null;
+    coast_time_delta?: number | null;
+    steering_correction_delta?: number | null;
+  };
 };
 
 export type TelemetryInsight = {
@@ -97,6 +163,32 @@ export type LiveLapAnalysis = {
   sectors: LiveSectorDelta[];
   insights: TelemetryInsight[];
   corners: CornerSegment[];
+  session_summary?: {
+    best_valid_lap?: number | null;
+    best_valid_lap_number?: number | null;
+    representative_pace?: number | null;
+    representative_lap_number?: number | null;
+    robust_consistency?: number | null;
+    theoretical_best?: number | null;
+    time_to_theoretical?: number | null;
+    pace_trend?: "Improving" | "Stable" | "Degrading";
+    robust_peak_combined_g?: number | null;
+    largest_opportunity_corner?: string | null;
+  };
+  quality?: {
+    status: "Valid" | "Valid but noisy" | "Partially unreliable";
+    clean_laps: number;
+    excluded_laps: number;
+    flagged_samples: number;
+    total_samples: number;
+  };
+  references?: {
+    personal_best_lap?: number | null;
+    representative_fast_lap?: number | null;
+    representative_pace_lap?: number | null;
+  };
+  corner_opportunities?: CornerOpportunity[];
+  findings?: CoachingFinding[];
   metrics: {
     session_peak_combined_g?: number | null;
     understeer_gradient?: number | null;

@@ -3,6 +3,7 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
 import { chartLabelFormatter, chartValueFormatter, isRaceTimeField } from "../lib/telemetryFields";
+import { toFiniteNumber } from "../lib/sessionAnalysis";
 import { formatRaceTime } from "../lib/timeFormat";
 import type { SavedSession, SessionReview as Review } from "../types/session";
 
@@ -13,11 +14,11 @@ const fmt = (value?: number | null, digits = 1, suffix = "") =>
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
 const carName = (session?: SavedSession | null) => session?.vehicle_model || session?.vehicle_name || null;
 const avg = (rows: Row[], key: string) => {
-  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  const values = rows.map((row) => toFiniteNumber(row[key])).filter((value): value is number => value != null);
   return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
 };
 const max = (rows: Row[], key: string) => {
-  const values = rows.map((row) => Number(row[key])).filter(Number.isFinite);
+  const values = rows.map((row) => toFiniteNumber(row[key])).filter((value): value is number => value != null);
   return values.length ? Math.max(...values) : null;
 };
 
@@ -139,16 +140,17 @@ export function SessionReview() {
   }, [filteredSessions, selectedId]);
   const summary = useMemo(() => {
     const aggregate = review?.summary;
-    const fuelUsed = laps.map((lap) => Number(lap.fuel_used)).filter(Number.isFinite).reduce((sum, value) => sum + value, 0);
+    const validLaps = laps.filter((lap) => lap.valid_lap === true);
+    const fuelValues = validLaps.map((lap) => toFiniteNumber(lap.fuel_used)).filter((value): value is number => value != null && value >= 0);
+    const lapTimes = validLaps.map((lap) => toFiniteNumber(lap.lap_time)).filter((value): value is number => value != null);
+    const fuelUsed = fuelValues.reduce((sum, value) => sum + value, 0);
     return {
-      laps: aggregate?.lap_count ?? laps.length,
+      detectedLaps: aggregate?.lap_count ?? laps.length,
+      validLaps: aggregate?.valid_lap_count ?? validLaps.length,
       samples: samples.length,
       storedSamples: aggregate?.sample_count ?? selectedSession?.sample_count,
-      avgLap: aggregate?.average_lap ?? avg(laps, "lap_time"),
-      bestLap: aggregate?.best_lap ?? (() => {
-        const values = laps.map((lap) => Number(lap.lap_time)).filter(Number.isFinite);
-        return values.length ? Math.min(...values) : null;
-      })(),
+      avgLap: aggregate?.average_lap ?? avg(validLaps, "lap_time"),
+      bestLap: aggregate?.best_lap ?? (lapTimes.length ? Math.min(...lapTimes) : null),
       topSpeed: aggregate?.top_speed ?? max(laps, "top_speed") ?? max(samples, "speed_kph"),
       fuelUsed: aggregate?.total_fuel_used ?? (fuelUsed || null),
       distance: aggregate?.total_distance_km,
@@ -253,17 +255,17 @@ export function SessionReview() {
           <Metric label="Session" value={text(selectedSession?.session_type)} />
           <Metric label="Car" value={text(carName(selectedSession))} />
           <Metric label="Result" value={selectedSession?.final_position ? `P${selectedSession.final_position}` : "--"} sub={selectedSession?.final_class_position ? `Class P${selectedSession.final_class_position}` : text(selectedSession?.classified_status)} />
-          <Metric label="Laps" value={summary.laps} />
+          <Metric label="Valid / detected laps" value={`${summary.validLaps} / ${summary.detectedLaps}`} />
           <Metric label="Samples" value={summary.samples} sub={summary.storedSamples ? `${summary.storedSamples} compacted at completion` : "aggregated saved data"} />
           <Metric label="Best lap" value={formatRaceTime(summary.bestLap)} />
           <Metric label="Average lap" value={formatRaceTime(summary.avgLap)} />
           <Metric label="Top speed" value={fmt(summary.topSpeed, 0, " km/h")} />
           <Metric label="Fuel used" value={fmt(summary.fuelUsed, 2, " L")} />
           <Metric label="Distance" value={fmt(summary.distance, 1, " km")} />
-          <Metric label="Avg tyre wear" value={fmt(summary.tyreWear, 2)} />
-          <Metric label="Avg tyre temp" value={fmt(summary.tyreTemp, 0, " C")} />
-          <Metric label="Avg pressure" value={fmt(summary.tyrePressure, 1)} />
-          <Metric label="Avg brake temp" value={fmt(summary.brakeTemp, 0, " C")} />
+          <Metric label="Sample avg tyre wear used" value={summary.tyreWear == null ? "--" : fmt(summary.tyreWear * 100, 2, "%")} />
+          <Metric label="Sample avg tyre temp" value={fmt(summary.tyreTemp, 0, " C")} />
+          <Metric label="Sample avg pressure" value={fmt(summary.tyrePressure, 1, " kPa")} />
+          <Metric label="Sample avg brake temp" value={fmt(summary.brakeTemp, 0, " C")} />
         </div>
       </section>
 
@@ -282,11 +284,13 @@ export function SessionReview() {
         {laps.length ? (
           <div className="table-wrap">
             <table>
-              <thead><tr><th>Lap</th><th>Lap time</th><th>Position</th><th>Class pos</th><th>Start</th><th>End</th><th>Fuel start</th><th>Fuel end</th><th>Fuel used</th><th>Fuel added</th><th>Top speed</th><th>Samples</th></tr></thead>
+              <thead><tr><th>Lap</th><th>Status</th><th>Notes</th><th>Lap time</th><th>Position</th><th>Class pos</th><th>Start</th><th>End</th><th>Fuel start</th><th>Fuel end</th><th>Fuel used</th><th>Fuel added</th><th>Top speed</th><th>Samples</th></tr></thead>
               <tbody>
                 {laps.map((lap, index) => (
                   <tr key={index}>
                     <td>{text(lap.lap_number)}</td>
+                    <td>{lap.valid_lap === true ? "Valid" : "Excluded"}</td>
+                    <td>{Array.isArray(lap.invalid_reasons) ? lap.invalid_reasons.join(", ") : "--"}</td>
                     <td>{formatRaceTime(lap.lap_time as number)}</td>
                     <td>{lap.position != null ? `P${lap.position}` : "--"}</td>
                     <td>{lap.class_position != null ? `P${lap.class_position}` : "--"}</td>

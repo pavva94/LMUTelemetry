@@ -50,8 +50,8 @@ Race model:
 
 Plan cards:
 
-- `estimated total = race_duration_seconds + pit service time + lift/coast time loss`.
-- Pit service time is pit lane loss plus tyre service and rounded 5 L refuel service.
+- `estimated total = base driving time + measured/configured pit service time`. Lift/coast time loss remains `0` until a measured pace-cost model is supplied.
+- Pit service time is pit lane loss plus tyre service and continuous refuel service. No fixed stationary overhead is added.
 - `fuelMargin = finishFuelRemaining - fuel_safety_margin_liters`.
 - Risk is medium if the fuel margin is below half a lap of fuel or the source data is still below the required valid laps; tyre risk can also raise the risk.
 
@@ -60,7 +60,7 @@ Lift-and-coast:
 - The model first checks total fuel shortage, then simulates each stint.
 - If a stop count fails because a stint or refuel would not fit the tank, the model binary-searches the minimum save per lap up to `8%`.
 - `savePercent = savePerLap / fuelPerLap * 100`.
-- Pace cost estimate is `savePercent / 100 * normalLapTime * 0.2 * raceLaps`.
+- Pace cost is not inferred from fuel saving; it remains unavailable (`0` in totals) until measured or explicitly configured.
 - Risk bands: `<=2%` low, `<=5%` medium, `<=8%` high but possible, above `8%` high and likely not enough.
 
 ## Pit Window
@@ -70,17 +70,7 @@ Source: `strategy.pit_window`.
 - Live pit options use the shared strategy simulator with backend pace evidence, current fuel, tank capacity, tyre wear by wheel, wear rate, pit service assumptions, safety-car pit loss, and traffic risk.
 - The page displays the pace model and live calculation breakdown so the optimal call can be audited from the exact inputs and penalties.
 
-- Earliest, latest, optimal, traffic risk, and rejoin position are backend model outputs.
-- Possible pit-lap table shows 8 candidate laps beginning at current stint lap.
-- Candidate risk values are illustrative frontend values:
-  - Can pit if candidate lap is not greater than latest safe lap.
-  - Fuel risk is high after latest safe lap.
-  - Rejoin position increments by one per displayed future lap.
-  - Delta is `i * 1.7s`.
-- Pit Lap Risk chart:
-  - 8 points beginning at current stint lap.
-  - Risk is `9` after latest safe lap.
-  - Otherwise risk is `max(1, i + 3)` when traffic is high, or `max(1, i)` when not.
+- Earliest, latest, optimal, traffic risk, and rejoin position are backend outputs. Rejoin requires real competitor gaps; otherwise it is unavailable. No illustrative time/position penalties are added by the frontend.
 
 ## Session Review
 
@@ -88,12 +78,12 @@ Source: `/api/session/review/{id}`.
 
 Summary:
 
-- Laps: count of lap rows.
+- Laps: eligible count and all detected groups, displayed as `valid / detected`.
 - Samples: count of returned samples.
-- Average lap: mean of finite `lap_time`.
-- Best lap: minimum finite `lap_time`.
+- Average lap: lap-weighted mean of eligible completed laps.
+- Best lap: minimum eligible completed lap.
 - Top speed: max lap `top_speed`, falling back to max sample `speed_kph`.
-- Fuel used: sum of finite lap `fuel_used`.
+- Fuel used: sum of non-negative `fuel_used` on eligible clean laps.
 
 Charts:
 
@@ -117,25 +107,24 @@ Source: live telemetry competitors, with `/api/competitors` as a periodic fallba
 
 ## User Profile
 
-Source: `/api/profile/summary` and `/api/profile/best-laps`, combining live SQLite sessions and imported CSV/MoTeC sessions.
+Source: `/api/profile/summary` and `/api/profile/best-laps`, derived from the active native LMU DuckDB cache.
 
 Career totals:
 
 - Total distance is the sum of per-session integrated distance.
-- Live distance integrates `speed_kph * delta_game_time / 3600` for valid `0 < delta <= 120s`.
-- CSV distance uses imported lap `distance_km`.
-- Total driving time is the sum of lap times across all profile laps.
+- Distance integrates adjacent speeds with the trapezoidal rule for finite `0 < delta <= 5s`; longer recording gaps are ignored.
+- Completed driving time sums laps numbered 1 or greater with 40-900 s duration and absent or at least 0.5 km recorded distance. Detected and ranking-valid lap counts are shown separately.
 - Total sessions is the larger of sessions represented by laps and persisted live/CSV session counts.
 - Valid laps come from profile lap-quality rules.
 - Average session duration, distance, and laps divide totals by total session count.
-- Wins, podiums, top 10, and DNF/DNS/DQ are counted only for sessions whose type contains `race`.
+- Wins, podiums, top 10, and DNF/DNS/DQ require actual classification/status evidence; otherwise the values are unavailable.
 
 Lap quality:
 
-- For each session, expected normal lap time is a robust median of lap times above `40s`.
-- Values outside `0.70x` to `1.35x` of the preliminary median are removed before final normal time.
+- For each session, expected normal lap time is a robust median of laps numbered 1 or greater between `40s` and `900s`.
+- Values outside `0.85x` to `1.35x` of the preliminary median are removed before final normal time.
 - Expected distance is the same robust median process for distances above `0.5 km`.
-- A lap is invalid if it was recorded invalid, is a pit lap, lacks lap time, is below `0.75x` normal time, above `1.80x` normal time, or below `0.75x` normal distance.
+- A ranking lap is invalid if its number is below 1, time is outside `0.85x-1.35x` normal time, or recorded distance is below `0.5 km`.
 
 Tables:
 
@@ -178,9 +167,7 @@ Fuel:
 
 Tyres:
 
-- Per-corner wear start/end are first and last sample values.
-- Wear delta is absolute end-start.
-- Per-lap wear is delta divided by valid lap count.
+- Per-corner wear uses positive clean-lap deltas below `0.2` and averages those lap deltas; pit/refuel/invalid laps are excluded.
 - Front/rear balance is rear delta average minus front delta average.
 - Left/right balance is right delta average minus left delta average.
 - Temperature and pressure summaries include average/min/max and split-half trend.
@@ -209,26 +196,3 @@ Examples:
 - Lap compare and race history use saved lap rows and recent samples to plot pace, fuel, tyre, and event trends.
 - X-Y Plotter computes min, max, average, population standard deviation, and sample count for the selected Y channel.
 - Stint History computes fastest lap, average valid lap, fuel used, fuel per lap, tyre wear delta, and top speed per stint.
-
-## MoTeC Workspace
-
-Common chart behavior:
-
-- Lap selectors choose primary and optional compare lap.
-- `ChartBlock` loads selected channels for lap A and lap B, uses `Lap-relative time` as default X, and overlays lap B with dashed lines.
-- Cursor value selects `round(cursor_percent / 100 * (sample_count - 1))`.
-- Key values show min, max, average, and count for selected channels.
-
-Worksheets:
-
-- Compare: Ground Speed, Throttle/Brake, Gear, Delta.
-- Driver: speed, inputs, steering, FFB, RPM, gear, G-force.
-- Tyre Temperature: outer/centre/inner per corner plus average temperature cards.
-- Tyre Pressure/Wear: per-corner pressure and wear plus front/rear averages.
-- Brakes: brake position, per-axle brake temperatures, speed, longitudinal G.
-- Ride Height/Platform: front/rear ride height, speed, inputs, longitudinal G, rake/min height cards.
-- G-Force: G channels, G-G scatter where X is lateral G and Y is longitudinal G.
-- Map/GPS: scales longitude and latitude into an SVG viewport; color intensity is selected channel divided by `100` and clamped to `0-1`.
-- Histograms: 20 bins from min to max of the selected channel.
-- X-Y: scatter of selected numeric X and Y channels.
-- Powertrain, Wheel Speeds, Environment, Speed/Delta, Inputs: direct channel plots plus summary cards where available.

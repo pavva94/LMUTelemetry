@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import statistics
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
@@ -275,15 +276,16 @@ def detect_corners(rows: list[dict]) -> list[dict]:
         throttle = _num(row.get("throttle_pct")) or 0.0
         steer = abs(_num(row.get("steering_angle")) or 0.0)
         lat_g = abs(_num(row.get("g_force_lat")) or 0.0)
-        entry = brake > 5 or steer > steer_entry or lat_g > 0.45
-        exit_ready = throttle > 80 and steer < max(0.04, max_steer * 0.25) and lat_g < 0.35
+        entry = brake > 8 or (steer > steer_entry and lat_g > 0.3)
+        exit_ready = brake < 3 and (throttle > 65 or (steer < max(0.04, max_steer * 0.22) and lat_g < 0.28))
         if not in_corner and entry:
             in_corner = True
             start = t
             below_count = 0
         elif in_corner:
             below_count = below_count + 1 if exit_ready else 0
-            if below_count >= 2 and start is not None:
+            corner_age = t - start if start is not None else 0.0
+            if (below_count >= 2 and corner_age >= 0.8) or corner_age >= 20.0:
                 windows.append((start, t))
                 in_corner = False
                 start = None
@@ -291,7 +293,7 @@ def detect_corners(rows: list[dict]) -> list[dict]:
         windows.append((start, _time(rows[-1]) or start))
     merged: list[tuple[float, float]] = []
     for start, end in windows:
-        if not merged or start - merged[-1][1] > 0.4:
+        if not merged or start - merged[-1][1] > 0.65:
             merged.append((start, end))
         else:
             merged[-1] = (merged[-1][0], max(merged[-1][1], end))
@@ -551,6 +553,289 @@ def _sector_time(rows: list[dict], sector: int) -> float | None:
     return end - start if start is not None and end is not None else None
 
 
+def _percentile(values: list[float | None], percentile: float) -> float | None:
+    clean = sorted(value for value in values if value is not None and math.isfinite(value))
+    if not clean:
+        return None
+    if len(clean) == 1:
+        return clean[0]
+    rank = max(0.0, min(1.0, percentile)) * (len(clean) - 1)
+    low = int(math.floor(rank))
+    high = int(math.ceil(rank))
+    if low == high:
+        return clean[low]
+    return clean[low] + (clean[high] - clean[low]) * (rank - low)
+
+
+def _median(values: list[float | None]) -> float | None:
+    clean = [value for value in values if value is not None and math.isfinite(value)]
+    return statistics.median(clean) if clean else None
+
+
+def _mad(values: list[float | None]) -> float | None:
+    center = _median(values)
+    if center is None:
+        return None
+    return _median([abs(value - center) for value in values if value is not None and math.isfinite(value)])
+
+
+QUALITY_LIMITS: dict[str, tuple[float, float, float]] = {
+    "speed_kph": (0.0, 450.0, 65.0),
+    "g_force_lat": (-4.5, 4.5, 1.4),
+    "g_force_long": (-6.0, 4.0, 1.8),
+    "steering_angle": (-4.0, 4.0, 1.2),
+    "throttle_pct": (-1.0, 101.0, 80.0),
+    "brake_pct": (-1.0, 101.0, 80.0),
+}
+
+
+def _quality_rows(rows: list[dict], config: VehicleAnalysisConfig) -> tuple[list[dict], dict]:
+    """Flag implausible isolated samples without removing the raw evidence."""
+    copied = [dict(row) for row in rows]
+    flagged: set[int] = set()
+    gaps = 0
+    expected_gap = 1.0 / max(config.poll_hz, 1)
+    for index, row in enumerate(copied):
+        reasons: list[str] = []
+        if index:
+            previous_time = _time(copied[index - 1])
+            current_time = _time(row)
+            if previous_time is not None and current_time is not None and current_time - previous_time > max(0.75, expected_gap * 5):
+                gaps += 1
+                reasons.append("timestamp_gap")
+        for key, (lower, upper, jump_limit) in QUALITY_LIMITS.items():
+            value = _num(row.get(key))
+            if value is None:
+                continue
+            if value < lower or value > upper:
+                reasons.append(f"{key}_physical_limit")
+                continue
+            if 0 < index < len(copied) - 1:
+                previous = _num(copied[index - 1].get(key))
+                following = _num(copied[index + 1].get(key))
+                if previous is not None and following is not None:
+                    local_center = statistics.median((previous, following))
+                    local_mad = statistics.median((abs(previous - local_center), abs(following - local_center)))
+                    robust_scale = max(1.4826 * local_mad, jump_limit * 0.08)
+                    if abs(value - local_center) > max(jump_limit, 7.0 * robust_scale):
+                        reasons.append(f"{key}_isolated_spike")
+        row["quality_flags"] = reasons
+        row["sample_quality"] = "flagged" if reasons else "valid"
+        if reasons:
+            flagged.add(index)
+    cumulative_distance = 0.0
+    distances = [0.0]
+    for previous, current in zip(copied, copied[1:]):
+        t0, t1 = _time(previous), _time(current)
+        v0, v1 = _num(previous.get("speed_kph")), _num(current.get("speed_kph"))
+        if t0 is not None and t1 is not None and t1 > t0 and v0 is not None and v1 is not None:
+            cumulative_distance += max(0.0, (v0 + v1) / 7.2 * (t1 - t0))
+        distances.append(cumulative_distance)
+    for row, distance in zip(copied, distances):
+        row["distance_pct"] = max(0.0, min(100.0, distance / cumulative_distance * 100.0)) if cumulative_distance > 0 else None
+    ratio = len(flagged) / len(copied) if copied else 1.0
+    state = "Valid" if ratio < 0.005 and gaps == 0 else "Valid but noisy" if ratio < 0.03 and gaps <= 2 else "Partially unreliable"
+    return copied, {"state": state, "flagged_samples": len(flagged), "timestamp_gaps": gaps, "quality_score": max(0, round(100 * (1 - min(1.0, ratio * 8 + gaps * 0.04))))}
+
+
+def _clean_values(rows: list[dict], key: str) -> list[float]:
+    return [value for row in rows if row.get("sample_quality") != "flagged" and (value := _num(row.get(key))) is not None]
+
+
+def _window_for_lap(rows: list[dict], start_pct: float, end_pct: float) -> list[dict]:
+    return [row for row in rows if row.get("distance_pct") is not None and start_pct <= row["distance_pct"] <= end_pct]
+
+
+def _first_sustained(rows: list[dict], key: str, threshold: float, *, above: bool = True, count: int = 2) -> dict | None:
+    streak: list[dict] = []
+    for row in rows:
+        value = _num(row.get(key))
+        matches = value is not None and (value >= threshold if above else value <= threshold)
+        streak = streak + [row] if matches else []
+        if len(streak) >= count:
+            return streak[0]
+    return None
+
+
+def _corner_metrics(rows: list[dict], start_pct: float, end_pct: float) -> dict | None:
+    segment = _window_for_lap(rows, start_pct, end_pct)
+    clean = [row for row in segment if row.get("sample_quality") != "flagged"]
+    if len(clean) < 3:
+        return None
+    start_time, end_time = _time(clean[0]), _time(clean[-1])
+    minimum = min(clean, key=lambda row: _num(row.get("speed_kph")) if _num(row.get("speed_kph")) is not None else math.inf)
+    minimum_time = _time(minimum)
+    before_apex = [row for row in clean if minimum_time is None or (_time(row) or 0.0) <= minimum_time]
+    after_apex = [row for row in clean if minimum_time is None or (_time(row) or 0.0) >= minimum_time]
+    brake_on = _first_sustained(clean, "brake_pct", 5.0)
+    brake_release = next((row for row in reversed(before_apex) if (_num(row.get("brake_pct")) or 0.0) >= 5.0), None)
+    throttle_on = _first_sustained(after_apex, "throttle_pct", 10.0)
+    full_throttle = _first_sustained(after_apex, "throttle_pct", 90.0)
+    coast = 0.0
+    for previous, current in zip(clean, clean[1:]):
+        if (_num(previous.get("throttle_pct")) or 0.0) < 5 and (_num(previous.get("brake_pct")) or 0.0) < 5:
+            coast += max(0.0, (_time(current) or 0.0) - (_time(previous) or 0.0))
+    steering_rates = [rate for _, rate in _derivative(clean, "steering_angle")]
+    return {
+        "segment_time": end_time - start_time if start_time is not None and end_time is not None else None,
+        "entry_speed": _num(clean[0].get("speed_kph")),
+        "minimum_speed": _num(minimum.get("speed_kph")),
+        "exit_speed": _num(clean[-1].get("speed_kph")),
+        "brake_onset_pct": brake_on.get("distance_pct") if brake_on else None,
+        "brake_release_pct": brake_release.get("distance_pct") if brake_release else None,
+        "throttle_on_pct": throttle_on.get("distance_pct") if throttle_on else None,
+        "full_throttle_pct": full_throttle.get("distance_pct") if full_throttle else None,
+        "coast_time": coast,
+        "corrections": _sign_changes(steering_rates, 0.02),
+        "sustained_lat_g": _median([abs(value) for value in _clean_values(clean, "g_force_lat")]),
+    }
+
+
+def _session_model(completed: OrderedDict[int, list[dict]], summaries: list[dict], config: VehicleAnalysisConfig, reference_lap: int) -> dict:
+    quality_rows: dict[int, list[dict]] = {}
+    quality_by_lap: dict[int, dict] = {}
+    for lap, rows in completed.items():
+        quality_rows[lap], quality_by_lap[lap] = _quality_rows(rows, config)
+    valid_summaries = [summary for summary in summaries if summary.get("valid_lap")]
+    valid_times = [summary.get("lap_time") for summary in valid_summaries]
+    median_time = _median(valid_times)
+    pace_mad = _mad(valid_times)
+    robust_spread = 1.4826 * pace_mad if pace_mad is not None else None
+    representative = [summary for summary in valid_summaries if median_time is not None and (robust_spread in (None, 0) or abs(summary["lap_time"] - median_time) <= 2.5 * robust_spread)]
+    if not representative:
+        representative = valid_summaries
+    representative_fast = min(representative, key=lambda item: item["lap_time"], default=None)
+    representative_pace_lap = min(representative, key=lambda item: (abs(item["lap_time"] - median_time), item["lap_time"]), default=None) if median_time is not None else representative_fast
+    best = min(valid_summaries, key=lambda item: item["lap_time"], default=None)
+    for summary in summaries:
+        lap = int(summary["lap_number"])
+        q = quality_by_lap[lap]
+        summary.update(q)
+        summary["quality_state"] = "Invalid for performance analysis" if not summary.get("valid_lap") else q["state"]
+        summary["gap_to_representative"] = summary.get("lap_time") - median_time if summary.get("lap_time") is not None and median_time is not None else None
+        summary["role"] = "Personal best valid lap" if best and lap == best["lap_number"] else "Representative fast lap" if representative_fast and lap == representative_fast["lap_number"] else "Clean comparable lap" if summary.get("valid_lap") else "Excluded lap"
+
+    reference_rows = quality_rows.get(reference_lap, [])
+    detected = detect_corners(reference_rows)
+    reference_start, reference_end = (_time(reference_rows[0]), _time(reference_rows[-1])) if reference_rows else (None, None)
+    reference_duration = reference_end - reference_start if reference_start is not None and reference_end is not None else None
+    corners: list[dict] = []
+    findings: list[dict] = []
+    theoretical_sectors: list[float] = []
+    for sector in (1, 2, 3):
+        best_sector = _min([_sector_time(quality_rows[int(summary["lap_number"])], sector) for summary in valid_summaries])
+        if best_sector is not None:
+            theoretical_sectors.append(best_sector)
+    theoretical = sum(theoretical_sectors) if len(theoretical_sectors) == 3 else (best.get("lap_time") if best else None)
+
+    for corner in detected:
+        if not reference_duration:
+            continue
+        start_pct = max(0.0, (corner["start"] - reference_start) / reference_duration * 100.0)
+        end_pct = min(100.0, (corner["end"] - reference_start) / reference_duration * 100.0)
+        lap_metrics: list[tuple[int, dict]] = []
+        for summary in valid_summaries:
+            lap = int(summary["lap_number"])
+            metrics = _corner_metrics(quality_rows[lap], start_pct, end_pct)
+            if metrics and metrics.get("segment_time") is not None:
+                lap_metrics.append((lap, metrics))
+        if not lap_metrics:
+            continue
+        target_lap, target = min(lap_metrics, key=lambda item: item[1]["segment_time"])
+        losses = [(lap, metrics["segment_time"] - target["segment_time"], metrics) for lap, metrics in lap_metrics]
+        meaningful = [(lap, loss, metrics) for lap, loss, metrics in losses if loss >= 0.03]
+        opportunity = _median([loss for _, loss, _ in meaningful]) or 0.0
+        repeatability = len(meaningful) / len(lap_metrics)
+        data_quality = _median([quality_by_lap[lap]["quality_score"] / 100 for lap, _, _ in meaningful or losses]) or 0.0
+        evidence_strength = min(1.0, opportunity / 0.25) if opportunity else 0.0
+        confidence_score = round(100 * (0.45 * repeatability + 0.3 * evidence_strength + 0.25 * data_quality))
+        confidence = "High" if confidence_score >= 75 else "Medium" if confidence_score >= 50 else "Low"
+        current = _median([metrics["coast_time"] for _, _, metrics in meaningful]) or 0.0
+        target_coast = target.get("coast_time") or 0.0
+        throttle_delay = (_median([metrics.get("throttle_on_pct") for _, _, metrics in meaningful]) or target.get("throttle_on_pct") or 0.0) - (target.get("throttle_on_pct") or 0.0)
+        brake_onset_delay = (_median([metrics.get("brake_onset_pct") for _, _, metrics in meaningful]) or target.get("brake_onset_pct") or 0.0) - (target.get("brake_onset_pct") or 0.0)
+        brake_release_delay = (_median([metrics.get("brake_release_pct") for _, _, metrics in meaningful]) or target.get("brake_release_pct") or 0.0) - (target.get("brake_release_pct") or 0.0)
+        exit_delta = (_median([metrics.get("exit_speed") for _, _, metrics in meaningful]) or target.get("exit_speed") or 0.0) - (target.get("exit_speed") or 0.0)
+        minimum_speed_delta = (_median([metrics.get("minimum_speed") for _, _, metrics in meaningful]) or target.get("minimum_speed") or 0.0) - (target.get("minimum_speed") or 0.0)
+        correction_delta = (_median([metrics.get("corrections") for _, _, metrics in meaningful]) or target.get("corrections") or 0.0) - (target.get("corrections") or 0.0)
+        trend_values = [loss for _, loss, _ in losses]
+        trend = "Improving" if len(trend_values) >= 3 and trend_values[-1] < trend_values[0] - 0.03 else "Worsening" if len(trend_values) >= 3 and trend_values[-1] > trend_values[0] + 0.03 else "Stable"
+        candidates: list[dict] = []
+
+        def add_candidate(category: str, phase: str, strength: float, threshold: float, title: str, happened: str, action: str, avoid: str, channels: list[str]) -> None:
+            if strength < threshold or opportunity < 0.02:
+                return
+            share = min(0.82, max(0.28, strength / max(threshold * 3.0, 0.001)))
+            candidates.append({
+                "category": category, "phase": phase, "opportunity": max(0.02, opportunity * share), "title": f'{corner["label"]} — {title}',
+                "what_happened": happened, "primary_action": action, "avoid": avoid, "relevant_channels": channels,
+            })
+
+        coast_delta = current - target_coast
+        add_candidate("Coasting", "Entry", coast_delta, 0.06, "Close the coast gap", f"Coasting is {coast_delta:.2f}s longer than your best clean pattern.", "Blend brake release into light throttle.", "Do not solve this by braking later.", ["speed", "brake", "throttle"])
+        add_candidate("Brake release", "Rotation", brake_release_delay, 0.12, "Release earlier", f"Brake release is {brake_release_delay:.1f}% of lap distance later.", "Taper pressure sooner and let the car rotate.", "Avoid an abrupt pedal release.", ["speed", "brake", "steering"])
+        add_candidate("Braking point", "Approach", abs(brake_onset_delay), 0.18, "Stabilize the brake point", f"Brake onset varies by {abs(brake_onset_delay):.1f}% of lap distance from the clean target.", "Use one repeatable marker before chasing distance.", "Later is not automatically faster.", ["speed", "brake"])
+        add_candidate("Minimum speed", "Apex", abs(minimum_speed_delta) if minimum_speed_delta < 0 else 0.0, 0.6, "Protect minimum speed", f"Minimum speed is {abs(minimum_speed_delta):.1f} km/h below your clean target.", "Settle the car once and keep the apex rolling.", "Do not add entry speed if exit suffers.", ["speed", "brake", "g_force"])
+        add_candidate("Throttle", "Exit", throttle_delay, 0.12, "Throttle sooner", f"First throttle is {throttle_delay:.1f}% of lap distance later.", "Finish rotation, then squeeze throttle earlier.", "Do not jump straight to full throttle.", ["speed", "throttle", "steering"])
+        add_candidate("Exit speed", "Acceleration", abs(exit_delta) if exit_delta < 0 else 0.0, 0.6, "Recover exit speed", f"Exit speed is {abs(exit_delta):.1f} km/h below your clean target.", "Prioritize the exit line and earlier acceleration.", "Do not sacrifice the exit for entry speed.", ["speed", "throttle"])
+        add_candidate("Steering", "Apex", correction_delta, 0.75, "Use one steering arc", f"About {correction_delta:.0f} extra steering corrections appear in slower laps.", "Make one input and let the car take a set.", "Do not chase the apex with more lock.", ["speed", "steering", "g_force"])
+        if not candidates and opportunity >= 0.03:
+            candidates.append({"category": "Corner time", "phase": "Whole corner", "opportunity": opportunity, "title": f'{corner["label"]} — Match the clean rhythm',
+                               "what_happened": f"This corner is {opportunity:.2f}s slower on affected clean laps.", "primary_action": "Repeat the timing from your strongest clean pass.",
+                               "avoid": "Change one phase at a time.", "relevant_channels": ["speed", "brake", "throttle"]})
+        candidates.sort(key=lambda item: item["opportunity"], reverse=True)
+        if not candidates:
+            corners.append({
+                "id": corner["id"], "label": corner["label"], "start_pct": start_pct, "end_pct": end_pct,
+                "category": "On target", "phase": "Clean", "opportunity": 0.0, "confidence": confidence,
+                "confidence_score": confidence_score, "affected_laps": 0, "clean_laps": len(lap_metrics), "trend": trend, "signals": [],
+            })
+            continue
+        primary = candidates[0]
+        corner_payload = {
+            "id": corner["id"], "label": corner["label"], "start_pct": start_pct, "end_pct": end_pct,
+            "category": primary["category"], "phase": primary["phase"], "opportunity": opportunity, "confidence": confidence,
+            "confidence_score": confidence_score, "affected_laps": len(meaningful), "clean_laps": len(lap_metrics), "trend": trend,
+            "signals": [{"category": item["category"], "phase": item["phase"], "opportunity": item["opportunity"]} for item in candidates[:2]],
+        }
+        corners.append(corner_payload)
+        for candidate in candidates:
+            findings.append({
+                "id": f'corner-{corner["id"]}-{candidate["category"].lower().replace(" ", "-")}', "corner_id": corner["id"], "title": candidate["title"],
+                "summary": f'{candidate["opportunity"]:.2f}s repeatable opportunity.', "what_happened": candidate["what_happened"],
+                "why_it_matters": "This pattern repeats on slower clean laps.",
+                "primary_action": candidate["primary_action"], "supporting_action": None, "avoid": candidate["avoid"],
+                "category": candidate["category"], "phase": candidate["phase"], "opportunity": candidate["opportunity"], "confidence": confidence, "confidence_score": confidence_score,
+                "affected_laps": len(meaningful), "clean_laps": len(lap_metrics), "trend": trend, "start_pct": start_pct, "end_pct": end_pct,
+                "affected_lap_numbers": [lap for lap, _, _ in meaningful],
+                "reference_lap": target_lap, "relevant_channels": candidate["relevant_channels"],
+                "metrics": {"segment_time_delta": candidate["opportunity"], "brake_release_delta_pct": brake_release_delay, "throttle_delta_pct": throttle_delay,
+                            "exit_speed_delta": exit_delta, "coast_time_delta": current - target_coast, "steering_correction_delta": correction_delta},
+            })
+    findings.sort(key=lambda item: item["opportunity"] * item["confidence_score"], reverse=True)
+    corners.sort(key=lambda item: item["id"])
+    peak_g_values = [math.sqrt(value ** 2 + (_num(row.get("g_force_long")) or 0.0) ** 2) for rows in quality_rows.values() for row in rows if row.get("sample_quality") != "flagged" and (value := _num(row.get("g_force_lat"))) is not None]
+    pace_trend = "Stable"
+    if len(valid_times) >= 3 and valid_times[-1] is not None and valid_times[0] is not None:
+        pace_trend = "Improving" if valid_times[-1] < valid_times[0] - 0.15 else "Degrading" if valid_times[-1] > valid_times[0] + 0.15 else "Stable"
+    total_flagged = sum(item["flagged_samples"] for item in quality_by_lap.values())
+    quality_status = "Valid" if all(item["state"] == "Valid" for item in quality_by_lap.values()) else "Valid but noisy" if all(item["state"] != "Partially unreliable" for item in quality_by_lap.values()) else "Partially unreliable"
+    return {
+        "rows": quality_rows,
+        "summary": {"best_valid_lap": best.get("lap_time") if best else None, "best_valid_lap_number": best.get("lap_number") if best else None,
+                    "representative_pace": median_time, "representative_lap_number": representative_pace_lap.get("lap_number") if representative_pace_lap else None,
+                    "robust_consistency": robust_spread, "theoretical_best": theoretical,
+                    "time_to_theoretical": (median_time - theoretical) if median_time is not None and theoretical is not None else None,
+                    "pace_trend": pace_trend, "robust_peak_combined_g": _percentile(peak_g_values, 0.99),
+                    "largest_opportunity_corner": findings[0]["title"].split(" — ")[0] if findings else None},
+        "quality": {"status": quality_status, "clean_laps": len(valid_summaries), "excluded_laps": len(summaries) - len(valid_summaries),
+                    "flagged_samples": total_flagged, "total_samples": sum(len(rows) for rows in completed.values())},
+        "references": {"personal_best_lap": best.get("lap_number") if best else None, "representative_fast_lap": representative_fast.get("lap_number") if representative_fast else None,
+                       "representative_pace_lap": representative_pace_lap.get("lap_number") if representative_pace_lap else None},
+        "corner_opportunities": corners, "findings": findings,
+    }
+
+
 def analysis_payload(buffer: LiveLapBuffer, config: VehicleAnalysisConfig, selected_lap: int | None = None, reference_lap: int | None = None, session: dict | None = None) -> dict:
     completed = buffer.completed_laps()
     valid = buffer.valid_laps()
@@ -566,18 +851,31 @@ def analysis_payload(buffer: LiveLapBuffer, config: VehicleAnalysisConfig, selec
             "sectors": sector_summary([], []),
             "insights": [],
             "corners": [],
+            "session_summary": {},
+            "quality": {"status": "Valid", "clean_laps": 0, "excluded_laps": 0, "flagged_samples": 0, "total_samples": 0},
+            "references": {"personal_best_lap": None, "representative_fast_lap": None, "representative_pace_lap": None},
+            "corner_opportunities": [],
+            "findings": [],
             "metrics": {"session_peak_combined_g": None, "understeer_gradient": None, "load_transfer_geom": None},
         }
     valid_summaries = [summary for summary in summaries if summary.get("valid_lap")]
     timed_summaries = valid_summaries or [summary for summary in summaries if summary.get("lap_time") is not None]
     fastest = min(timed_summaries, key=lambda item: item.get("lap_time") if item.get("lap_time") is not None else math.inf) if timed_summaries else summaries[-1]
-    selected = selected_lap if selected_lap in completed else next(reversed(completed.keys()))
-    reference = reference_lap if reference_lap in completed else int(fastest["lap_number"])
-    analyzed = analyze_lap(completed[selected], completed[reference], config)
+    session_reference = int(fastest["lap_number"])
+    reference = reference_lap if reference_lap in completed else session_reference
+    model = _session_model(completed, summaries, config, session_reference)
+    selected = selected_lap if selected_lap in completed else int(model["summary"].get("representative_lap_number") or next(reversed(completed.keys())))
+    analyzed = analyze_lap(model["rows"][selected], model["rows"][reference], config)
     analyzed.update({
         "session": session or {},
         "laps": summaries,
         "selected_lap_number": selected,
         "reference_lap_number": reference,
+        "session_summary": model["summary"],
+        "quality": model["quality"],
+        "references": model["references"],
+        "corner_opportunities": model["corner_opportunities"],
+        "findings": model["findings"],
     })
+    analyzed["metrics"]["session_peak_combined_g"] = model["summary"]["robust_peak_combined_g"]
     return analyzed

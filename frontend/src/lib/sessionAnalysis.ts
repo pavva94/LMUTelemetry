@@ -3,6 +3,8 @@ import type { SessionReview } from "../types/session";
 export type AnalysisRow = Record<string, unknown>;
 
 export function toFiniteNumber(value: unknown): number | null {
+  if (value == null || typeof value === "boolean") return null;
+  if (typeof value === "string" && value.trim() === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }

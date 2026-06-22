@@ -2,7 +2,7 @@
 
 Local-first telemetry and race-engineering app for Le Mans Ultimate.
 
-LMU Telemetry currently runs as a FastAPI backend plus a React/Vite frontend. The backend owns live telemetry collection, session logging, native LMU DuckDB scanning, and API/WebSocket state. The frontend is the local UI for live dashboards, DuckDB-backed profile/review pages, strategy tools, and CSV/MoTeC analysis.
+LMU Telemetry currently runs as a FastAPI backend plus a React/Vite frontend. The backend owns live telemetry collection, session logging, native LMU DuckDB scanning, and API/WebSocket state. The frontend is the local UI for live dashboards, DuckDB-backed profile/review pages, and strategy tools.
 
 ## Product Modes
 
@@ -10,7 +10,6 @@ LMU Telemetry currently runs as a FastAPI backend plus a React/Vite frontend. Th
 - **User Profile**: summarizes the configured LMU DuckDB telemetry folder into career overview, distance by class, most used cars, most driven tracks, and best laps.
 - **Session Review**: opens native LMU DuckDB sessions read-only, including lap summaries, fuel usage, tyres, brakes, ride heights, inputs, events, channel availability, and detailed telemetry charts.
 - **Strategy Planner / Session Report**: can work from live data or load cached DuckDB sessions from the configured telemetry folder.
-- **CSV / MoTeC Analysis**: imports large MoTeC-style CSV exports for offline lap comparison, engineering plots, fuel strategy, and rule-based Race Engineer hints.
 
 ## Runtime Model
 
@@ -21,6 +20,14 @@ Development runtime:
 - Vite proxies `/api` and `/ws` to the backend
 
 The frontend does not need to be open for live logging. Logging happens in the backend telemetry loop.
+
+Packaged Windows runtime:
+
+- Installed app: `LMU Telemetry` from the Start Menu
+- Local backend/UI origin: dynamic `http://127.0.0.1:<port>`
+- App-owned data: `%LOCALAPPDATA%\LMUTelemetry`
+- Logs: `%LOCALAPPDATA%\LMUTelemetry\logs`
+- Real LMU shared-memory mode is the packaged default. Mock telemetry is available only when the launcher is started with `--mock`.
 
 ## Requirements For Development
 
@@ -50,8 +57,11 @@ http://127.0.0.1:8000
 ## Frontend Setup
 
 ```cmd
+cd backend 
+.venv\Scripts\activate
+cd ..
 cd frontend
-npm install
+
 npm run dev
 ```
 
@@ -77,7 +87,7 @@ Run the backend with real LMU telemetry instead of mock data.
 CMD:
 
 ```cmd
-cd backend
+cd backend 
 .venv\Scripts\activate
 set USE_MOCK_TELEMETRY=false
 python run_backend.py
@@ -100,7 +110,6 @@ Development currently stores local data under the repository:
 
 ```text
 data/sessions/lmu_strategy.sqlite3
-data/motec/
 ```
 
 Native LMU DuckDB files stay in the user-selected LMU telemetry folder. The app stores only the configured folder path, session metadata, and lap/profile cache rows in its local SQLite database; raw DuckDB telemetry is read on demand and downsampled for review charts.
@@ -134,10 +143,6 @@ LMU_TELEMETRY_DATA_DIR=C:\path\to\data
 - `GET /api/competitors`
 - `GET /api/recommendations/current`
 - `POST /api/strategy/assumptions`
-- `GET /api/motec/sessions`
-- `POST /api/motec/sessions/import`
-- `GET /api/motec/sessions/{session_id}`
-- `GET /api/motec/sessions/{session_id}/samples`
 - `WS /ws/telemetry`
 - `WS /ws/strategy`
 - `WS /ws/recommendations`
@@ -171,6 +176,63 @@ cd frontend
 npm run test:run
 ```
 
+## Windows Installer Build
+
+The non-coder Windows release is built with PyInstaller and Inno Setup. It bundles the Python backend, `pyLMUSharedMemory`, the compiled React frontend, and the default config.
+
+Prerequisites on the build machine:
+
+- Python 3.11+
+- Node.js 18+
+- Inno Setup 6
+
+From the project root:
+
+```powershell
+.\packaging\build_windows_installer.cmd
+```
+
+The `.cmd` entry point works even when local PowerShell script execution is disabled. It builds the frontend, packages the app, runs a headless smoke test against the packaged backend and frontend, and then compiles the installer.
+
+Outputs:
+
+```text
+dist\LMUTelemetry\LMUTelemetry.exe
+release\LMUTelemetry-Setup-0.1.0.exe
+```
+
+For a quick PyInstaller-only build without the installer:
+
+```powershell
+.\packaging\build_windows_exe.cmd
+```
+
+The EXE build runs the frontend test suite, creates a fresh production frontend, packages the backend and LMU shared-memory module, verifies required bundled resources, runs the packaged smoke test, and prints the executable SHA-256 hash. Use `-SkipDependencyInstall` when the existing virtual environment and `node_modules` are already current.
+
+To set the release version without editing the Inno Setup script:
+
+```powershell
+.\packaging\build_windows_installer.cmd -AppVersion 0.2.0
+```
+
+The installed app writes user data under `%LOCALAPPDATA%\LMUTelemetry`, not the install folder. Override this for diagnostics with:
+
+```text
+LMU_TELEMETRY_DATA_DIR=C:\path\to\data
+LMU_TELEMETRY_LOG_DIR=C:\path\to\logs
+```
+
+### GitHub releases
+
+Pushing a semantic version tag builds and publishes a GitHub Release automatically:
+
+```powershell
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The release contains a versioned Windows installer, a portable ZIP, and a SHA-256 checksum file. Pushes to the `release` branch build the same files as workflow artifacts without publishing a GitHub Release. The workflow can also be started manually with a version and an optional **Publish release** switch.
+
 ## Troubleshooting
 
 ### No live telemetry is detected
@@ -187,4 +249,4 @@ Those fields depend on LMU shared-memory wheel channels. New recordings store av
 
 ### SQLite cannot open database file
 
-Make sure the app can create and write to `data/sessions/` and `data/motec/`, or set `LMU_TELEMETRY_DATA_DIR` to a writable folder.
+Make sure the app can create and write to `data/sessions/`, or set `LMU_TELEMETRY_DATA_DIR` to a writable folder.
