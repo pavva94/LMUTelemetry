@@ -426,7 +426,24 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .pit-stop-report { display: grid; gap: 8px; margin-top: 12px; }
 .pit-stop-report .section-title { margin-bottom: 0; }
 
-.strategy-input-grid label { align-content: start; }
+.strategy-assumption-layout { display: grid; grid-template-columns: minmax(260px, .72fr) minmax(0, 2fr); gap: 14px; align-items: start; }
+.strategy-plan-target { position: sticky; top: 76px; display: grid; gap: 11px; padding: 18px; border: 1px solid rgba(243, 182, 66, .42); border-radius: var(--radius); background: linear-gradient(155deg, rgba(243,182,66,.14), rgba(11,17,23,.96) 48%); }
+.strategy-plan-target h3 { margin: 0; color: #fff; font-size: 22px; }
+.strategy-plan-target p { margin: 0; color: var(--text-soft); font-size: 13px; line-height: 1.45; }
+.strategy-duration-field { margin-top: 4px; }
+.strategy-duration-control { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: stretch; }
+.strategy-duration-control input { min-height: 56px; border-color: rgba(243,182,66,.58); border-radius: 7px 0 0 7px; font-size: 26px; font-weight: 950; font-variant-numeric: tabular-nums; }
+.strategy-duration-control strong { display: grid; place-items: center; padding: 0 13px; border: 1px solid rgba(243,182,66,.58); border-left: 0; border-radius: 0 7px 7px 0; background: rgba(243,182,66,.13); color: var(--amber-2); font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+.strategy-target-summary { display: grid; gap: 5px; padding-top: 10px; border-top: 1px solid var(--border); color: var(--text-soft); font-size: 12px; }
+.strategy-target-summary span:first-child { color: #fff; font-size: 16px; font-weight: 900; }
+.strategy-assumption-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.strategy-assumption-group { display: grid; align-content: start; grid-template-columns: 1fr; gap: 10px; min-width: 0; margin: 0; padding: 13px; border: 1px solid var(--border); border-radius: var(--radius); background: rgba(11,17,23,.68); }
+.strategy-assumption-group legend { padding: 0 6px; color: var(--amber-2); font-size: 11px; font-weight: 950; letter-spacing: .09em; text-transform: uppercase; }
+.strategy-assumption-group label { align-content: start; }
+.strategy-evidence-group { grid-column: 1 / -1; grid-template-columns: minmax(260px, 1.4fr) minmax(190px, 1fr); }
+.strategy-source-picker { grid-row: span 3; }
+.strategy-inline-fields { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(76px, .7fr); gap: 6px; }
+.strategy-assumption-actions { margin: 14px 0 0; padding-top: 12px; border-top: 1px solid var(--border); }
 .strategy-source-panel { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(280px, .8fr); gap: 28px; align-items: end; border-top: 2px solid var(--amber); }
 .strategy-source-panel h1 { margin: 3px 0 8px; font-size: clamp(28px, 4vw, 46px); letter-spacing: -.035em; }
 .strategy-source-panel p { max-width: 760px; margin: 0; }
@@ -655,6 +672,10 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
   .span-3 { grid-column: span 6; }
   .span-4 { grid-column: span 6; }
   .input-grid { grid-template-columns: repeat(3, minmax(120px, 1fr)); }
+  .strategy-assumption-layout { grid-template-columns: 1fr; }
+  .strategy-plan-target { position: static; }
+  .strategy-assumption-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .strategy-evidence-group { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 920px) {
@@ -685,6 +706,8 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
   .topbar { display: grid; gap: 12px; }
   .topbar-status { justify-self: start; }
   .input-grid, .lap-context-grid, .gps-compare-toolbar { grid-template-columns: 1fr; }
+  .strategy-assumption-groups, .strategy-evidence-group { grid-template-columns: 1fr; }
+  .strategy-source-picker { grid-row: auto; }
   .header-grid.two { grid-template-columns: 1fr; }
   .recommendation-main { grid-template-columns: 1fr; }
   .gps-map-shell { min-height: 400px; }

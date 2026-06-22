@@ -123,15 +123,6 @@ function sessionPaceEvidence(lapTimes: number[], fallback?: number | null): Pace
   };
 }
 
-function liveRaceDurationMinutes(telemetry?: TelemetrySnapshot | null) {
-  const endTime = Number(telemetry?.session?.end_time);
-  if (Number.isFinite(endTime) && endTime > 0) return endTime / 60;
-  const currentTime = Number(telemetry?.session?.current_time);
-  const remaining = Number(telemetry?.session?.time_remaining);
-  if (Number.isFinite(currentTime) && Number.isFinite(remaining) && currentTime >= 0 && remaining > 0) return (currentTime + remaining) / 60;
-  return null;
-}
-
 function riskBadge(risk: StrategyRisk) {
   if (risk === "high") return "red";
   if (risk === "medium") return "amber";
@@ -205,7 +196,7 @@ function seededForm(strategy: StrategyState | null, telemetry?: TelemetrySnapsho
   const tank = positiveNumberFrom(telemetry?.player?.fuel_capacity_liters ?? strategy?.fuel.fuel_capacity_liters, fallbackTank);
   const assumptions = strategy?.assumptions || {};
   return {
-    race_duration_minutes: liveRaceDurationMinutes(telemetry) ?? numberFrom(assumptions.race_duration_minutes, current?.race_duration_minutes ?? 120),
+    race_duration_minutes: numberFrom(current?.race_duration_minutes, numberFrom(assumptions.race_duration_minutes, 120)),
     normal_lap_time: numberFrom(assumptions.normal_lap_time, current?.normal_lap_time ?? 214),
     race_start_new_tyres: booleanFrom(assumptions.race_start_new_tyres, current?.race_start_new_tyres ?? true),
     tank_capacity_liters: tank,
@@ -533,7 +524,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   };
   const useLiveData = () => {
     setModelSource("live");
-    const next = seededForm(strategy, telemetry);
+    const next = seededForm(strategy, telemetry, form);
     setForm(next);
     setManualLapText(formatTimeInput(next.normal_lap_time));
     setDirtyFields(new Set());
@@ -651,14 +642,10 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const bestPlan = plans[0];
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? bestPlan;
   const activePlanId = selectedPlan?.id ?? null;
-  const inputFields: Array<[NumericFormKey, string, string, number]> = [
-    ["race_duration_minutes", "Race duration", "min", 1],
-    ["tank_capacity_liters", "Tank capacity", "L", 0.1],
-    ["pit_loss_seconds", "Pit lane driving loss", "sec", 0.1],
-    ["tyre_change_seconds_per_tyre", "Change one tyre", "sec", 0.1],
-    ["refuel_seconds_per_5_liters", "Load 5L fuel", "sec", 0.1],
-    ["max_tyre_wear", "Max tyre wear", "fraction", 0.01],
-  ];
+  const plannedHours = form.race_duration_minutes / 60;
+  const estimatedPlanLaps = paceEvidence.weightedRecentPace && paceEvidence.weightedRecentPace > 0
+    ? Math.ceil(form.race_duration_minutes * 60 / paceEvidence.weightedRecentPace)
+    : null;
 
   return (
     <div className="page grid">
@@ -677,61 +664,66 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
         </div>
       </section>
       <section className="card span-12">
-        <SectionTitle title="Race Assumptions" help="Editable practice-to-race model. Pit lane driving loss excludes tyre and fuel service; tyre and refuel times are added separately." />
-        <div className="input-grid strategy-input-grid">
-          <label>
-            <span className="label">Model source</span>
-            <input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search live, type, track, car, file, laps" />
-            <select value={selectedSessionId} onChange={(event) => setSelectedSessionId(event.target.value)}>
-              <option value="">Live/current session</option>
-              {visibleSessions.map((session) => (
-                <option key={session.id} value={session.id}>
-                  {duckdbSessionLabel(session)}
-                </option>
-              ))}
-            </select>
-            <span className="subvalue">{sourceStatus}{sessionSearch.trim() ? ` - ${visibleSessions.length}/${sessions.length} matches` : ""}</span>
-          </label>
-          <label>
-            <span className="label">Manual lap time</span>
-            <input value={manualLapText} onChange={(event) => updateLapTime(event.target.value)} placeholder="03:34.000" />
-            <span className="subvalue">mm:ss.mmm</span>
-          </label>
-          <label>
-            <span className="label">Pace basis</span>
-            <select value={paceBasis} onChange={(event) => setPaceBasis(event.target.value as PaceBasis)}>
-              <option value="median">Median valid lap</option>
-              <option value="trimmed">10% trimmed mean</option>
-              <option value="percentile">60th percentile race pace</option>
-            </select>
-            <span className="subvalue">Manual lap time visibly overrides this model</span>
-          </label>
-          <label><span className="label">Safety reserve policy</span><select value={safetyPolicy} onChange={(event) => setSafetyPolicy(event.target.value as typeof safetyPolicy)}><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option></select><span className="subvalue">Changes planning rate, reserve, confidence, and risk</span></label>
-          <label><span className="label">Finish reserve unit</span><select value={reserveUnit} onChange={(event) => setReserveUnit(event.target.value as typeof reserveUnit)}><option value="laps">Equivalent laps</option><option value="liters">Litres</option></select><input type="number" min="0" step="0.1" value={reserveUnit === "laps" ? form.fuel_safety_margin_laps : form.fuel_safety_margin_liters} onChange={(event) => update(reserveUnit === "laps" ? "fuel_safety_margin_laps" : "fuel_safety_margin_liters", event.target.value)} /><span className="subvalue">{fmt(fuelSafetyMarginLiters, 2, " L")} base reserve before policy adjustment</span></label>
-          <label><span className="label">Pit service model</span><select value={serviceModel} onChange={(event) => setServiceModel(event.target.value as typeof serviceModel)}><option value="sequential">Sequential: fuel + tyres</option><option value="parallel">Parallel: slower job wins</option></select><span className="subvalue">Controls how tyre and refuelling work overlap</span></label>
-          <label><span className="label">Tyre change policy</span><select value={tyrePolicy} onChange={(event) => setTyrePolicy(event.target.value as typeof tyrePolicy)}><option value="automatic">Automatic by corner</option><option value="all">All four at every stop</option><option value="never">Never (exploration)</option></select><span className="subvalue">Automatic changes only projected threshold crossings</span></label>
-          {inputFields.map(([key, label, unit, step]) => (
-            <label key={key}>
-              <span className="label">{label}</span>
-              <input type="number" step={step} value={form[key]} onChange={(event) => update(key, event.target.value)} />
-              <span className="subvalue">{unit}</span>
+        <SectionTitle title="Race Assumptions" help="Set the race you want to prepare for, then choose which measured session supplies the pace, fuel, and tyre evidence." />
+        <div className="strategy-assumption-layout">
+          <div className="strategy-plan-target">
+            <span className="eyebrow">PLAN TARGET</span>
+            <h3>How long is the race?</h3>
+            <p>Enter the total scheduled duration. This manual target stays unchanged when you switch telemetry sources.</p>
+            <label className="strategy-duration-field">
+              <span className="label">Race duration</span>
+              <span className="strategy-duration-control">
+                <input type="number" min="1" step="1" inputMode="numeric" value={form.race_duration_minutes} onChange={(event) => update("race_duration_minutes", event.target.value)} />
+                <strong>minutes</strong>
+              </span>
             </label>
-          ))}
-          <label>
-            <span className="label">Start tyre set</span>
-            <span className="toggle-line">
-              <input type="checkbox" checked={form.race_start_new_tyres} onChange={(event) => updateBoolean("race_start_new_tyres", event.target.checked)} />
-              <span>New tyres</span>
-            </span>
-            <span className="subvalue">race start assumption</span>
-          </label>
-          <label>
-            <span className="label">Active normal lap</span>
-            <input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? "DuckDB session/manual" : activeModel.label})`} readOnly />
-            <span className="subvalue">used by strategy model</span>
-          </label>
+            <div className="strategy-target-summary">
+              <span>{fmt(plannedHours, plannedHours % 1 === 0 ? 0 : 2, " hours")}</span>
+              <span>{estimatedPlanLaps == null ? "Laps calculated when pace is available" : `About ${estimatedPlanLaps} laps before pit losses`}</span>
+            </div>
+          </div>
+
+          <div className="strategy-assumption-groups">
+            <fieldset className="strategy-assumption-group strategy-evidence-group">
+              <legend>Evidence source & pace</legend>
+              <label className="strategy-source-picker">
+                <span className="label">Reference session</span>
+                <input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search track, car, session type, or laps" />
+                <select value={selectedSessionId} onChange={(event) => setSelectedSessionId(event.target.value)}>
+                  <option value="">Live/current session</option>
+                  {visibleSessions.map((session) => <option key={session.id} value={session.id}>{duckdbSessionLabel(session)}</option>)}
+                </select>
+                <span className="subvalue">{sourceStatus}{sessionSearch.trim() ? ` - ${visibleSessions.length}/${sessions.length} matches` : ""}</span>
+              </label>
+              <label><span className="label">Pace basis</span><select value={paceBasis} onChange={(event) => setPaceBasis(event.target.value as PaceBasis)}><option value="median">Median valid lap</option><option value="trimmed">10% trimmed mean</option><option value="percentile">60th percentile race pace</option></select><span className="subvalue">Calculated from the reference session</span></label>
+              <label><span className="label">Manual lap time</span><input value={manualLapText} onChange={(event) => updateLapTime(event.target.value)} placeholder="03:34.000" /><span className="subvalue">Optional override · mm:ss.mmm</span></label>
+              <label><span className="label">Active normal lap</span><input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? "DuckDB session/manual" : activeModel.label})`} readOnly /><span className="subvalue">Used by the strategy model</span></label>
+            </fieldset>
+
+            <fieldset className="strategy-assumption-group">
+              <legend>Fuel & reserve</legend>
+              <label><span className="label">Tank capacity</span><input type="number" min="0" step="0.1" value={form.tank_capacity_liters} onChange={(event) => update("tank_capacity_liters", event.target.value)} /><span className="subvalue">litres</span></label>
+              <label><span className="label">Safety reserve policy</span><select value={safetyPolicy} onChange={(event) => setSafetyPolicy(event.target.value as typeof safetyPolicy)}><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option></select><span className="subvalue">Adjusts planning rate and reserve</span></label>
+              <label><span className="label">Finish reserve</span><span className="strategy-inline-fields"><select value={reserveUnit} onChange={(event) => setReserveUnit(event.target.value as typeof reserveUnit)}><option value="laps">Equivalent laps</option><option value="liters">Litres</option></select><input type="number" min="0" step="0.1" value={reserveUnit === "laps" ? form.fuel_safety_margin_laps : form.fuel_safety_margin_liters} onChange={(event) => update(reserveUnit === "laps" ? "fuel_safety_margin_laps" : "fuel_safety_margin_liters", event.target.value)} /></span><span className="subvalue">{fmt(fuelSafetyMarginLiters, 2, " L")} before policy adjustment</span></label>
+            </fieldset>
+
+            <fieldset className="strategy-assumption-group">
+              <legend>Pit service</legend>
+              <label><span className="label">Pit lane driving loss</span><input type="number" min="0" step="0.1" value={form.pit_loss_seconds} onChange={(event) => update("pit_loss_seconds", event.target.value)} /><span className="subvalue">seconds per stop</span></label>
+              <label><span className="label">Load 5 L fuel</span><input type="number" min="0" step="0.1" value={form.refuel_seconds_per_5_liters} onChange={(event) => update("refuel_seconds_per_5_liters", event.target.value)} /><span className="subvalue">seconds</span></label>
+              <label><span className="label">Change one tyre</span><input type="number" min="0" step="0.1" value={form.tyre_change_seconds_per_tyre} onChange={(event) => update("tyre_change_seconds_per_tyre", event.target.value)} /><span className="subvalue">seconds</span></label>
+              <label><span className="label">Service timing</span><select value={serviceModel} onChange={(event) => setServiceModel(event.target.value as typeof serviceModel)}><option value="sequential">Sequential: fuel + tyres</option><option value="parallel">Parallel: slower job wins</option></select><span className="subvalue">How fuel and tyre work overlap</span></label>
+            </fieldset>
+
+            <fieldset className="strategy-assumption-group">
+              <legend>Tyre plan</legend>
+              <label><span className="label">Maximum tyre wear</span><input type="number" min="0" max="1" step="0.01" value={form.max_tyre_wear} onChange={(event) => update("max_tyre_wear", event.target.value)} /><span className="subvalue">fraction · 0.75 means 75%</span></label>
+              <label><span className="label">Tyre change policy</span><select value={tyrePolicy} onChange={(event) => setTyrePolicy(event.target.value as typeof tyrePolicy)}><option value="automatic">Automatic by corner</option><option value="all">All four at every stop</option><option value="never">Never (exploration)</option></select><span className="subvalue">Automatic changes threshold crossings</span></label>
+              <label><span className="label">Start tyre set</span><span className="toggle-line"><input type="checkbox" checked={form.race_start_new_tyres} onChange={(event) => updateBoolean("race_start_new_tyres", event.target.checked)} /><span>Start planned race on new tyres</span></span><span className="subvalue">Otherwise uses reference-session wear</span></label>
+            </fieldset>
+          </div>
         </div>
-        <p className="control-row">
+        <p className="control-row strategy-assumption-actions">
           <button type="button" onClick={useLiveData}>Use live data</button>
           <button type="button" onClick={useSelectedSession}>Use selected DuckDB session</button>
           <button type="button" onClick={() => void useComparableHistory()}>Use comparable history</button>
