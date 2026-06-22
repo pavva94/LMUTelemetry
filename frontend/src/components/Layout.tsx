@@ -64,7 +64,7 @@ const pageDescriptions: Record<PageKey, string> = {
   "xy-plotter": "Custom plots for live and current-session channels while detailed telemetry is still available.",
   planner: "Strategy assumptions and planning tools that combine live telemetry with configurable race targets.",
   "race-prep": "Selected-session report builder for reviewing pace, fuel, tyres, environment, and preparation notes.",
-  "lap-analysis": "High-frequency valid-lap engineer analysis with driver feedback, setup diagnostics, and synchronized telemetry charts.",
+  "lap-analysis": "Whole-session coaching from every clean lap: where time is lost, what repeats, and what to try next.",
   pit: "Pit-window guidance based on current strategy assumptions and live session state.",
   settings: "Configuration for connection, display, recording behavior, and strategy assumptions.",
   motec: "Offline CSV analysis workspace for imported MoTeC-style files and their persisted summaries.",

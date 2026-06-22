@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { AlertOctagon, CheckCircle2, Wrench } from "lucide-react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { AlertOctagon, ArrowDownRight, ArrowUpRight, CheckCircle2, ChevronRight, CircleGauge, Filter, Flag, Gauge, Info, LineChart as LineChartIcon, ShieldCheck, Sparkles, Target, TrendingDown, TrendingUp, Wrench } from "lucide-react";
 import {
   CartesianGrid,
   Legend,
@@ -17,7 +17,7 @@ import { api } from "../api/client";
 import { SectionTitle } from "../components/SectionTitle";
 import { damperRows, finite, sampleAt, splitInsights, tempColor, wheels, type Wheel } from "../lib/liveTelemetryEngine";
 import { formatRaceTime } from "../lib/timeFormat";
-import type { LiveLapAnalysis as LiveLapAnalysisPayload, LiveLapSample, LiveLapSummary, TelemetryInsight } from "../types/liveLapAnalysis";
+import type { CoachingFinding, CornerOpportunity, LiveLapAnalysis as LiveLapAnalysisPayload, LiveLapSample, LiveLapSummary, TelemetryInsight } from "../types/liveLapAnalysis";
 
 const colors: Record<Wheel, string> = { fl: "#6dd6ff", fr: "#ff8c69", rl: "#91e48f", rr: "#c7a8ff" };
 const wheelLabels: Record<Wheel, string> = { fl: "FL", fr: "FR", rl: "RL", rr: "RR" };
@@ -262,17 +262,194 @@ function SuspensionPlatform({ current, ghost, selectedTimestamp }: { current: Li
   );
 }
 
+const qualityClass = (value?: string | null) => value === "Valid" ? "good" : value === "Valid but noisy" ? "watch" : "bad";
+const trendIcon = (trend?: string | null) => trend === "Improving" ? <TrendingUp size={14} /> : trend === "Worsening" || trend === "Degrading" ? <TrendingDown size={14} /> : <ChevronRight size={14} />;
+const sampleDistance = (sample: LiveLapSample) => finite(sample.distance_pct) ?? 0;
+
+function SessionControls({ payload, selectedLap, referenceLap, setSelectedLap, setReferenceLap, mode, setMode }: {
+  payload: LiveLapAnalysisPayload;
+  selectedLap: number | null;
+  referenceLap: number | null;
+  setSelectedLap: (lap: number | null) => void;
+  setReferenceLap: (lap: number | null) => void;
+  mode: "session" | "compare";
+  setMode: (mode: "session" | "compare") => void;
+}) {
+  const sessionLabel = payload.session.session_type || "Live session";
+  const car = payload.session.vehicle_model || payload.session.vehicle_name || "Car unavailable";
+  const track = payload.session.track_name || "Track unavailable";
+  return (
+    <header className="coach-context" aria-label="Session analysis controls">
+      <div className="coach-context-identity">
+        <span>{sessionLabel}</span>
+        <strong>{track}</strong>
+        <small>{car}</small>
+      </div>
+      <div className="coach-control-group">
+        <div className="coach-mode-switch" aria-label="Analysis mode">
+          <button className={mode === "session" ? "active" : ""} onClick={() => setMode("session")} aria-pressed={mode === "session"}>Session analysis</button>
+          <button className={mode === "compare" ? "active" : ""} onClick={() => setMode("compare")} aria-pressed={mode === "compare"}>Compare laps</button>
+        </div>
+        {mode === "session" ? <div className="coach-scope"><Target size={15} /><span><strong>All clean laps</strong><small>{payload.quality?.clean_laps ?? 0} laps build this coaching model</small></span></div> : <>
+          <label><span>Lap</span><select value={selectedLap ?? ""} onChange={(event) => setSelectedLap(Number(event.target.value))}>
+            {payload.laps.map((lap) => <option value={lap.lap_number} key={lap.lap_number}>{lapOptionLabel(lap)}</option>)}
+          </select></label>
+          <label><span>Reference</span><select value={referenceLap ?? ""} onChange={(event) => setReferenceLap(Number(event.target.value))}>
+            {payload.laps.filter((lap) => lap.valid_lap !== false).map((lap) => <option value={lap.lap_number} key={lap.lap_number}>Lap {lap.lap_number} · {lap.role || lapStatus(lap)}</option>)}
+          </select></label>
+        </>}
+      </div>
+      <div className="coach-context-counts">
+        <span><b>{payload.quality?.clean_laps ?? 0}</b> clean</span>
+        <span><b>{payload.quality?.excluded_laps ?? 0}</b> excluded</span>
+        <span className={qualityClass(payload.quality?.status)}><ShieldCheck size={14} /> {payload.quality?.status || "Collecting"}</span>
+      </div>
+    </header>
+  );
+}
+
+function SessionVerdict({ payload }: { payload: LiveLapAnalysisPayload }) {
+  const summary = payload.session_summary;
+  const quality = payload.quality;
+  const potential = summary?.time_to_theoretical;
+  return (
+    <section className="coach-verdict" aria-labelledby="session-verdict-title">
+      <div className="coach-verdict-copy">
+        <span className="eyebrow"><Sparkles size={14} /> Session verdict</span>
+        <h2 id="session-verdict-title">{summary?.pace_trend === "Improving" ? "You got faster." : summary?.pace_trend === "Degrading" ? "Your pace dropped later." : "Your pace is stable."}</h2>
+        <p>{summary?.largest_opportunity_corner ? `Main gain: ${summary.largest_opportunity_corner}.` : "Drive more clean laps to build your coaching plan."}</p>
+        <div className={`coach-trust ${qualityClass(quality?.status)}`}><ShieldCheck size={17} /><span><strong>{quality?.status || "Collecting telemetry"}</strong><small>{quality ? `${quality.flagged_samples} of ${quality.total_samples} samples flagged · preserved for inspection` : "Quality checks will appear after a completed lap"}</small></span></div>
+      </div>
+      <div className="coach-kpi-grid">
+        <div><span>Best valid</span><strong>{formatRaceTime(summary?.best_valid_lap)}</strong><small>{summary?.best_valid_lap_number ? `Lap ${summary.best_valid_lap_number}` : "No clean lap"}</small></div>
+        <div><span>Typical pace</span><strong>{formatRaceTime(summary?.representative_pace)}</strong><small>Median clean pace</small></div>
+        <div><span>Consistency</span><strong>{fmt(summary?.robust_consistency, 3, "s")}</strong><small>Robust spread</small></div>
+        <div className="opportunity"><span>Available</span><strong>{potential != null ? `${potential.toFixed(2)}s` : "--"}</strong><small>To theoretical best</small></div>
+      </div>
+    </section>
+  );
+}
+
+function OpportunityMap({ corners, selectedCorner, onSelect }: { corners: CornerOpportunity[]; selectedCorner: number | null; onSelect: (corner: number) => void }) {
+  const max = Math.max(...corners.map((corner) => corner.opportunity), 0.01);
+  return (
+    <section className="coach-opportunity-map" aria-labelledby="opportunity-map-title">
+      <div className="coach-section-heading"><div><span>02 · Circuit read</span><h2 id="opportunity-map-title">Where the time goes</h2></div><p>All clean laps · repeatable loss only</p></div>
+      {corners.length ? <div className="corner-ribbon" role="list" aria-label="Circuit corner opportunities">
+        {corners.map((corner) => (
+          <button key={corner.id} role="listitem" className={`corner-node ${selectedCorner === corner.id ? "active" : ""}`} onClick={() => onSelect(corner.id)} style={{ "--loss": `${Math.max(18, corner.opportunity / max * 100)}%` } as CSSProperties}>
+            <span className="corner-node-index">T{corner.id}</span><i aria-hidden="true" />
+            <span className="corner-node-top"><strong>{corner.opportunity.toFixed(2)}s</strong><em>{corner.affected_laps}/{corner.clean_laps} laps</em></span>
+            <span className="corner-signals">{(corner.signals || [{ category: corner.category, phase: corner.phase, opportunity: corner.opportunity }]).slice(0, 2).map((signal) => <span key={`${signal.phase}-${signal.category}`}><small>{signal.phase} · {signal.category}</small><b>{signal.opportunity.toFixed(2)}s</b></span>)}</span>
+            <em>{corner.confidence} confidence · {trendIcon(corner.trend)} {corner.trend}</em>
+          </button>
+        ))}
+      </div> : <EmptyState detail="Corner opportunities appear after enough clean laps establish a repeatable reference." />}
+    </section>
+  );
+}
+
+function FindingList({ findings, activeId, onSelect, showAll, setShowAll }: { findings: CoachingFinding[]; activeId: string | null; onSelect: (finding: CoachingFinding) => void; showAll: boolean; setShowAll: (value: boolean) => void }) {
+  const visible = showAll ? findings : findings.slice(0, 8);
+  return (
+    <aside className="coach-findings" aria-labelledby="findings-title">
+      <div className="coach-findings-head"><div><span>03 · Priorities</span><h2 id="findings-title">Next gains</h2></div><small>{findings.length} supported findings</small></div>
+      <div className="coach-finding-list">
+        {visible.map((finding, index) => <button key={finding.id} className={`coach-finding ${activeId === finding.id ? "active" : ""}`} onClick={() => onSelect(finding)}>
+          <span className="finding-rank">0{index + 1}</span>
+          <span className="finding-main"><small>{finding.phase} · {finding.category}</small><strong>{finding.title}</strong></span>
+          <span className="finding-proof"><b>{finding.opportunity.toFixed(2)}s</b><small>{finding.confidence} confidence</small><em>{trendIcon(finding.trend)} {finding.trend}</em></span>
+        </button>)}
+        {!visible.length && <EmptyState detail="No repeatable coaching opportunity clears the current confidence floor." />}
+      </div>
+      {findings.length > 8 && <button className="coach-show-all" onClick={() => setShowAll(!showAll)}>{showAll ? "Show top eight" : `Show all ${findings.length}`}</button>}
+    </aside>
+  );
+}
+
+function focusedRows(current: LiveLapSample[], reference: LiveLapSample[], finding: CoachingFinding) {
+  const ref = reference.filter((sample) => sampleDistance(sample) >= finding.start_pct && sampleDistance(sample) <= finding.end_pct);
+  const nearest = (distance: number) => ref.reduce<LiveLapSample | null>((best, sample) => !best || Math.abs(sampleDistance(sample) - distance) < Math.abs(sampleDistance(best) - distance) ? sample : best, null);
+  return current.filter((sample) => sampleDistance(sample) >= finding.start_pct && sampleDistance(sample) <= finding.end_pct).map((sample) => {
+    const ghost = nearest(sampleDistance(sample));
+    return {
+      x: sampleDistance(sample), speed: finite(sample.speed_kph), speedRef: finite(ghost?.speed_kph), brake: finite(sample.brake_pct), brakeRef: finite(ghost?.brake_pct),
+      throttle: finite(sample.throttle_pct), throttleRef: finite(ghost?.throttle_pct), steering: finite(sample.steering_angle) != null ? Number(sample.steering_angle) * 100 : null,
+      steeringRef: finite(ghost?.steering_angle) != null ? Number(ghost?.steering_angle) * 100 : null, g: finite(sample.g_force_lat) != null ? Math.abs(Number(sample.g_force_lat)) * 35 : null,
+      gRef: finite(ghost?.g_force_lat) != null ? Math.abs(Number(ghost?.g_force_lat)) * 35 : null,
+    };
+  });
+}
+
+const metricLabel: Record<string, string> = { segment_time_delta: "Segment delta", brake_release_delta_pct: "Brake release", throttle_delta_pct: "Throttle point", exit_speed_delta: "Exit speed", coast_time_delta: "Coasting", steering_correction_delta: "Corrections" };
+function metricValue(key: string, value?: number | null) {
+  if (value == null) return "--";
+  if (key === "segment_time_delta" || key === "coast_time_delta") return `${value >= 0 ? "+" : ""}${value.toFixed(2)}s`;
+  if (key === "exit_speed_delta") return `${value >= 0 ? "+" : ""}${value.toFixed(1)} km/h`;
+  if (key === "steering_correction_delta") return `${value >= 0 ? "+" : ""}${value.toFixed(0)}`;
+  return `${value >= 0 ? "+" : ""}${value.toFixed(1)}% lap`;
+}
+
+function FindingDetail({ finding, current, reference }: { finding: CoachingFinding | null; current: LiveLapSample[]; reference: LiveLapSample[] }) {
+  if (!finding) return <section className="coach-detail"><EmptyState detail="Select a coaching finding to inspect the exact telemetry evidence." /></section>;
+  const rows = focusedRows(current, reference, finding);
+  const channels = new Set(finding.relevant_channels);
+  return (
+    <section className="coach-detail" aria-labelledby="finding-detail-title">
+      <div className="coach-detail-title"><div><span>04 · Corner coach</span><h2 id="finding-detail-title">{finding.title}</h2><p>{finding.summary}{finding.affected_lap_numbers?.length ? ` Seen on laps ${finding.affected_lap_numbers.join(", ")}.` : ""}</p></div><div className={`confidence-stamp ${finding.confidence.toLowerCase()}`}><strong>{finding.confidence}</strong><span>{finding.confidence_score}% confidence</span><small>{finding.affected_laps}/{finding.clean_laps} clean laps</small></div></div>
+      <div className="coach-explanation">
+        <div><span>Seen</span><p>{finding.what_happened}</p></div>
+        <div className="coach-try"><span>Do this</span><p>{finding.primary_action}</p></div>
+        {finding.avoid && <div className="coach-avoid"><span>Avoid</span><p>{finding.avoid}</p></div>}
+      </div>
+      <div className="coach-trace-wrap">
+        <div className="coach-trace-head"><div><LineChartIcon size={17} /><span><strong>{finding.phase} evidence</strong><small>Representative pattern vs strongest clean pass</small></span></div><span className="trace-range">{finding.start_pct.toFixed(1)}–{finding.end_pct.toFixed(1)}%</span></div>
+        {rows.length ? <ResponsiveContainer width="100%" height={330}><LineChart data={rows} margin={{ top: 12, right: 12, left: 0, bottom: 4 }}>
+          <CartesianGrid stroke="#253039" vertical={false} /><XAxis dataKey="x" stroke="#72808a" tickFormatter={(value) => `${Number(value).toFixed(1)}%`} /><YAxis yAxisId="speed" stroke="#8d999f" width={42} /><YAxis yAxisId="input" orientation="right" domain={[0, 100]} stroke="#8d999f" width={38} />
+          <Tooltip contentStyle={{ background: "#0c1115", border: "1px solid #34414a" }} labelFormatter={(value) => `${Number(value).toFixed(2)}% lap distance`} />
+          {channels.has("speed") && <><Line yAxisId="speed" dataKey="speedRef" name="Reference speed" stroke="#55c7f7" strokeWidth={2} dot={false} connectNulls /><Line yAxisId="speed" dataKey="speed" name="Selected speed" stroke="#f0eadc" strokeWidth={2.4} dot={false} connectNulls /></>}
+          {channels.has("brake") && <><Line yAxisId="input" dataKey="brakeRef" name="Reference brake" stroke="#55c7f7" strokeDasharray="4 4" dot={false} /><Line yAxisId="input" dataKey="brake" name="Selected brake" stroke="#ff8c69" dot={false} /></>}
+          {channels.has("throttle") && <><Line yAxisId="input" dataKey="throttleRef" name="Reference throttle" stroke="#55c7f7" strokeDasharray="4 4" dot={false} /><Line yAxisId="input" dataKey="throttle" name="Selected throttle" stroke="#6ee7a8" dot={false} /></>}
+          {channels.has("steering") && <Line yAxisId="input" dataKey="steering" name="Steering ×100" stroke="#f3b642" dot={false} />}
+          {channels.has("g_force") && <Line yAxisId="input" dataKey="g" name="Sustained lateral G" stroke="#b59cff" dot={false} />}
+          <Legend />
+        </LineChart></ResponsiveContainer> : <EmptyState detail="This lap does not contain enough clean samples inside the selected segment." />}
+      </div>
+      <div className="coach-evidence-footer">
+        <div className="segment-minimap"><span>Segment location</span><div><i style={{ left: `${finding.start_pct}%`, width: `${Math.max(2, finding.end_pct - finding.start_pct)}%` }} /></div><small>Start / finish</small></div>
+        <div className="coach-metrics">{Object.entries(finding.metrics).filter(([, value]) => value != null && Math.abs(Number(value)) > 0.001).map(([key, value]) => <div key={key}><span>{metricLabel[key] || key}</span><strong>{metricValue(key, value)}</strong></div>)}</div>
+      </div>
+    </section>
+  );
+}
+
+function LapQualityLedger({ laps }: { laps: LiveLapSummary[] }) {
+  return <section className="coach-ledger" aria-labelledby="session-laps-title"><div className="coach-ledger-head"><span><ShieldCheck size={17} /><strong id="session-laps-title">Session laps</strong></span><small>{laps.filter((lap) => lap.valid_lap !== false).length} used · {laps.filter((lap) => lap.valid_lap === false).length} excluded</small></div>
+    <div className="table-wrap"><table><thead><tr><th>Lap</th><th>Use</th><th>Time</th><th>Data</th><th>Vs usual</th><th>Reason</th></tr></thead><tbody>{laps.map((lap) => <tr key={lap.lap_number}><td><strong>#{lap.lap_number}</strong></td><td>{lap.role || "--"}</td><td>{formatRaceTime(lap.lap_time)}</td><td><span className={`quality-word ${qualityClass(lap.quality_state)}`}>{lap.quality_state || lapStatus(lap)}</span></td><td>{signed(lap.gap_to_representative)}</td><td>{lap.reason || `${lap.flagged_samples || 0} samples ignored · ${lap.quality_score ?? "--"}% quality`}</td></tr>)}</tbody></table></div>
+  </section>;
+}
+
 export function LiveLapAnalysis() {
   const [payload, setPayload] = useState<LiveLapAnalysisPayload | null>(null);
   const [selectedLap, setSelectedLap] = useState<number | null>(null);
   const [referenceLap, setReferenceLap] = useState<number | null>(null);
   const [selectedTimestamp, setSelectedTimestamp] = useState<number | null>(null);
   const [status, setStatus] = useState("Waiting for valid live laps");
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [selectedCorner, setSelectedCorner] = useState<number | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const [analysisMode, setAnalysisMode] = useState<"session" | "compare">("session");
+
+  useEffect(() => {
+    window.scrollTo({ top: 0, behavior: "auto" });
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
-    const load = () => {
-      void api.liveLapAnalysis(selectedLap, referenceLap).then((data) => {
+    let timer: number | undefined;
+    const load = async () => {
+      try {
+        const data = await api.liveLapAnalysis(selectedLap, referenceLap);
         if (cancelled) return;
         setPayload(data);
         setSelectedLap((current) => data.laps.some((lap) => lap.lap_number === current) ? current : data.selected_lap_number ?? null);
@@ -285,32 +462,59 @@ export function LiveLapAnalysis() {
           return stillInLap ? current : data.insights.find((item) => item.timestamp != null)?.timestamp ?? data.current_lap_data[0]?.lap_time ?? null;
         });
         setStatus(data.laps.length ? "Live lap analysis ready" : "Complete a lap to unlock analysis");
-      }).catch((exc) => !cancelled && setStatus(exc instanceof Error ? exc.message : String(exc)));
+      } catch (exc) {
+        if (!cancelled) setStatus(exc instanceof Error ? exc.message : String(exc));
+      } finally {
+        if (!cancelled) timer = window.setTimeout(load, 2500);
+      }
     };
-    load();
-    const id = window.setInterval(load, 2500);
+    void load();
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      if (timer != null) window.clearTimeout(timer);
     };
   }, [selectedLap, referenceLap]);
 
   const insights = useMemo(() => splitInsights(payload?.insights || []), [payload?.insights]);
+  const findings = useMemo(() => (payload?.findings || []).filter((finding) => selectedCorner == null || finding.corner_id === selectedCorner), [payload?.findings, selectedCorner]);
+  const selectedFinding = useMemo(() => (payload?.findings || []).find((finding) => finding.id === selectedFindingId) || findings[0] || null, [payload?.findings, selectedFindingId, findings]);
+  useEffect(() => {
+    if (selectedFinding && selectedFinding.id !== selectedFindingId) setSelectedFindingId(selectedFinding.id);
+  }, [selectedFinding, selectedFindingId]);
   if (!payload) return <div className="page grid"><section className="card span-12"><EmptyState detail={status} /></section></div>;
   const handleInsight = (insight: TelemetryInsight) => {
     if (insight.timestamp != null) setSelectedTimestamp(insight.timestamp);
   };
-  return (
-    <div className="page grid lap-analysis-page">
-      <ContextHeader payload={payload} selectedLap={selectedLap} referenceLap={referenceLap} setSelectedLap={setSelectedLap} setReferenceLap={setReferenceLap} />
-      {!payload.laps.length && <section className="card span-12"><EmptyState detail={status} /></section>}
-      <InsightCard title="Driver Feedback" insights={insights.driver} selectedTimestamp={selectedTimestamp} onSelect={handleInsight} />
-      <InsightCard title="Car Setup Diagnostics" insights={insights.setup} selectedTimestamp={selectedTimestamp} onSelect={handleInsight} />
-      <FrictionCircle current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
-      <TireHealthMatrix samples={payload.current_lap_data} selectedTimestamp={selectedTimestamp} />
-      <HandlingDiagram current={payload.current_lap_data} selectedTimestamp={selectedTimestamp} kus={payload.metrics.understeer_gradient} />
-      <PowerOutputChart current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
-      <SuspensionPlatform current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
-    </div>
-  );
+  const chooseCorner = (corner: number) => { setSelectedCorner((current) => current === corner ? null : corner); const match = (payload.findings || []).find((finding) => finding.corner_id === corner); if (match) setSelectedFindingId(match.id); };
+  const changeMode = (mode: "session" | "compare") => {
+    setAnalysisMode(mode);
+    if (mode === "session") {
+      setSelectedLap(payload.references?.representative_pace_lap ?? payload.session_summary?.representative_lap_number ?? selectedLap);
+      setReferenceLap(payload.references?.personal_best_lap ?? referenceLap);
+    }
+  };
+  return <div className="page lap-analysis-page coach-page">
+    <SessionControls payload={payload} selectedLap={selectedLap} referenceLap={referenceLap} setSelectedLap={setSelectedLap} setReferenceLap={setReferenceLap} mode={analysisMode} setMode={changeMode} />
+    {!payload.laps.length ? <section className="coach-empty"><Flag size={26} /><EmptyState detail={status} /></section> : <>
+      <SessionVerdict payload={payload} />
+      <OpportunityMap corners={payload.corner_opportunities || []} selectedCorner={selectedCorner} onSelect={chooseCorner} />
+      <div className="coach-workspace">
+        <FindingList findings={findings} activeId={selectedFinding?.id || null} onSelect={(finding) => setSelectedFindingId(finding.id)} showAll={showAll} setShowAll={setShowAll} />
+        <FindingDetail finding={selectedFinding} current={payload.current_lap_data} reference={payload.reference_lap_data} />
+      </div>
+      <section className="coach-explorer" aria-labelledby="telemetry-explorer-title">
+        <div className="coach-section-heading"><div><span>05 · Telemetry explorer</span><h2 id="telemetry-explorer-title">Inspect the engineering layer</h2></div><p>These full-lap views preserve the raw comparison tools. Flagged samples remain visible but are excluded from coaching baselines.</p></div>
+        <div className="coach-graph-notes"><div><Gauge size={17} /><span><strong>G-force</strong><small>Robust P99: {fmt(payload.session_summary?.robust_peak_combined_g, 2, "G")}. Sustained load matters more than an isolated spike.</small></span></div><div><CircleGauge size={17} /><span><strong>Handling</strong><small>Compare the selected lap with your own clean reference; inferred balance signatures are possibilities, not setup verdicts.</small></span></div><div><Info size={17} /><span><strong>Selection sync</strong><small>Legacy event findings still move the event marker across these full-lap engineering plots.</small></span></div></div>
+        <div className="grid coach-explorer-grid">
+          <FrictionCircle current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
+          <TireHealthMatrix samples={payload.current_lap_data} selectedTimestamp={selectedTimestamp} />
+          <HandlingDiagram current={payload.current_lap_data} selectedTimestamp={selectedTimestamp} kus={payload.metrics.understeer_gradient} />
+          <PowerOutputChart current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
+          <SuspensionPlatform current={payload.current_lap_data} ghost={payload.reference_lap_data} selectedTimestamp={selectedTimestamp} />
+          <InsightCard title="Secondary diagnostics" insights={[...insights.driver, ...insights.setup]} selectedTimestamp={selectedTimestamp} onSelect={handleInsight} />
+        </div>
+      </section>
+      <LapQualityLedger laps={payload.laps} />
+    </>}
+  </div>;
 }
