@@ -1,0 +1,664 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="LMU Telemetry turns live and recorded Le Mans Ultimate data into race decisions and driver improvement.">
+  <meta name="theme-color" content="#071017">
+  <title>LMU Telemetry — Every lap, read clearly</title>
+  <link rel="icon" href="imgs/lmu-telemetry-icon.png">
+  <style>
+    :root {
+      --ink: #071017;
+      --ink-2: #0a151d;
+      --surface: #0e1b24;
+      --line: #243643;
+      --line-soft: rgba(115, 149, 169, .18);
+      --text: #eef2ee;
+      --muted: #8ea0ab;
+      --cyan: #55d6ff;
+      --amber: #ffbd3e;
+      --green: #67e2a5;
+      --red: #ff6262;
+      --pad: clamp(1.25rem, 4vw, 5rem);
+      --display: "Arial Narrow", "Roboto Condensed", "Bahnschrift Condensed", Impact, sans-serif;
+      --body: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; background: var(--ink); }
+    body {
+      margin: 0;
+      overflow-x: hidden;
+      color: var(--text);
+      background:
+        linear-gradient(90deg, transparent calc(100% - 1px), rgba(85, 214, 255, .035) 1px) 0 0 / 8vw 100%,
+        linear-gradient(rgba(85, 214, 255, .026) 1px, transparent 1px) 0 0 / 100% 8rem,
+        var(--ink);
+      font-family: var(--body);
+      -webkit-font-smoothing: antialiased;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      z-index: -1;
+      pointer-events: none;
+      background: radial-gradient(circle at 72% 10%, rgba(85, 214, 255, .08), transparent 33%);
+    }
+    img { display: block; max-width: 100%; }
+    a { color: inherit; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    :focus-visible { outline: 2px solid var(--cyan); outline-offset: 5px; }
+    ::selection { color: var(--ink); background: var(--cyan); }
+
+    .skip-link {
+      position: fixed;
+      top: 1rem;
+      left: 1rem;
+      z-index: 100;
+      padding: .7rem 1rem;
+      transform: translateY(-180%);
+      color: var(--ink);
+      background: var(--cyan);
+      text-decoration: none;
+      font-weight: 800;
+    }
+    .skip-link:focus { transform: translateY(0); }
+
+    .progress {
+      position: fixed;
+      top: 0;
+      right: clamp(.7rem, 1.5vw, 1.5rem);
+      z-index: 50;
+      width: 1px;
+      height: 100vh;
+      background: rgba(142, 160, 171, .18);
+      pointer-events: none;
+    }
+    .progress__fill {
+      display: block;
+      width: 100%;
+      height: 0;
+      background: linear-gradient(var(--cyan), var(--amber));
+      box-shadow: 0 0 12px rgba(85, 214, 255, .55);
+    }
+    .progress__car {
+      position: absolute;
+      top: 0;
+      right: -3px;
+      width: 7px;
+      height: 16px;
+      border: 1px solid var(--cyan);
+      background: var(--ink);
+      transform: translateY(-50%);
+    }
+
+    .nav {
+      position: absolute;
+      inset: 0 0 auto;
+      z-index: 10;
+      height: 5.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 2rem;
+      padding: 0 var(--pad);
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .brand { display: flex; align-items: center; gap: .8rem; text-decoration: none; }
+    .brand img { width: 1.7rem; height: 1.7rem; image-rendering: pixelated; }
+    .brand__name {
+      font-family: var(--display);
+      font-size: 1.05rem;
+      font-weight: 900;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+    }
+    .brand__tag { color: var(--muted); font-size: .65rem; letter-spacing: .13em; text-transform: uppercase; }
+    .nav__links { display: flex; gap: clamp(1rem, 2.6vw, 2.8rem); }
+    .nav__links a {
+      color: var(--muted);
+      font-size: .68rem;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-decoration: none;
+      text-transform: uppercase;
+      transition: color .2s ease;
+    }
+    .nav__links a:hover { color: var(--text); }
+
+    .hero {
+      position: relative;
+      min-height: min(58rem, 100svh);
+      display: grid;
+      align-content: center;
+      padding: 8.5rem var(--pad) 5rem;
+      isolation: isolate;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0;
+      height: 24%;
+      z-index: -1;
+      background: linear-gradient(transparent, var(--ink));
+    }
+    .hero__trace {
+      position: absolute;
+      inset: 20% -6% auto 34%;
+      z-index: -2;
+      height: 42%;
+      opacity: .45;
+    }
+    .hero__trace path { stroke-dasharray: 1400; stroke-dashoffset: 1400; animation: trace 2.4s .4s ease forwards; }
+    @keyframes trace { to { stroke-dashoffset: 0; } }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: .65rem;
+      margin: 0 0 1.3rem;
+      color: var(--amber);
+      font-size: .67rem;
+      font-weight: 900;
+      letter-spacing: .2em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before { content: ""; width: 1.8rem; height: 1px; background: currentColor; }
+    h1, h2, h3, p { margin-top: 0; }
+    h1 {
+      max-width: 10ch;
+      margin-bottom: 1.5rem;
+      font-family: var(--display);
+      font-size: clamp(4.5rem, 11vw, 10rem);
+      font-stretch: condensed;
+      font-weight: 900;
+      letter-spacing: -.055em;
+      line-height: .78;
+      text-transform: uppercase;
+    }
+    h1 span {
+      position: relative;
+      display: inline-block;
+      color: var(--cyan);
+      text-shadow: 3px 0 rgba(255, 189, 62, .2);
+    }
+    h1 span::after {
+      content: "";
+      position: absolute;
+      inset: 44% -3% auto;
+      height: .09em;
+      background: var(--cyan);
+      opacity: .45;
+      transform: scaleX(0);
+      transform-origin: left;
+      animation: scan 1s 1.4s ease forwards;
+    }
+    @keyframes scan { to { transform: scaleX(1); } }
+    .hero__copy {
+      max-width: 36rem;
+      color: #bac6cb;
+      font-size: clamp(1rem, 1.5vw, 1.25rem);
+      line-height: 1.55;
+    }
+    .hero__action {
+      display: inline-flex;
+      align-items: center;
+      gap: 1.2rem;
+      width: max-content;
+      margin-top: 1.5rem;
+      padding: .95rem 0;
+      border-bottom: 1px solid var(--cyan);
+      color: var(--text);
+      font-size: .72rem;
+      font-weight: 900;
+      letter-spacing: .16em;
+      text-decoration: none;
+      text-transform: uppercase;
+    }
+    .hero__action::after { content: "↓"; color: var(--cyan); font-size: 1.1rem; transition: transform .2s ease; }
+    .hero__action:hover::after { transform: translateY(.25rem); }
+    .hero__telemetry {
+      position: absolute;
+      right: var(--pad);
+      bottom: 2.2rem;
+      display: grid;
+      grid-template-columns: repeat(3, auto);
+      gap: clamp(1rem, 3vw, 3.5rem);
+      color: var(--muted);
+      font-size: .62rem;
+      letter-spacing: .11em;
+      text-transform: uppercase;
+    }
+    .hero__telemetry strong { display: block; margin-bottom: .3rem; color: var(--text); font-size: .8rem; letter-spacing: .04em; }
+
+    .stage {
+      position: relative;
+      min-height: 100svh;
+      padding: clamp(6rem, 10vw, 10rem) var(--pad);
+      border-top: 1px solid var(--line-soft);
+    }
+    .stage__head {
+      display: grid;
+      grid-template-columns: minmax(11rem, .55fr) minmax(18rem, 1fr);
+      gap: clamp(2rem, 8vw, 10rem);
+      align-items: end;
+      max-width: 90rem;
+      margin-bottom: clamp(2.5rem, 6vw, 6rem);
+    }
+    .stage__number {
+      color: var(--cyan);
+      font-family: var(--display);
+      font-size: clamp(3.5rem, 7vw, 6rem);
+      font-weight: 900;
+      letter-spacing: -.04em;
+      line-height: .8;
+    }
+    .stage__kicker {
+      display: block;
+      margin-top: 1rem;
+      color: var(--muted);
+      font-size: .64rem;
+      font-weight: 800;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+    }
+    h2 {
+      max-width: 12ch;
+      margin-bottom: 1.25rem;
+      font-family: var(--display);
+      font-size: clamp(3rem, 6.5vw, 7rem);
+      font-weight: 900;
+      letter-spacing: -.045em;
+      line-height: .85;
+      text-transform: uppercase;
+    }
+    .stage__intro { max-width: 42rem; color: #b3c0c6; font-size: clamp(1rem, 1.4vw, 1.2rem); line-height: 1.65; }
+    .proof {
+      position: relative;
+      margin: 0;
+      border: 1px solid #253c4a;
+      background: #081017;
+      box-shadow: 0 2.5rem 8rem rgba(0, 0, 0, .36);
+      overflow: hidden;
+    }
+    .proof::before {
+      content: "LIVE PRODUCT SURFACE";
+      position: absolute;
+      top: 0;
+      right: 0;
+      z-index: 2;
+      padding: .55rem .75rem;
+      color: var(--ink);
+      background: var(--cyan);
+      font-size: .52rem;
+      font-weight: 900;
+      letter-spacing: .14em;
+    }
+    .proof img { width: 100%; height: auto; }
+    .proof figcaption {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      padding: .85rem 1rem;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: .62rem;
+      letter-spacing: .1em;
+      text-transform: uppercase;
+    }
+    .proof figcaption strong { color: var(--text); }
+    .reveal { opacity: 0; transform: translateY(2rem); transition: opacity .7s ease, transform .9s cubic-bezier(.2,.7,.2,1); }
+    .reveal.is-visible { opacity: 1; transform: none; }
+
+    .live { padding-top: 8rem; }
+    .live .proof { margin-left: clamp(0rem, 7vw, 8rem); }
+    .live__strip {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 1px;
+      margin: 1px 0 0 clamp(0rem, 7vw, 8rem);
+      background: var(--line);
+    }
+    .live__strip > div {
+      padding: clamp(1.2rem, 2.5vw, 2.2rem);
+      background: var(--ink-2);
+    }
+    .live__strip strong { display: block; margin-bottom: .55rem; color: var(--amber); font-size: .65rem; letter-spacing: .15em; text-transform: uppercase; }
+    .live__strip p { margin: 0; color: var(--muted); line-height: 1.55; }
+
+    .strategy { background: linear-gradient(110deg, rgba(255, 189, 62, .045), transparent 42%); }
+    .strategy .stage__number { color: var(--amber); }
+    .strategy .proof { border-color: rgba(255, 189, 62, .32); }
+    .strategy .proof::before { background: var(--amber); }
+    .strategy__note {
+      max-width: 36rem;
+      margin: 2rem 0 0 auto;
+      padding-left: 1.5rem;
+      border-left: 1px solid var(--amber);
+      color: var(--muted);
+      line-height: 1.65;
+    }
+
+    .coach { overflow: hidden; }
+    .coach::before {
+      content: "COACH";
+      position: absolute;
+      top: 3rem;
+      right: -1vw;
+      color: rgba(255, 189, 62, .035);
+      font-family: var(--display);
+      font-size: clamp(9rem, 28vw, 30rem);
+      font-weight: 900;
+      line-height: 1;
+    }
+    .coach .proof { margin-right: clamp(-1rem, -3vw, -3rem); }
+    .coach .proof::before { color: var(--ink); background: var(--green); }
+    .coach__callout {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      margin-top: 1px;
+      background: var(--line);
+    }
+    .coach__callout div { min-height: 9rem; padding: 1.5rem; background: var(--ink-2); }
+    .coach__callout span { color: var(--amber); font-size: .6rem; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
+    .coach__callout p { margin: 2.1rem 0 0; color: var(--text); font-weight: 700; }
+
+    .analysis { background: #081119; }
+    .analysis__layout {
+      display: grid;
+      grid-template-columns: minmax(16rem, .42fr) minmax(0, 1fr);
+      gap: clamp(2rem, 6vw, 7rem);
+      align-items: start;
+    }
+    .analysis__copy { position: sticky; top: 3rem; }
+    .analysis__copy h2 { font-size: clamp(3.2rem, 6vw, 6.5rem); }
+    .analysis__copy p { max-width: 31rem; color: #b3c0c6; line-height: 1.7; }
+    .analysis__proofs { display: grid; gap: clamp(1.5rem, 4vw, 4rem); }
+    .analysis__proofs .proof:nth-child(2) { margin-left: clamp(0rem, 6vw, 6rem); }
+    .analysis__proofs .proof:nth-child(2)::before { background: var(--amber); }
+
+    .history { min-height: auto; }
+    .history__grid {
+      display: grid;
+      grid-template-columns: 1.3fr .7fr;
+      gap: clamp(1.25rem, 3vw, 3rem);
+      align-items: stretch;
+    }
+    .history__grid .proof:first-child img { min-height: 20rem; object-fit: cover; object-position: left top; }
+    .history__rail {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      border-top: 2px solid var(--amber);
+      background: var(--surface);
+    }
+    .history__rail img { width: 100%; min-height: 8.2rem; object-fit: cover; object-position: left; }
+    .history__rail div { padding: clamp(1.5rem, 3vw, 3rem); border-top: 1px solid var(--line); }
+    .history__rail h3 {
+      max-width: 10ch;
+      margin-bottom: 1rem;
+      font-family: var(--display);
+      font-size: clamp(2rem, 3.5vw, 4rem);
+      letter-spacing: -.035em;
+      line-height: .9;
+      text-transform: uppercase;
+    }
+    .history__rail p { color: var(--muted); line-height: 1.65; }
+
+    .support {
+      padding: clamp(5rem, 10vw, 10rem) var(--pad);
+      border-top: 1px solid var(--line-soft);
+      background: linear-gradient(180deg, var(--ink), #0a141b);
+    }
+    .support__label { margin-bottom: 2rem; color: var(--muted); font-size: .65rem; font-weight: 900; letter-spacing: .18em; text-transform: uppercase; }
+    .support__grid { display: grid; grid-template-columns: repeat(4, 1fr); border: 1px solid var(--line); }
+    .support__item { min-height: 14rem; padding: clamp(1.25rem, 2.5vw, 2.5rem); border-right: 1px solid var(--line); background: rgba(14, 27, 36, .55); }
+    .support__item:last-child { border-right: 0; }
+    .support__item span { color: var(--cyan); font-family: var(--display); font-size: 2rem; font-weight: 900; }
+    .support__item h3 { margin: 2rem 0 .75rem; font-size: 1rem; letter-spacing: .02em; }
+    .support__item p { margin: 0; color: var(--muted); font-size: .86rem; line-height: 1.6; }
+
+    .footer {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 2rem;
+      align-items: end;
+      min-height: 55svh;
+      padding: clamp(5rem, 10vw, 10rem) var(--pad) 3rem;
+      border-top: 1px solid var(--line);
+    }
+    .footer h2 { max-width: 9ch; margin: 0; color: var(--text); font-size: clamp(4rem, 9vw, 9rem); }
+    .footer h2 span { color: var(--amber); }
+    .footer__meta { color: var(--muted); font-size: .65rem; letter-spacing: .14em; text-align: right; text-transform: uppercase; }
+    .footer__meta strong { display: block; margin-bottom: .45rem; color: var(--green); }
+
+    @media (max-width: 900px) {
+      .nav__links { display: none; }
+      .hero { min-height: 48rem; }
+      .hero__telemetry { display: none; }
+      .hero__trace { inset: 34% -40% auto 8%; height: 30%; opacity: .25; }
+      .stage__head, .analysis__layout { grid-template-columns: 1fr; gap: 2rem; }
+      .stage__number { font-size: 3rem; }
+      .analysis__copy { position: static; }
+      .history__grid { grid-template-columns: 1fr; }
+      .support__grid { grid-template-columns: repeat(2, 1fr); }
+      .support__item:nth-child(2) { border-right: 0; }
+      .support__item:nth-child(-n+2) { border-bottom: 1px solid var(--line); }
+    }
+
+    @media (max-width: 580px) {
+      :root { --pad: 1.1rem; }
+      .nav { height: 4.5rem; }
+      .brand__tag { display: none; }
+      .hero { min-height: 43rem; padding-top: 7rem; }
+      h1 { font-size: clamp(4.1rem, 22vw, 6.5rem); }
+      h2 { font-size: clamp(2.8rem, 15vw, 4.4rem); }
+      .stage { min-height: auto; padding-top: 6rem; padding-bottom: 6rem; }
+      .proof { margin-right: -.65rem !important; margin-left: -.65rem !important; }
+      .proof::before { display: none; }
+      .proof figcaption { display: block; }
+      .proof figcaption span { display: block; margin-top: .35rem; }
+      .live__strip { grid-template-columns: 1fr; margin-left: 0; }
+      .coach__callout { grid-template-columns: 1fr; }
+      .coach__callout div { min-height: auto; }
+      .coach__callout p { margin-top: 1rem; }
+      .history__grid .proof:first-child img { min-height: 13rem; }
+      .support__grid { grid-template-columns: 1fr; }
+      .support__item { min-height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+      .support__item:last-child { border-bottom: 0; }
+      .support__item h3 { margin-top: 1rem; }
+      .footer { grid-template-columns: 1fr; min-height: 42svh; }
+      .footer__meta { text-align: left; }
+      .progress { right: .35rem; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+      .reveal { opacity: 1; transform: none; }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to product tour</a>
+  <div class="progress" aria-hidden="true"><span class="progress__fill"></span><span class="progress__car"></span></div>
+
+  <header class="nav">
+    <a class="brand" href="#top" aria-label="LMU Telemetry home">
+      <img src="imgs/lmu-telemetry-icon.png" alt="">
+      <span><span class="brand__name">LMU Telemetry</span><br><span class="brand__tag">Race intelligence</span></span>
+    </a>
+    <nav class="nav__links" aria-label="Product tour">
+      <a href="#live">Live</a>
+      <a href="#strategy">Strategy</a>
+      <a href="#coach">Coaching</a>
+      <a href="#analysis">Analysis</a>
+      <a href="#history">History</a>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="hero" id="top" aria-labelledby="hero-title">
+      <svg class="hero__trace" viewBox="0 0 1200 360" fill="none" aria-hidden="true">
+        <path d="M0 286C112 281 121 118 250 125C384 132 352 308 484 299C618 290 556 38 703 45C828 51 828 254 945 252C1059 251 1091 132 1200 139" stroke="#55d6ff" stroke-width="2"/>
+        <path d="M0 303C122 299 128 149 252 153C366 157 386 286 491 278C619 268 584 69 705 73C824 76 848 233 950 229C1060 225 1095 161 1200 165" stroke="#ffbd3e" stroke-width="1" opacity=".55"/>
+      </svg>
+      <p class="eyebrow">Telemetry command center</p>
+      <h1 id="hero-title">Every lap.<br>Read <span>clearly.</span></h1>
+      <p class="hero__copy">LMU Telemetry turns live and recorded Le Mans Ultimate data into race decisions, faster laps, and a complete record of your driving.</p>
+      <a class="hero__action" href="#live">Start the tour</a>
+      <div class="hero__telemetry" aria-hidden="true">
+        <div><strong>Live</strong>Race control</div>
+        <div><strong>Plan</strong>Stint strategy</div>
+        <div><strong>Review</strong>Driver coaching</div>
+      </div>
+    </section>
+
+    <section class="stage live" id="live" aria-labelledby="live-title">
+      <div class="stage__head reveal">
+        <div><span class="stage__number">01</span><span class="stage__kicker">Green flag / Live mode</span></div>
+        <div>
+          <h2 id="live-title">Know the race you’re in.</h2>
+          <p class="stage__intro">Live Mode keeps position, pace, traffic, inputs, tyre condition, fuel range, and the next pit decision in one calm race-control view. The signal stays useful when the stint gets noisy.</p>
+        </div>
+      </div>
+      <figure class="proof reveal">
+        <img src="imgs/Screenshot 2026-06-22 162630.png" alt="LMU Telemetry live dashboard showing race position, nearby drivers, inputs, tyre condition, fuel and pit strategy." loading="eager">
+        <figcaption><strong>Live Dashboard</strong><span>Position · pace · traffic · tyres · fuel</span></figcaption>
+      </figure>
+      <div class="live__strip reveal">
+        <div><strong>Driver context</strong><p>Circle map, lap stats, standings, session history, X-Y plotting, and lap analysis make the field and your own pace readable from every angle.</p></div>
+        <div><strong>Race control</strong><p>Watch the pit window evolve, keep the settings tuned to your session, and move from raw timing to the next decision without changing tools.</p></div>
+      </div>
+    </section>
+
+    <section class="stage strategy" id="strategy" aria-labelledby="strategy-title">
+      <div class="stage__head reveal">
+        <div><span class="stage__number">02</span><span class="stage__kicker">Before and during / Plan mode</span></div>
+        <div>
+          <h2 id="strategy-title">Build the stint before it builds you.</h2>
+          <p class="stage__intro">Model race duration, pace, fuel use, tyre wear, service time, reserves, and pit-lane loss from live data or a recorded session. Then compare executable plans, not hopeful guesses.</p>
+        </div>
+      </div>
+      <figure class="proof reveal">
+        <img src="imgs/Screenshot 2026-06-22 164509.png" alt="LMU Telemetry live pit strategy visualization with three stints, pit laps, tyre life, fuel service, and alternative plans." loading="lazy">
+        <figcaption><strong>Live Pit Strategy</strong><span>Stints · service · tyre life · alternatives</span></figcaption>
+      </figure>
+      <p class="strategy__note reveal">Race assumptions stay visible and editable. Pace, fuel, tyre, reserve, and service models show their source and confidence so you can understand why the plan changed—not just that it changed.</p>
+    </section>
+
+    <section class="stage coach" id="coach" aria-labelledby="coach-title">
+      <div class="stage__head reveal">
+        <div><span class="stage__number">03</span><span class="stage__kicker">Chequered flag / Corner coach</span></div>
+        <div>
+          <h2 id="coach-title">Turn traces into one clear action.</h2>
+          <p class="stage__intro">Session Review finds repeatable time loss, compares it against your strongest clean pattern, and turns the evidence into a specific instruction for the next run.</p>
+        </div>
+      </div>
+      <figure class="proof reveal">
+        <img src="imgs/Screenshot 2026-06-22 164825.png" alt="LMU Telemetry corner coach showing a coasting-loss recommendation with reference and selected speed, brake and throttle traces." loading="lazy">
+        <figcaption><strong>Corner Coach</strong><span>Seen · do this · avoid · evidence</span></figcaption>
+      </figure>
+      <div class="coach__callout reveal" aria-label="Coaching workflow">
+        <div><span>01 / Detect</span><p>Separate repeatable losses from a one-off messy lap.</p></div>
+        <div><span>02 / Compare</span><p>Read speed, brake, throttle, steering, and segment delta together.</p></div>
+        <div><span>03 / Act</span><p>Leave with one corner, one cause, and one change to make.</p></div>
+      </div>
+    </section>
+
+    <section class="stage analysis" id="analysis" aria-labelledby="analysis-title">
+      <div class="analysis__layout">
+        <div class="analysis__copy reveal">
+          <p class="eyebrow">04 / Deep review</p>
+          <h2 id="analysis-title">The whole session. Still connected.</h2>
+          <p>Open a recorded session from the local database and inspect its complete channel set: lap validity, fuel, speed, RPM, inputs, assists, G-force, brakes, tyres, GPS, and metadata.</p>
+          <p>Offline CSV analysis brings MoTeC-style exploration into the same workflow, while session verdicts and prioritised gains keep the review focused on what matters next.</p>
+        </div>
+        <div class="analysis__proofs">
+          <figure class="proof reveal">
+            <img src="imgs/Screenshot 2026-06-22 160910.png" alt="LMU Telemetry session review with metadata, available telemetry channels, lap times, fuel, speed, RPM and driver input plots." loading="lazy">
+            <figcaption><strong>Session Review</strong><span>Recorded data · full channel map</span></figcaption>
+          </figure>
+          <figure class="proof reveal">
+            <img src="imgs/Screenshot 2026-06-22 164817.png" alt="LMU Telemetry session verdict showing pace trend, best valid lap, consistency, available time and corner losses." loading="lazy">
+            <figcaption><strong>Session Verdict</strong><span>Pace · consistency · priorities</span></figcaption>
+          </figure>
+        </div>
+      </div>
+    </section>
+
+    <section class="stage history" id="history" aria-labelledby="history-title">
+      <div class="stage__head reveal">
+        <div><span class="stage__number">05</span><span class="stage__kicker">Across every drive / Profile</span></div>
+        <div>
+          <h2 id="history-title">A career you can query.</h2>
+          <p class="stage__intro">Best laps link back to their exact session and source lap. Search and filter your history by track, layout, car, class, fuel, tyre wear, temperature, and speed—then reopen the evidence behind the number.</p>
+        </div>
+      </div>
+      <div class="history__grid">
+        <figure class="proof reveal">
+          <img src="imgs/Screenshot 2026-06-22 161021.png" alt="LMU Telemetry searchable best-lap history with track, car, class, lap time, validity, fuel, tyre wear, temperature and speed." loading="lazy">
+          <figcaption><strong>Best Laps</strong><span>Validated records · source-linked</span></figcaption>
+        </figure>
+        <div class="history__rail reveal">
+          <img src="imgs/Screenshot 2026-06-22 161005.png" alt="Career overview showing distance, sessions, laps, driving time, cars and tracks.">
+          <div><h3>Your own racing archive.</h3><p>Career overview, most-used cars, most-driven tracks, distance by class, and every validated personal best turn scattered sessions into a driver history with memory.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="support" aria-labelledby="support-title">
+      <p class="support__label" id="support-title">One command center / Four operating modes</p>
+      <div class="support__grid">
+        <article class="support__item reveal"><span>01</span><h3>Live Mode</h3><p>Race dashboard, circle map, lap stats, standings, history, plotting, analysis, and pit window.</p></article>
+        <article class="support__item reveal"><span>02</span><h3>Plan Mode</h3><p>Measured race assumptions, pace and wear models, stint visualization, and live strategy options.</p></article>
+        <article class="support__item reveal"><span>03</span><h3>CSV Analysis</h3><p>Offline, MoTeC-style tools for digging into recorded telemetry without losing session context.</p></article>
+        <article class="support__item reveal"><span>04</span><h3>User Profile</h3><p>Career totals, personal bests, session review, and driver coaching built from your own history.</p></article>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <h2>Drive. Read. <span>Repeat.</span></h2>
+    <p class="footer__meta"><strong>LMU Telemetry</strong>Built for Le Mans Ultimate<br>Race intelligence, lap after lap</p>
+  </footer>
+
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const fill = document.querySelector('.progress__fill');
+      const car = document.querySelector('.progress__car');
+      const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+      const updateProgress = () => {
+        const available = root.scrollHeight - window.innerHeight;
+        const progress = available > 0 ? Math.min(1, window.scrollY / available) : 0;
+        const percent = `${progress * 100}%`;
+        fill.style.height = percent;
+        car.style.top = percent;
+      };
+
+      updateProgress();
+      window.addEventListener('scroll', updateProgress, { passive: true });
+      window.addEventListener('resize', updateProgress);
+
+      if (reduced || !('IntersectionObserver' in window)) {
+        document.querySelectorAll('.reveal').forEach(el => el.classList.add('is-visible'));
+        return;
+      }
+
+      const observer = new IntersectionObserver((entries) => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('is-visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: .12, rootMargin: '0px 0px -8% 0px' });
+
+      document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+    })();
+  </script>
+</body>
+</html>
