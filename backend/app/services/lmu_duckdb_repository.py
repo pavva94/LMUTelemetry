@@ -1100,7 +1100,19 @@ def _trajectory_rows(conn, layout: ChannelLayout, lap_numbers: list[str], max_po
     per_lap_limit = max(80, math.ceil(max_points / max(1, len(selected_laps))))
     rows: list[dict] = []
     for lap in lap_numbers:
-        rows.extend(_downsample_evenly(grouped.get(str(lap), []), per_lap_limit))
+        lap_rows = grouped.get(str(lap), [])
+        distances = [row.get("lap_distance") for row in lap_rows]
+        valid_distances = [float(value) for value in distances if isinstance(value, (int, float)) and math.isfinite(float(value))]
+        distance_min = min(valid_distances) if valid_distances else None
+        distance_span = (max(valid_distances) - distance_min) if distance_min is not None else 0.0
+        denominator = max(1, len(lap_rows) - 1)
+        for index, row in enumerate(lap_rows):
+            distance = row.get("lap_distance")
+            if distance_min is not None and distance_span > 1.0 and isinstance(distance, (int, float)):
+                row["progress"] = max(0.0, min(1.0, (float(distance) - distance_min) / distance_span))
+            else:
+                row["progress"] = index / denominator
+        rows.extend(_downsample_evenly(lap_rows, per_lap_limit))
     return rows, warnings
 
 

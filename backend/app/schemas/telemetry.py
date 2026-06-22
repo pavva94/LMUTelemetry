@@ -179,6 +179,7 @@ class CompetitorState(BaseModel):
 
 
 class TelemetrySnapshot(BaseModel):
+    session_id: str | None = None
     timestamp: datetime
     connected: bool
     feed_paused: bool = False

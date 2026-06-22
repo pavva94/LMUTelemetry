@@ -170,6 +170,7 @@ export type CompetitorState = {
 };
 
 export type TelemetrySnapshot = {
+  session_id?: string;
   timestamp: string;
   connected: boolean;
   feed_paused?: boolean;

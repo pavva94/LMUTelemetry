@@ -8,24 +8,11 @@ import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "..
 import { toFiniteNumber } from "../lib/sessionAnalysis";
 import { chartLabelFormatter, chartValueFormatter, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceTime } from "../lib/timeFormat";
+import { deltaSegments, lapElapsed, nearestByProgress, pathSegments, pointDistance, type GpsPoint } from "../lib/trajectory";
 import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview as Review } from "../types/session";
 
 type Row = Record<string, number | string | boolean | null | undefined>;
-type GpsPoint = {
-  lap: string;
-  lapLabel: string;
-  progress: number;
-  x: number;
-  y: number;
-  lat: number;
-  lon: number;
-  throttle: number | null;
-  brake: number | null;
-  speed: number | null;
-  time: number | null;
-};
-type TrackSegment = { from: GpsPoint; to: GpsPoint; color: string; delta: number | null };
 
 const DEFAULT_FOLDER = "G:\\SteamLibrary\\steamapps\\common\\Le Mans Ultimate\\UserData\\Telemetry";
 const SCAN_LIMIT = 250;
@@ -143,69 +130,6 @@ function withoutOutliers(values: number[]) {
   if (!mad) return clean;
   const filtered = clean.filter((value) => Math.abs(value - median) / mad <= 3.5);
   return filtered.length ? filtered : clean;
-}
-
-function nearestByPosition(points: GpsPoint[], target: GpsPoint) {
-  if (!points.length) return null;
-  return points.reduce((best, point) => {
-    const bestDistance = ((best.x - target.x) ** 2) + ((best.y - target.y) ** 2);
-    const pointDistance = ((point.x - target.x) ** 2) + ((point.y - target.y) ** 2);
-    return pointDistance < bestDistance ? point : best;
-  }, points[0]);
-}
-
-function pointDistance(a: GpsPoint, b: GpsPoint) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function shouldCloseLap(points: GpsPoint[]) {
-  if (points.length < 3) return false;
-  const first = points[0];
-  const last = points[points.length - 1];
-  const bounds = points.reduce((acc, point) => ({
-    minX: Math.min(acc.minX, point.x),
-    maxX: Math.max(acc.maxX, point.x),
-    minY: Math.min(acc.minY, point.y),
-    maxY: Math.max(acc.maxY, point.y),
-  }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
-  const diagonal = Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
-  return pointDistance(first, last) <= Math.max(24, diagonal * 0.12);
-}
-
-function pathSegments(points: GpsPoint[]) {
-  const segments: Array<{ from: GpsPoint; to: GpsPoint }> = [];
-  for (let index = 0; index < points.length - 1; index += 1) {
-    segments.push({ from: points[index], to: points[index + 1] });
-  }
-  if (shouldCloseLap(points)) {
-    segments.push({ from: points[points.length - 1], to: points[0] });
-  }
-  return segments;
-}
-
-function lapElapsed(point: GpsPoint, lapStart: number | null) {
-  return point.time != null && lapStart != null ? point.time - lapStart : null;
-}
-
-function deltaColor(delta: number | null) {
-  if (delta == null || !Number.isFinite(delta)) return "#6fa8ff";
-  if (Math.abs(delta) <= 0.05) return "#6fa8ff";
-  return delta < 0 ? "#69d28f" : "#ff6961";
-}
-
-function deltaSegments(primary: GpsPoint[], comparison: GpsPoint[]): TrackSegment[] {
-  const segments: TrackSegment[] = [];
-  const primaryStart = primary[0]?.time ?? null;
-  const comparisonStart = comparison[0]?.time ?? null;
-  for (const segment of pathSegments(primary)) {
-    const point = segment.from;
-    const matched = nearestByPosition(comparison, point);
-    const primaryElapsed = lapElapsed(point, primaryStart);
-    const comparisonElapsed = matched ? lapElapsed(matched, comparisonStart) : null;
-    const delta = primaryElapsed != null && comparisonElapsed != null ? primaryElapsed - comparisonElapsed : null;
-    segments.push({ from: point, to: segment.to, color: deltaColor(delta), delta });
-  }
-  return segments;
 }
 
 function hasLineData(rows: Row[], lines: Array<[string, string]>) {
@@ -357,8 +281,10 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
         brake: pointNumber(sample, "brake"),
         speed: pointNumber(sample, "speed_kph"),
         time: pointNumber(sample, "game_time"),
+        lapDistance: pointNumber(sample, "lap_distance"),
+        sourceProgress: pointNumber(sample, "progress"),
       }))
-      .filter((sample): sample is Omit<GpsPoint, "x" | "y" | "lapLabel"> => sample.lat != null && sample.lon != null);
+      .filter((sample): sample is typeof sample & { lat: number; lon: number } => sample.lat != null && sample.lon != null && !(sample.lat === 0 && sample.lon === 0));
     if (!raw.length) return { byLap: {} as Record<string, GpsPoint[]>, count: 0 };
     const rawLats = raw.map((point) => point.lat);
     const rawLons = raw.map((point) => point.lon);
@@ -369,11 +295,22 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
     const centerLon = lonDegrees.reduce((sum, value) => sum + value, 0) / lonDegrees.length;
     const metersPerDegreeLat = 111_132;
     const metersPerDegreeLon = Math.max(1, 111_320 * Math.cos(centerLat * Math.PI / 180));
-    const local = raw.map((point, index) => ({
+    const localRaw = raw.map((point, index) => ({
       ...point,
       mx: (lonDegrees[index] - centerLon) * metersPerDegreeLon,
       my: (latDegrees[index] - centerLat) * metersPerDegreeLat,
     }));
+    const localGroups = localRaw.reduce<Record<string, typeof localRaw>>((acc, point) => {
+      (acc[point.lap] ||= []).push(point);
+      return acc;
+    }, {});
+    const local = Object.values(localGroups).flatMap((lapPoints) => {
+      const ordered = [...lapPoints].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+      const steps = ordered.slice(1).map((point, index) => Math.hypot(point.mx - ordered[index].mx, point.my - ordered[index].my)).filter((value) => value > 0);
+      const typical = quantile(steps, 0.5) || 1;
+      return ordered.filter((point, index) => index === 0 || Math.hypot(point.mx - ordered[index - 1].mx, point.my - ordered[index - 1].my) <= Math.max(250, typical * 20));
+    });
+    if (!local.length) return { byLap: {} as Record<string, GpsPoint[]>, count: 0 };
     const xs = local.map((point) => point.mx);
     const ys = local.map((point) => point.my);
     const minX = Math.min(...xs);
@@ -396,11 +333,26 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
     const byLap: Record<string, GpsPoint[]> = {};
     Object.entries(byLapRaw).forEach(([lap, lapPoints]) => {
       const orderedPoints = [...lapPoints].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
-      const denominator = Math.max(1, lapPoints.length - 1);
-      byLap[lap] = orderedPoints.map((point, index) => ({
+      const steps = orderedPoints.slice(1).map((point, index) => Math.hypot(point.mx - orderedPoints[index].mx, point.my - orderedPoints[index].my)).filter((value) => value > 0);
+      const typicalStep = quantile(steps, 0.5) || 1;
+      const cleanPoints = orderedPoints.filter((point, index) => index === 0 || Math.hypot(point.mx - orderedPoints[index - 1].mx, point.my - orderedPoints[index - 1].my) <= Math.max(250, typicalStep * 20));
+      const distances = cleanPoints.map((point) => point.lapDistance).filter((value): value is number => value != null && Number.isFinite(value));
+      const distanceMin = distances.length ? Math.min(...distances) : null;
+      const distanceSpan = distances.length && distanceMin != null ? Math.max(...distances) - distanceMin : 0;
+      const cumulative = cleanPoints.reduce<number[]>((values, point, index) => {
+        const previous = cleanPoints[index - 1];
+        values.push(index && previous ? values[index - 1] + Math.hypot(point.mx - previous.mx, point.my - previous.my) : 0);
+        return values;
+      }, []);
+      const cumulativeSpan = cumulative[cumulative.length - 1] || 1;
+      byLap[lap] = cleanPoints.map((point, index) => ({
         ...point,
         lapLabel: `Lap ${point.lap}`,
-        progress: index / denominator,
+        progress: point.sourceProgress != null && Number.isFinite(point.sourceProgress)
+          ? Math.max(0, Math.min(1, point.sourceProgress))
+          : point.lapDistance != null && distanceMin != null && distanceSpan > 1
+            ? Math.max(0, Math.min(1, (point.lapDistance - distanceMin) / distanceSpan))
+            : cumulative[index] / cumulativeSpan,
         x: offsetX + (point.mx - minX) * scale,
         y: offsetY + drawH - (point.my - minY) * scale,
       }));
@@ -415,7 +367,7 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
     if (!selectedPoint) return null;
     const otherLap = selectedPoint.lap === lapA ? lapB : lapA;
     const candidates = mapData.byLap[otherLap] || [];
-    return nearestByPosition(candidates, selectedPoint);
+    return nearestByProgress(candidates, selectedPoint);
   }, [selectedPoint, lapA, lapB, mapData.byLap]);
 
   const activePoints = [selectedPoint, pairedHover].filter((point): point is GpsPoint => Boolean(point));

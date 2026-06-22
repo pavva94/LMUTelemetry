@@ -33,8 +33,10 @@ export default function App() {
   const currentCompetitors = telemetry?.competitors?.length ? telemetry.competitors : competitors;
   return (
     <Layout page={page} setPage={setPage} connected={telemetryConnected || strategyConnected}>
-      <ErrorBoundary key={page}>
-        {page === "live" && <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} competitors={currentCompetitors} />}
+      <ErrorBoundary>
+        <div style={{ display: page === "live" ? "contents" : "none" }} aria-hidden={page !== "live"}>
+          <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} competitors={currentCompetitors} />
+        </div>
         {page === "profile" && <UserProfile />}
         {page === "circle-map" && <CircleMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "lap-compare" && <LapCompare telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}

@@ -200,6 +200,7 @@ class TelemetryService:
         if (not snapshot.connected or not snapshot.player) and self.latest_snapshot is not None:
             snapshot = self.latest_snapshot
         snapshot.feed_paused = True
+        snapshot.session_id = self.session_id
         snapshot.pause_reason = reason
         snapshot.strategy = self.strategy_state
         self.latest_snapshot = snapshot
@@ -301,8 +302,9 @@ class TelemetryService:
         self._resume_live_feed()
         snapshot.feed_paused = False
         snapshot.pause_reason = None
-        self.latest_snapshot = snapshot
         self._maybe_rotate_session(snapshot)
+        snapshot.session_id = self.session_id
+        self.latest_snapshot = snapshot
         events = self.event_detector.update(snapshot)
         fuel = self.fuel_model.update(snapshot)
         tyres = self.tyre_model.update(snapshot)

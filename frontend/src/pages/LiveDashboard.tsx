@@ -63,15 +63,63 @@ type LapSample = {
 
 type PositionRow = { lap: number; [driver: string]: number };
 
+const LIVE_HISTORY_KEY = "lmu-live-session-history-v1";
+type StoredLiveHistory = {
+  sessionId: string;
+  laps: LapSample[];
+  positions: PositionRow[];
+  previous: { lap?: number; lapStartFuel?: number; observedFromBoundary?: boolean; session?: string };
+  paceHistory?: Record<string, { laps: number[]; dirtyLaps: number[]; lastObservedLap?: number; lastPitstops?: number; lastCountLapFlag?: number; lastInvalidated?: boolean; lastUnderYellow?: boolean; wasInPits?: boolean }>;
+  gridMode?: "nearby" | "full";
+};
+
+function readStoredHistory(sessionId?: string): StoredLiveHistory | null {
+  if (!sessionId) return null;
+  try {
+    const parsed = JSON.parse(window.sessionStorage.getItem(LIVE_HISTORY_KEY) || "null") as StoredLiveHistory | null;
+    return parsed?.sessionId === sessionId ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function updateStoredHistory(sessionId: string | undefined, patch: Partial<StoredLiveHistory>) {
+  if (!sessionId) return;
+  const current = readStoredHistory(sessionId) || { sessionId, laps: [], positions: [], previous: {} };
+  window.sessionStorage.setItem(LIVE_HISTORY_KEY, JSON.stringify({ ...current, ...patch, sessionId }));
+}
+
 function representativeTemp(temp?: TyreTemps) {
   return average([temp?.left_c, temp?.center_c, temp?.right_c, temp?.carcass_c].filter(finite));
 }
 
 function useLiveRaceHistory(telemetry: TelemetrySnapshot | null, strategy: StrategyState | null) {
-  const [laps, setLaps] = useState<LapSample[]>([]);
-  const [positions, setPositions] = useState<PositionRow[]>([]);
-  const previous = useRef<{ lap?: number; lapStartFuel?: number; observedFromBoundary?: boolean; session?: string }>({});
-  const sessionKey = `${telemetry?.session?.track_name || ""}:${telemetry?.session?.session_type || ""}`;
+  const sessionId = telemetry?.session_id;
+  const initial = readStoredHistory(sessionId);
+  const [laps, setLaps] = useState<LapSample[]>(initial?.laps || []);
+  const [positions, setPositions] = useState<PositionRow[]>(initial?.positions || []);
+  const previous = useRef<{ lap?: number; lapStartFuel?: number; observedFromBoundary?: boolean; session?: string }>(initial?.previous || {});
+  const activeSession = useRef<string | undefined>(sessionId);
+  const suppressPersist = useRef(false);
+  const sessionKey = sessionId || `${telemetry?.session?.track_name || ""}:${telemetry?.session?.session_type || ""}`;
+
+  useEffect(() => {
+    if (!sessionId || activeSession.current === sessionId) return;
+    const stored = readStoredHistory(sessionId);
+    setLaps(stored?.laps || []);
+    setPositions(stored?.positions || []);
+    previous.current = stored?.previous || {};
+    activeSession.current = sessionId;
+    suppressPersist.current = true;
+  }, [sessionId]);
+
+  useEffect(() => {
+    if (suppressPersist.current) {
+      suppressPersist.current = false;
+      return;
+    }
+    updateStoredHistory(sessionId, { laps, positions, previous: previous.current });
+  }, [sessionId, laps, positions]);
 
   useEffect(() => {
     const lap = telemetry?.player?.lap_number ?? telemetry?.session?.current_lap;
@@ -208,10 +256,20 @@ function LapTiming({ player, playerCar, averageLap }: { player?: PlayerState; pl
 
 type OpponentPaceHistory = Record<number, { laps: number[]; dirtyLaps: Set<number>; lastObservedLap?: number; lastPitstops?: number; lastCountLapFlag?: number; lastInvalidated?: boolean; lastUnderYellow?: boolean; wasInPits?: boolean }>;
 
-function useOpponentPaceHistory(cars: CompetitorState[], playerInvalidated: boolean, underYellow: boolean) {
-  const history = useRef<OpponentPaceHistory>({});
+function restorePaceHistory(sessionId?: string): OpponentPaceHistory {
+  const stored = readStoredHistory(sessionId)?.paceHistory || {};
+  return Object.fromEntries(Object.entries(stored).map(([id, row]) => [Number(id), { ...row, dirtyLaps: new Set(row.dirtyLaps) }]));
+}
+
+function useOpponentPaceHistory(cars: CompetitorState[], playerInvalidated: boolean, underYellow: boolean, sessionId?: string) {
+  const history = useRef<OpponentPaceHistory>(restorePaceHistory(sessionId));
+  const activeSession = useRef(sessionId);
   const [, setRevision] = useState(0);
   useEffect(() => {
+    if (sessionId && activeSession.current !== sessionId) {
+      history.current = restorePaceHistory(sessionId);
+      activeSession.current = sessionId;
+    }
     let changed = false;
     cars.forEach((car) => {
       const lap = car.total_laps ?? car.current_lap;
@@ -243,7 +301,11 @@ function useOpponentPaceHistory(cars: CompetitorState[], playerInvalidated: bool
       history.current[car.vehicle_id] = row;
     });
     if (changed) setRevision((current) => current + 1);
-  }, [cars, playerInvalidated, underYellow]);
+    if (sessionId) {
+      const serializable = Object.fromEntries(Object.entries(history.current).map(([id, row]) => [id, { ...row, dirtyLaps: [...row.dirtyLaps] }]));
+      updateStoredHistory(sessionId, { paceHistory: serializable });
+    }
+  }, [cars, playerInvalidated, sessionId, underYellow]);
   return history.current;
 }
 
@@ -262,18 +324,26 @@ function paceDeltaText(value?: number) {
 }
 
 function NearbyStandings({ mergedCars, paceHistory, telemetry }: { mergedCars: CompetitorState[]; paceHistory: OpponentPaceHistory; telemetry: TelemetrySnapshot | null }) {
+  const sessionId = telemetry?.session_id;
+  const [gridMode, setGridMode] = useState<"nearby" | "full">(() => readStoredHistory(sessionId)?.gridMode || "nearby");
+  useEffect(() => setGridMode(readStoredHistory(sessionId)?.gridMode || "nearby"), [sessionId]);
+  const changeGridMode = (mode: "nearby" | "full") => {
+    setGridMode(mode);
+    updateStoredHistory(sessionId, { gridMode: mode });
+  };
   const playerCar = mergedCars.find((car) => car.is_player);
   const playerPace3 = rollingPace(paceHistory, playerCar, 3);
   const playerPace7 = rollingPace(paceHistory, playerCar, 7);
   const rows = useMemo(() => {
     const sorted = [...mergedCars].sort((a, b) => (a.position ?? 999) - (b.position ?? 999));
     const playerIndex = sorted.findIndex((car) => car.is_player);
+    if (gridMode === "full") return sorted;
     return playerIndex < 0 ? sorted.slice(0, 13) : sorted.slice(Math.max(0, playerIndex - 6), playerIndex + 7);
-  }, [mergedCars]);
+  }, [gridMode, mergedCars]);
   const currentLap = telemetry?.player?.lap_number ?? telemetry?.session?.current_lap;
   return (
     <section className="live-section nearby-card">
-      <div className="live-section-heading"><div><span>Race order</span><h2>Nearby drivers</h2></div><small>Up to 6 ahead · 6 behind</small></div>
+      <div className="live-section-heading"><div><span>Race order</span><h2>{gridMode === "full" ? "Full grid" : "Nearby drivers"}</h2></div><div className="control-row"><button type="button" className={gridMode === "nearby" ? "active-control" : ""} onClick={() => changeGridMode("nearby")}>Nearby</button><button type="button" className={gridMode === "full" ? "active-control" : ""} onClick={() => changeGridMode("full")}>Full grid</button><small>{gridMode === "full" ? `${rows.length} drivers` : "Up to 6 ahead · 6 behind"}</small></div></div>
       {rows.length ? <div className="table-wrap"><table className="nearby-table"><thead><tr><th>Pos</th><th>Driver / car</th><th>Laps</th><th>3-lap pace</th><th>7-lap pace</th><th>Δ3 vs you</th><th>Δ7 vs you</th><th>Pit</th></tr></thead><tbody>{rows.map((car) => {
         const pace3 = rollingPace(paceHistory, car, 3);
         const pace7 = rollingPace(paceHistory, car, 7);
@@ -415,7 +485,7 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected, 
     telemetry?.competitors?.forEach((car) => merged.set(car.vehicle_id, car));
     return [...merged.values()];
   }, [competitors, telemetry?.competitors]);
-  const paceHistory = useOpponentPaceHistory(mergedCompetitors, Boolean(telemetry?.player?.lap_invalidated), isUnderYellow(telemetry));
+  const paceHistory = useOpponentPaceHistory(mergedCompetitors, Boolean(telemetry?.player?.lap_invalidated), isUnderYellow(telemetry), telemetry?.session_id);
   const playerCar = mergedCompetitors.find((car) => car.is_player);
   const observedAverage = cleanAveragePace(paceHistory, playerCar);
   const averageLap = observedAverage ?? ((strategy?.pace?.sample_laps ?? 0) > 0 ? strategy?.pace?.weighted_recent_pace : undefined);
