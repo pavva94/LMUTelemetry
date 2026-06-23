@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
+import { useT } from "../i18n/I18nProvider";
 import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { average, median, standardDeviation, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
 import { simulateStrategies, type PaceEvidence, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
@@ -526,6 +527,7 @@ function LiveStyleStrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
 }
 
 export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategyState | null; telemetry?: TelemetrySnapshot | null }) {
+  const t = useT();
   const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
   const seededSession = useRef<string | null>(null);
   const appliedSessionModel = useRef<string | null>(null);
@@ -780,14 +782,14 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
         </div>
       </section>
       <section className="card span-12">
-        <SectionTitle title="Race Assumptions" help="Set the race you want to prepare for, then choose which measured session supplies the pace, fuel, and tyre evidence." />
+        <SectionTitle title={t("strategyPlanner.raceAssumptions")} help={t("strategyPlanner.raceAssumptionsHelp")} />
         <div className="strategy-assumption-layout">
           <div className="strategy-plan-target">
             <span className="eyebrow">PLAN TARGET</span>
-            <h3>How long is the race?</h3>
+            <h3>{t("strategyPlanner.howLongRace")}</h3>
             <p>Enter the total scheduled duration. This manual target stays unchanged when you switch telemetry sources.</p>
             <label className="strategy-duration-field">
-              <span className="label">Race duration</span>
+              <span className="label">{t("strategyPlanner.raceDuration")}</span>
               <span className="strategy-duration-control">
                 <input type="number" min="1" step="1" inputMode="numeric" value={form.race_duration_minutes} onChange={(event) => update("race_duration_minutes", event.target.value)} />
                 <strong>minutes</strong>
@@ -811,9 +813,9 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
                 </select>
                 <span className="subvalue">{sourceStatus}{sessionSearch.trim() ? ` - ${visibleSessions.length}/${sessions.length} matches` : ""}</span>
               </label>
-              <label><span className="label">Pace basis</span><select value={paceBasis} onChange={(event) => setPaceBasis(event.target.value as PaceBasis)}><option value="median">Median valid lap</option><option value="trimmed">10% trimmed mean</option><option value="percentile">60th percentile race pace</option></select><span className="subvalue">Calculated from the reference session</span></label>
+              <label><span className="label">{t("strategyPlanner.paceBasis")}</span><select value={paceBasis} onChange={(event) => setPaceBasis(event.target.value as PaceBasis)}><option value="median">{t("strategyPlanner.medianValidLap")}</option><option value="trimmed">{t("strategyPlanner.trimmedMean")}</option><option value="percentile">{t("strategyPlanner.percentileRacePace")}</option></select><span className="subvalue">{t("strategyPlanner.calculatedFromReference")}</span></label>
               <label><span className="label">Manual lap time</span><input value={manualLapText} onChange={(event) => updateLapTime(event.target.value)} placeholder="03:34.000" /><span className="subvalue">Optional override · mm:ss.mmm</span></label>
-              <label><span className="label">Active normal lap</span><input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? "saved session/manual" : activeModel.label})`} readOnly /><span className="subvalue">Used by the strategy model</span></label>
+              <label><span className="label">{t("strategyPlanner.activeNormalLap")}</span><input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? t("strategyPlanner.savedSessionManual") : activeModel.label})`} readOnly /><span className="subvalue">{t("strategyPlanner.usedByStrategyModel")}</span></label>
             </fieldset>
 
             <fieldset className="strategy-assumption-group">
@@ -835,7 +837,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
               <legend>Tyre plan</legend>
               <label><span className="label">Maximum tyre wear</span><input type="number" min="0" max="1" step="0.01" value={form.max_tyre_wear} onChange={(event) => update("max_tyre_wear", event.target.value)} /><span className="subvalue">fraction · 0.75 means 75%</span></label>
               <label><span className="label">Tyre change policy</span><select value={tyrePolicy} onChange={(event) => setTyrePolicy(event.target.value as typeof tyrePolicy)}><option value="automatic">Automatic by corner</option><option value="all">All four at every stop</option><option value="never">Never (exploration)</option></select><span className="subvalue">Automatic changes threshold crossings</span></label>
-              <label><span className="label">Start tyre set</span><span className="toggle-line"><input type="checkbox" checked={form.race_start_new_tyres} onChange={(event) => updateBoolean("race_start_new_tyres", event.target.checked)} /><span>Start planned race on new tyres</span></span><span className="subvalue">Otherwise uses reference-session wear</span></label>
+              <label><span className="label">{t("strategyPlanner.startTyreSet")}</span><span className="toggle-line"><input type="checkbox" checked={form.race_start_new_tyres} onChange={(event) => updateBoolean("race_start_new_tyres", event.target.checked)} /><span>{t("strategyPlanner.startOnNewTyres")}</span></span><span className="subvalue">{t("strategyPlanner.otherwiseReferenceWear")}</span></label>
             </fieldset>
           </div>
         </div>
@@ -855,7 +857,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           fuel_safety_margin_liters: fuelSafetyMarginLiters,
           fuel_safety_margin_laps: form.fuel_safety_margin_laps,
           max_tyre_wear: form.max_tyre_wear,
-        })}>Save assumptions</button>
+        })}>{t("strategyPlanner.saveAssumptions")}</button>
         </p>
       </section>
 

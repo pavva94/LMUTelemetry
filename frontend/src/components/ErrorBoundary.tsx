@@ -1,4 +1,5 @@
 import React from "react";
+import { initialLanguage, translate } from "../i18n/core";
 
 type State = {
   message: string | null;
@@ -17,11 +18,12 @@ export class ErrorBoundary extends React.Component<{ children: React.ReactNode }
 
   render() {
     if (this.state.message) {
+      const language = initialLanguage();
       return (
         <div className="page">
           <section className="card">
-            <h2>Page Error</h2>
-            <p className="subvalue">A telemetry field could not be rendered. The live connection is still running.</p>
+            <h2>{translate(language, "errors.pageError")}</h2>
+            <p className="subvalue">{translate(language, "errors.renderFailed")}</p>
             <pre className="error-box">{this.state.message}</pre>
           </section>
         </div>
