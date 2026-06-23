@@ -4,6 +4,8 @@ import hashlib
 import gc
 import json
 import math
+import os
+import re
 from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
@@ -33,6 +35,7 @@ FOLDER_SETTING_KEY = "lmu_duckdb_folder"
 SYNC_STATUS_SETTING_KEY = "lmu_duckdb_last_sync_status"
 SYNC_AT_SETTING_KEY = "lmu_duckdb_last_sync_at"
 DEFAULT_WINDOWS_TELEMETRY_FOLDER = Path("G:/SteamLibrary/steamapps/common/Le Mans Ultimate/UserData/Telemetry")
+LMU_TELEMETRY_RELATIVE_PATH = Path("steamapps/common/Le Mans Ultimate/UserData/Telemetry")
 ProgressCallback = Callable[[str, str, int, int, int], None]
 _REVIEW_CACHE_LIMIT = 8
 _review_cache: OrderedDict[tuple[str, str, int], dict] = OrderedDict()
@@ -1189,13 +1192,60 @@ def _get_setting(key: str) -> str | None:
         return setting.value if setting else None
 
 
+def _steam_install_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    for env_key in ("PROGRAMFILES(X86)", "PROGRAMFILES"):
+        value = os.environ.get(env_key)
+        if value:
+            candidates.append(Path(value) / "Steam")
+    candidates.append(Path("C:/Program Files (x86)/Steam"))
+    candidates.append(Path("C:/Program Files/Steam"))
+    return list(dict.fromkeys(candidates))
+
+
+def _steam_library_roots() -> list[Path]:
+    roots: list[Path] = []
+    for steam_path in _steam_install_candidates():
+        if (steam_path / "steamapps").is_dir():
+            roots.append(steam_path)
+        manifest = steam_path / "steamapps" / "libraryfolders.vdf"
+        if not manifest.is_file():
+            continue
+        try:
+            text = manifest.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for raw in re.findall(r'"path"\s+"([^"]+)"', text):
+            path = Path(raw.replace("\\\\", "\\"))
+            if (path / "steamapps").is_dir():
+                roots.append(path)
+    return list(dict.fromkeys(roots))
+
+
+def _common_steam_library_roots() -> list[Path]:
+    roots: list[Path] = []
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        root = Path(f"{letter}:/SteamLibrary")
+        if (root / "steamapps").is_dir():
+            roots.append(root)
+    return roots
+
+
+def discover_lmu_telemetry_folder() -> str | None:
+    candidates = [DEFAULT_WINDOWS_TELEMETRY_FOLDER]
+    candidates.extend(root / LMU_TELEMETRY_RELATIVE_PATH for root in _steam_library_roots())
+    candidates.extend(root / LMU_TELEMETRY_RELATIVE_PATH for root in _common_steam_library_roots())
+    for folder in dict.fromkeys(candidates):
+        if folder.exists() and folder.is_dir():
+            return str(folder)
+    return None
+
+
 def _configured_folder_path() -> str | None:
     configured = _get_setting(FOLDER_SETTING_KEY)
     if configured:
         return configured
-    if DEFAULT_WINDOWS_TELEMETRY_FOLDER.exists() and DEFAULT_WINDOWS_TELEMETRY_FOLDER.is_dir():
-        return str(DEFAULT_WINDOWS_TELEMETRY_FOLDER)
-    return None
+    return discover_lmu_telemetry_folder()
 
 
 def _set_setting(db, key: str, value: str | None, now: str) -> None:

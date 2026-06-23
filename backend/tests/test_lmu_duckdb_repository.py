@@ -422,3 +422,33 @@ def test_configured_folder_lists_and_reviews_without_cache(monkeypatch, tmp_path
     assert payload["warnings"][0].startswith("Showing configured folder files")
     assert review["session"]["track_name"] == "Le Mans"
     assert len(review["telemetry_samples"]) == 4
+
+
+def test_discovers_lmu_telemetry_folder_from_steam_library_manifest(monkeypatch, tmp_path) -> None:
+    steam = tmp_path / "Steam"
+    library = tmp_path / "Games" / "SteamLibrary"
+    telemetry = library / "steamapps" / "common" / "Le Mans Ultimate" / "UserData" / "Telemetry"
+    telemetry.mkdir(parents=True)
+    manifest = steam / "steamapps" / "libraryfolders.vdf"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(
+        f'"libraryfolders" {{ "0" {{ "path" "{str(library).replace(chr(92), chr(92) * 2)}" }} }}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(lmu_duckdb_repository, "_steam_install_candidates", lambda: [steam])
+    monkeypatch.setattr(lmu_duckdb_repository, "_common_steam_library_roots", lambda: [])
+    monkeypatch.setattr(lmu_duckdb_repository, "DEFAULT_WINDOWS_TELEMETRY_FOLDER", tmp_path / "missing")
+
+    assert lmu_duckdb_repository.discover_lmu_telemetry_folder() == str(telemetry)
+
+
+def test_configured_folder_uses_discovery_when_no_setting(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(lmu_duckdb_repository, "SessionLocal", factory)
+    telemetry = tmp_path / "SteamLibrary" / "steamapps" / "common" / "Le Mans Ultimate" / "UserData" / "Telemetry"
+    telemetry.mkdir(parents=True)
+    monkeypatch.setattr(lmu_duckdb_repository, "_steam_library_roots", lambda: [])
+    monkeypatch.setattr(lmu_duckdb_repository, "_common_steam_library_roots", lambda: [tmp_path / "SteamLibrary"])
+    monkeypatch.setattr(lmu_duckdb_repository, "DEFAULT_WINDOWS_TELEMETRY_FOLDER", tmp_path / "missing")
+
+    assert lmu_duckdb_repository._configured_folder_path() == str(telemetry)
