@@ -69,7 +69,7 @@ class DuckdbJobRegistry:
                 current.updated_at = time.time()
 
         def run() -> None:
-            progress("Loading database", "Opening DuckDB data", 0, 1, 2)
+            progress("Loading sessions", "Opening saved session data", 0, 1, 2)
             try:
                 result = work(progress)
                 with self._lock:
@@ -107,9 +107,9 @@ class DuckdbJobRegistry:
             if job is None:
                 raise KeyError(job_id)
             if job.status == "failed":
-                raise RuntimeError(job.error or "DuckDB job failed")
+                raise RuntimeError(job.error or "Session job failed")
             if job.status != "complete":
-                raise LookupError("DuckDB job is not complete")
+                raise LookupError("Session job is not complete")
             return job.result
 
 

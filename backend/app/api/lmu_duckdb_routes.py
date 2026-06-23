@@ -53,7 +53,7 @@ def start_sync_job(payload: FolderRequest | None = None):
 @router.post("/jobs/sessions", status_code=202)
 def start_sessions_job(limit: int = Query(250, ge=1, le=1000), offset: int = Query(0, ge=0)):
     def work(progress):
-        progress("Loading database", "Reading the cached DuckDB session index", 0, 1, 35)
+        progress("Loading sessions", "Reading the saved-session index", 0, 1, 35)
         result = lmu_duckdb_repository.sessions_from_cache_or_setting(limit=limit, offset=offset)
         progress("Preparing page", "Preparing the session list", 1, 1, 92)
         return result

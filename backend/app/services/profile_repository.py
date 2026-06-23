@@ -390,7 +390,7 @@ class ProfileRepository:
                     "id": f"duckdb:{lap.session_id}:{lap.lap_number}",
                     "source": "duckdb",
                     "session_id": lap.session_id,
-                    "session_name": lap.session_type or session.session_type or "LMU DuckDB",
+                    "session_name": lap.session_type or session.session_type or "LMU session",
                     "source_file": lap.source_file or session.file_name,
                     "date": lap.date or session.created_at,
                     "track": lap.track or "Unknown track",

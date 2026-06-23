@@ -199,7 +199,7 @@ class ChannelLayout:
 
 def _require_duckdb() -> None:
     if duckdb is None:
-        raise RuntimeError("DuckDB support is not installed. Run `pip install -r backend/requirements.txt` and restart the backend.")
+        raise RuntimeError("Session file support is not installed. Run `pip install -r backend/requirements.txt` and restart the backend.")
 
 
 def _norm(value: str) -> str:
@@ -382,7 +382,7 @@ def _file_session(path: Path, info: TableInfo | ChannelLayout | None, warnings: 
         "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
         "track_name": _metadata_value(metadata, ("track", "track_name", "trackName", "circuit", "venue")),
         "track_layout": _metadata_value(metadata, ("layout", "track_layout", "trackLayout")),
-        "session_type": _metadata_value(metadata, ("session", "session_type", "sessionType", "session_name", "sessionName")) or "LMU DuckDB",
+        "session_type": _metadata_value(metadata, ("session", "session_type", "sessionType", "session_name", "sessionName")) or "LMU session",
         "vehicle_name": _metadata_value(metadata, ("vehicle", "vehicle_name", "vehicleName", "car", "car_name", "carName")),
         "vehicle_model": _metadata_value(metadata, ("vehicle_model", "vehicleModel", "car_model", "carModel")),
         "vehicle_class": _metadata_value(metadata, ("vehicle_class", "vehicleClass", "car_class", "carClass", "class")),
@@ -964,7 +964,7 @@ def _pit_events(rows: list[dict]) -> list[dict]:
                     "pit_entry_time": entry_time,
                     "pit_exit_time": exit_time,
                     "total_pit_loss": exit_time - entry_time if exit_time is not None and entry_time is not None else None,
-                    "detected_from": "LMU DuckDB",
+                    "detected_from": "LMU session",
                     "message": "Pit stop detected from native telemetry",
                 }
             )
@@ -1381,7 +1381,7 @@ def _review_from_validated_cache(file_path: Path, session_id: str, sample_limit:
             _review_cache.move_to_end(key)
             _report(progress, "Preparing page", "Using prepared validated session", 1, 1, 95)
             return deepcopy(hit)
-    _report(progress, "Reading telemetry", "Reading chart samples from DuckDB", 0, 1, 30)
+    _report(progress, "Reading telemetry", "Reading chart samples from the selected session", 0, 1, 30)
     rows, manifest, read_warnings, info = _display_rows(file_path, sample_limit)
     _report(progress, "Processing database", "Combining validated results with chart data", 1, 1, 85)
     result = {
@@ -1547,7 +1547,7 @@ def sessions_from_cache_or_setting(limit: int = DEFAULT_SCAN_LIMIT, offset: int 
         cached["warnings"] = [str(exc)]
         return cached
     scanned["warnings"] = [
-        "Showing configured folder files because no DuckDB cache exists yet. Use Save and sync in User Profile to populate profile totals.",
+        "Showing configured folder files because no session cache exists yet. Use Save and sync in User Profile to populate profile totals.",
         *(scanned.get("warnings") or []),
     ]
     return scanned
@@ -1556,11 +1556,11 @@ def sessions_from_cache_or_setting(limit: int = DEFAULT_SCAN_LIMIT, offset: int 
 def sync_folder(path: str | None = None, progress: ProgressCallback | None = None) -> dict:
     folder_path = path or _configured_folder_path()
     if not folder_path:
-        raise FileNotFoundError("No LMU DuckDB telemetry folder is configured.")
+        raise FileNotFoundError("No LMU telemetry session folder is configured.")
     folder = _folder(folder_path)
     now = datetime.utcnow().isoformat()
     candidates = _scan_candidates(folder)
-    _report(progress, "Loading database", f"Found {len(candidates)} DuckDB files", 0, max(1, len(candidates)), 8)
+    _report(progress, "Loading sessions", f"Found {len(candidates)} session files", 0, max(1, len(candidates)), 8)
     signatures = {str(file_path.resolve()): _file_signature(file_path) for file_path in candidates}
     present_keys = {_file_key(file_path) for file_path in candidates}
     processed = 0
@@ -1608,7 +1608,7 @@ def sync_folder(path: str | None = None, progress: ProgressCallback | None = Non
         _set_setting(db, SYNC_STATUS_SETTING_KEY, status, now)
         _set_setting(db, SYNC_AT_SETTING_KEY, now, now)
         db.commit()
-    _report(progress, "Processing database", "Updating the local DuckDB index", len(candidates), max(1, len(candidates)), 94)
+    _report(progress, "Processing sessions", "Updating the local session index", len(candidates), max(1, len(candidates)), 94)
     result = get_settings()
     result.update({"processed": processed, "skipped": skipped, "inactive": inactive, "failed": failed, "warnings": warnings[:200]})
     return result
@@ -1718,7 +1718,7 @@ def trajectory_session(session_id: str, lap_a: str | None = None, lap_b: str | N
     try:
         layout = _channel_layout(conn)
         if layout is None:
-            points, warnings = [], ["No supported DuckDB channel layout was found."]
+            points, warnings = [], ["No supported session channel layout was found."]
         else:
             points, warnings = _trajectory_rows(conn, layout, lap_numbers, max(200, min(5000, max_points)))
     finally:
