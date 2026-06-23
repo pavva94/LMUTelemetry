@@ -4,7 +4,8 @@
     "build": "tsc && vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "i18n:validate": "node scripts/validate-i18n.mjs && vitest run src/i18n/core.test.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^4.4.0",
