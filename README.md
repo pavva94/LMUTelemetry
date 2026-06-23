@@ -246,6 +246,7 @@ LMU_TELEMETRY_DATA_DIR=C:\path\to\data
 
 - [Architecture](docs/architecture.md): runtime components, data flow, session rotation, API surface, and frontend routing.
 - [Data Handling](docs/data-handling.md): normalization, storage, caching, pause rules, saved reviews, CSV import, and sample decimation.
+- [Internationalization](docs/i18n.md): translation resources, language persistence, interpolation/plurals, and validation workflow.
 - [Live Strategy Calculations](docs/live-strategy-calculations.md): fuel, tyre, pace, stint, pit-window, competitor, and recommendation models.
 - [MoTeC / CSV Calculations](docs/motec-csv-calculations.md): channels, derived values, lap accumulation, fuel worksheets, and Race Engineer rules.
 - [Page And Graph Calculations](docs/page-and-graph-calculations.md): page-by-page formulas for live, review, race-prep, engineering, and MoTeC views.

@@ -1,4 +1,6 @@
 import { formatRaceGap, formatRaceTime } from "./timeFormat";
+import { getRuntimeLanguage } from "../i18n/core";
+import { formatLocaleNumber } from "../i18n/format";
 
 export type FieldKind = "race-time" | "gap" | "percent" | "temperature" | "pressure" | "speed" | "fuel" | "rpm" | "number";
 
@@ -67,14 +69,17 @@ export function formatTelemetryValue(value: unknown, field: string, digits = 1) 
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) return value == null || value === "" ? "--" : String(value);
   const kind = fieldKind(field);
+  const language = getRuntimeLanguage();
+  const number = (maximumFractionDigits: number, minimumFractionDigits = maximumFractionDigits) =>
+    formatLocaleNumber(numeric, language, { maximumFractionDigits, minimumFractionDigits });
   if (kind === "race-time") return formatRaceTime(numeric);
   if (kind === "gap") return formatRaceGap(numeric);
-  if (kind === "percent") return Math.abs(numeric) <= 1 ? `${Math.round(numeric * 100)}%` : `${numeric.toFixed(digits)}%`;
-  if (kind === "temperature") return `${numeric.toFixed(digits)} C`;
-  if (kind === "speed") return `${numeric.toFixed(0)} km/h`;
-  if (kind === "fuel") return `${numeric.toFixed(field.includes("per") ? 3 : 2)} L`;
-  if (kind === "rpm") return numeric.toFixed(0);
-  return numeric.toFixed(digits);
+  if (kind === "percent") return Math.abs(numeric) <= 1 ? `${formatLocaleNumber(Math.round(numeric * 100), language)}%` : `${number(digits)}%`;
+  if (kind === "temperature") return `${number(digits)} C`;
+  if (kind === "speed") return `${number(0, 0)} km/h`;
+  if (kind === "fuel") return `${number(field.includes("per") ? 3 : 2)} L`;
+  if (kind === "rpm") return number(0, 0);
+  return number(digits);
 }
 
 export function chartValueFormatter(value: unknown, name: unknown) {
