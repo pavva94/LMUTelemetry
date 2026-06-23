@@ -152,3 +152,8 @@ def _ensure_sqlite_columns() -> None:
         with engine.begin() as connection:
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_laps_session_lap ON lmu_duckdb_laps (session_id, lap_number)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_laps_track_car ON lmu_duckdb_laps (track, car, car_class)"))
+
+    if "lmu_duckdb_sync_runs" in table_names:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_sync_runs_status_updated ON lmu_duckdb_sync_runs (status, updated_at)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_sync_runs_folder_status ON lmu_duckdb_sync_runs (folder_path, status)"))

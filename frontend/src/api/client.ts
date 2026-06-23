@@ -1,7 +1,7 @@
 import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { SavedSession, SessionDashboard, SessionReview } from "../types/session";
-import type { DuckdbJobStatus, LmuDuckdbScanResponse, LmuDuckdbSettings } from "../types/lmuDuckdb";
+import type { DuckdbJobStatus, LmuDuckdbScanResponse, LmuDuckdbSettings, LmuDuckdbSyncStatus } from "../types/lmuDuckdb";
 import type { LiveLapAnalysis } from "../types/liveLapAnalysis";
 import type { ProfileLap, ProfileLapResponse, ProfileOverview, ProfileSummary } from "../types/profile";
 
@@ -66,6 +66,8 @@ export const api = {
   lmuDuckdbSettings: () => getJson<LmuDuckdbSettings>("/api/lmu-duckdb/settings"),
   saveLmuDuckdbSettings: (path: string) => postJson<LmuDuckdbSettings>("/api/lmu-duckdb/settings", { path }),
   syncLmuDuckdb: (path?: string) => postJson<LmuDuckdbSettings>("/api/lmu-duckdb/sync", path ? { path } : {}),
+  startLmuDuckdbSyncRun: (path?: string) => postJson<LmuDuckdbSyncStatus>("/api/lmu-duckdb/sync-runs", path ? { path } : {}),
+  currentLmuDuckdbSyncRun: () => getJson<LmuDuckdbSyncStatus | null>("/api/lmu-duckdb/sync-runs/current"),
   lmuDuckdbSessions: (limit = 250, offset = 0) => getJson<LmuDuckdbScanResponse>(`/api/lmu-duckdb/sessions?limit=${limit}&offset=${offset}`),
   reviewLmuDuckdbSession: (path: string, id: string, limit = REVIEW_SAMPLE_LIMIT) =>
     postJson<SessionReview>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review?limit=${limit}`, { path }),
@@ -78,7 +80,7 @@ export const api = {
     return getJson<{ session_id: string; laps: string[]; points: Array<Record<string, number | string | boolean | null>>; warnings: string[] }>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/trajectory?${params}`);
   },
   startDuckdbSessionsJob: (limit = 250, offset = 0) => postJson<DuckdbJobStatus>(`/api/lmu-duckdb/jobs/sessions?limit=${limit}&offset=${offset}`, {}),
-  startDuckdbSyncJob: (path?: string) => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/sync", path ? { path } : {}),
+  startDuckdbSyncJob: (path?: string) => postJson<LmuDuckdbSyncStatus>("/api/lmu-duckdb/jobs/sync", path ? { path } : {}),
   startDuckdbReviewJob: (id: string, limit = REVIEW_SAMPLE_LIMIT) => postJson<DuckdbJobStatus>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review-jobs?limit=${limit}`, {}),
   startDuckdbHistoryJob: (sessionIds: string[]) => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/history", { session_ids: sessionIds }),
   startProfileOverviewJob: () => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/profile-overview", {}),

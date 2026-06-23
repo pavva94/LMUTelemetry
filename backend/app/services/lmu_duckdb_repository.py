@@ -6,6 +6,8 @@ import json
 import math
 import os
 import re
+import threading
+import uuid
 from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
@@ -14,10 +16,10 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, desc, func, select
 
 from app.db.database import SessionLocal
-from app.db.models import AppSettingModel, LmuDuckdbLapModel, LmuDuckdbSessionModel
+from app.db.models import AppSettingModel, LmuDuckdbLapModel, LmuDuckdbSessionModel, LmuDuckdbSyncRunModel
 from app.analysis.lap_quality import apply_lap_quality
 
 
@@ -40,6 +42,9 @@ ProgressCallback = Callable[[str, str, int, int, int], None]
 _REVIEW_CACHE_LIMIT = 8
 _review_cache: OrderedDict[tuple[str, str, int], dict] = OrderedDict()
 _review_cache_lock = Lock()
+_sync_thread_lock = Lock()
+_sync_threads: dict[str, threading.Thread] = {}
+_SYNC_ACTIVE_STATUSES = {"queued", "running"}
 
 
 def _report(progress: ProgressCallback | None, phase: str, message: str, completed: int, total: int, percentage: int) -> None:
@@ -1290,6 +1295,77 @@ def save_settings(path: str) -> dict:
     return get_settings()
 
 
+def _sync_run_to_dict(run: LmuDuckdbSyncRunModel) -> dict:
+    completed = int(run.processed or 0) + int(run.skipped or 0) + int(run.failed or 0)
+    total = max(0, int(run.total_files or 0))
+    percentage = 100 if run.status == "complete" else (round((completed / total) * 100) if total else 0)
+    try:
+        warnings = json.loads(run.warnings_json or "[]")
+    except Exception:
+        warnings = []
+    return {
+        "id": run.id,
+        "folder_path": run.folder_path,
+        "status": run.status,
+        "total_files": total,
+        "processed": int(run.processed or 0),
+        "skipped": int(run.skipped or 0),
+        "failed": int(run.failed or 0),
+        "inactive": int(run.inactive or 0),
+        "completed_files": completed,
+        "current_file": run.current_file,
+        "warnings": warnings,
+        "started_at": run.started_at,
+        "updated_at": run.updated_at,
+        "finished_at": run.finished_at,
+        "percentage": max(0, min(100, percentage)),
+    }
+
+
+def _latest_sync_run(db) -> LmuDuckdbSyncRunModel | None:
+    return db.scalars(select(LmuDuckdbSyncRunModel).order_by(desc(LmuDuckdbSyncRunModel.updated_at)).limit(1)).first()
+
+
+def _active_sync_run(db, folder: Path | None = None) -> LmuDuckdbSyncRunModel | None:
+    query = select(LmuDuckdbSyncRunModel).where(LmuDuckdbSyncRunModel.status.in_(_SYNC_ACTIVE_STATUSES))
+    if folder is not None:
+        query = query.where(LmuDuckdbSyncRunModel.folder_path == str(folder))
+    return db.scalars(query.order_by(desc(LmuDuckdbSyncRunModel.updated_at)).limit(1)).first()
+
+
+def current_sync_run() -> dict | None:
+    with SessionLocal() as db:
+        run = _active_sync_run(db) or _latest_sync_run(db)
+        return _sync_run_to_dict(run) if run else None
+
+
+def mark_interrupted_sync_runs() -> int:
+    now = datetime.utcnow().isoformat()
+    count = 0
+    with SessionLocal() as db:
+        runs = db.scalars(select(LmuDuckdbSyncRunModel).where(LmuDuckdbSyncRunModel.status.in_(_SYNC_ACTIVE_STATUSES))).all()
+        for run in runs:
+            run.status = "interrupted"
+            run.current_file = None
+            run.updated_at = now
+            run.finished_at = now
+            count += 1
+        db.commit()
+    return count
+
+
+def _create_sync_run(folder: Path) -> LmuDuckdbSyncRunModel:
+    now = datetime.utcnow().isoformat()
+    return LmuDuckdbSyncRunModel(
+        id=uuid.uuid4().hex,
+        folder_path=str(folder),
+        status="queued",
+        warnings_json="[]",
+        started_at=now,
+        updated_at=now,
+    )
+
+
 def _session_model_to_dict(session: LmuDuckdbSessionModel) -> dict:
     metadata = {}
     warnings = []
@@ -1603,14 +1679,32 @@ def sessions_from_cache_or_setting(limit: int = DEFAULT_SCAN_LIMIT, offset: int 
     return scanned
 
 
-def sync_folder(path: str | None = None, progress: ProgressCallback | None = None) -> dict:
-    folder_path = path or _configured_folder_path()
-    if not folder_path:
-        raise FileNotFoundError("No LMU telemetry session folder is configured.")
+def _sync_result_from_run(run: dict) -> dict:
+    result = get_settings()
+    result.update(
+        {
+            "processed": run["processed"],
+            "skipped": run["skipped"],
+            "inactive": run["inactive"],
+            "failed": run["failed"],
+            "warnings": run["warnings"][:200],
+            "sync_run": run,
+        }
+    )
+    return result
+
+
+def _set_run_progress(run: LmuDuckdbSyncRunModel, now: str, warnings: list[str]) -> None:
+    run.updated_at = now
+    run.warnings_json = _json(warnings[:200])
+
+
+def _execute_sync_run(run_id: str, folder_path: str, progress: ProgressCallback | None = None) -> dict:
     folder = _folder(folder_path)
-    now = datetime.utcnow().isoformat()
     candidates = _scan_candidates(folder)
-    _report(progress, "Loading sessions", f"Found {len(candidates)} session files", 0, max(1, len(candidates)), 8)
+    total = len(candidates)
+    now = datetime.utcnow().isoformat()
+    _report(progress, "Loading sessions", f"Found {total} session files", 0, max(1, total), 8)
     signatures = {str(file_path.resolve()): _file_signature(file_path) for file_path in candidates}
     present_keys = {_file_key(file_path) for file_path in candidates}
     processed = 0
@@ -1620,48 +1714,177 @@ def sync_folder(path: str | None = None, progress: ProgressCallback | None = Non
     warnings: list[str] = []
 
     with SessionLocal() as db:
+        run = db.get(LmuDuckdbSyncRunModel, run_id)
+        if run is None:
+            raise KeyError(run_id)
+        run.status = "running"
+        run.total_files = total
+        run.processed = 0
+        run.skipped = 0
+        run.failed = 0
+        run.inactive = 0
+        run.current_file = None
+        _set_run_progress(run, now, warnings)
+        db.commit()
+
         cached_by_file_key = {
             file_key: {"signature": signature, "active": active}
             for file_key, signature, active in db.execute(
                 select(LmuDuckdbSessionModel.file_key, LmuDuckdbSessionModel.signature, LmuDuckdbSessionModel.active)
             ).all()
         }
+
         for index, file_path in enumerate(candidates):
             signature = signatures[str(file_path.resolve())]
-            cached = cached_by_file_key.get(_file_key(file_path))
+            file_key = _file_key(file_path)
+            percent = 10 + round((index / max(1, total)) * 80)
+            run = db.get(LmuDuckdbSyncRunModel, run_id)
+            if run is None:
+                raise KeyError(run_id)
+            run.current_file = str(file_path)
+            _set_run_progress(run, datetime.utcnow().isoformat(), warnings)
+            db.commit()
+
+            cached = cached_by_file_key.get(file_key)
             if cached and cached["signature"] == signature and cached["active"]:
                 skipped += 1
-                percent = 10 + round(((index + 1) / max(1, len(candidates))) * 80)
-                _report(progress, "Validating telemetry", f"Checked {file_path.name}", index + 1, len(candidates), percent)
+                run = db.get(LmuDuckdbSyncRunModel, run_id)
+                if run is not None:
+                    run.skipped = skipped
+                    run.current_file = str(file_path)
+                    _set_run_progress(run, datetime.utcnow().isoformat(), warnings)
+                    db.commit()
+                _report(progress, "Validating telemetry", f"Checked {file_path.name}", index + 1, max(1, total), 10 + round(((index + 1) / max(1, total)) * 80))
                 continue
+
             try:
-                _report(progress, "Reading telemetry", f"Reading {file_path.name}", index, len(candidates), 10 + round((index / max(1, len(candidates))) * 80))
+                _report(progress, "Reading telemetry", f"Reading {file_path.name}", index, max(1, total), percent)
                 review = _review_file(file_path, sample_limit=0)
+                run = db.get(LmuDuckdbSyncRunModel, run_id)
+                if run is None:
+                    raise KeyError(run_id)
                 _store_review(db, file_path, review, signature, now)
+                processed += 1
+                run.processed = processed
+                run.current_file = str(file_path)
+                warnings.extend(f"{file_path.name}: {warning}" for warning in review.get("warnings") or [])
+                _set_run_progress(run, datetime.utcnow().isoformat(), warnings)
                 db.commit()
                 db.expunge_all()
+                cached_by_file_key[file_key] = {"signature": signature, "active": True}
                 _clear_review_cache(review["session"]["id"])
-                processed += 1
-                warnings.extend(f"{file_path.name}: {warning}" for warning in review.get("warnings") or [])
             except Exception as exc:
                 db.rollback()
                 failed += 1
                 warnings.append(f"{file_path.name}: {exc}")
-            percent = 10 + round(((index + 1) / max(1, len(candidates))) * 80)
-            _report(progress, "Validating telemetry", f"Processed {index + 1} of {len(candidates)} files", index + 1, len(candidates), percent)
+                run = db.get(LmuDuckdbSyncRunModel, run_id)
+                if run is not None:
+                    run.failed = failed
+                    run.current_file = str(file_path)
+                    _set_run_progress(run, datetime.utcnow().isoformat(), warnings)
+                    db.commit()
+
+            _report(progress, "Validating telemetry", f"Processed {index + 1} of {total} files", index + 1, max(1, total), 10 + round(((index + 1) / max(1, total)) * 80))
+
+        run = db.get(LmuDuckdbSyncRunModel, run_id)
+        if run is None:
+            raise KeyError(run_id)
         for cached in db.scalars(select(LmuDuckdbSessionModel).where(LmuDuckdbSessionModel.active.is_(True))).all():
             if cached.file_key not in present_keys:
                 cached.active = False
                 inactive += 1
+        finished = datetime.utcnow().isoformat()
         status = f"Processed {processed}, skipped {skipped}, marked inactive {inactive}, failed {failed}."
-        _set_setting(db, FOLDER_SETTING_KEY, str(folder), now)
-        _set_setting(db, SYNC_STATUS_SETTING_KEY, status, now)
-        _set_setting(db, SYNC_AT_SETTING_KEY, now, now)
+        _set_setting(db, FOLDER_SETTING_KEY, str(folder), finished)
+        _set_setting(db, SYNC_STATUS_SETTING_KEY, status, finished)
+        _set_setting(db, SYNC_AT_SETTING_KEY, finished, finished)
+        run.status = "complete"
+        run.processed = processed
+        run.skipped = skipped
+        run.failed = failed
+        run.inactive = inactive
+        run.current_file = None
+        run.finished_at = finished
+        _set_run_progress(run, finished, warnings)
         db.commit()
-    _report(progress, "Processing sessions", "Updating the local session index", len(candidates), max(1, len(candidates)), 94)
-    result = get_settings()
-    result.update({"processed": processed, "skipped": skipped, "inactive": inactive, "failed": failed, "warnings": warnings[:200]})
-    return result
+        run_dict = _sync_run_to_dict(run)
+
+    _report(progress, "Processing sessions", "Updating the local session index", total, max(1, total), 94)
+    return _sync_result_from_run(run_dict)
+
+
+def _fail_sync_run(run_id: str, exc: Exception) -> dict | None:
+    now = datetime.utcnow().isoformat()
+    with SessionLocal() as db:
+        run = db.get(LmuDuckdbSyncRunModel, run_id)
+        if run is None:
+            return None
+        try:
+            warnings = json.loads(run.warnings_json or "[]")
+        except Exception:
+            warnings = []
+        warnings.append(str(exc))
+        run.status = "failed"
+        run.current_file = None
+        run.finished_at = now
+        _set_run_progress(run, now, warnings)
+        db.commit()
+        return _sync_run_to_dict(run)
+
+
+def _sync_thread_target(run_id: str, folder_path: str) -> None:
+    try:
+        _execute_sync_run(run_id, folder_path)
+    except Exception as exc:
+        _fail_sync_run(run_id, exc)
+    finally:
+        with _sync_thread_lock:
+            _sync_threads.pop(run_id, None)
+
+
+def _ensure_sync_thread(run_id: str, folder_path: str) -> None:
+    with _sync_thread_lock:
+        existing = _sync_threads.get(run_id)
+        if existing and existing.is_alive():
+            return
+        thread = threading.Thread(target=_sync_thread_target, args=(run_id, folder_path), name=f"lmu-sync-{run_id[:8]}", daemon=True)
+        _sync_threads[run_id] = thread
+        thread.start()
+
+
+def start_sync_run(path: str | None = None) -> dict:
+    folder_path = path or _configured_folder_path()
+    if not folder_path:
+        raise FileNotFoundError("No LMU telemetry session folder is configured.")
+    folder = _folder(folder_path)
+    with _sync_thread_lock:
+        with SessionLocal() as db:
+            active = _active_sync_run(db, folder)
+            if active is None:
+                active = _create_sync_run(folder)
+                db.add(active)
+                db.commit()
+                db.refresh(active)
+            run_dict = _sync_run_to_dict(active)
+    _ensure_sync_thread(run_dict["id"], run_dict["folder_path"])
+    return run_dict
+
+
+def sync_folder(path: str | None = None, progress: ProgressCallback | None = None) -> dict:
+    folder_path = path or _configured_folder_path()
+    if not folder_path:
+        raise FileNotFoundError("No LMU telemetry session folder is configured.")
+    folder = _folder(folder_path)
+    with SessionLocal() as db:
+        run = _create_sync_run(folder)
+        db.add(run)
+        db.commit()
+        run_id = run.id
+    try:
+        return _execute_sync_run(run_id, str(folder), progress=progress)
+    except Exception as exc:
+        _fail_sync_run(run_id, exc)
+        raise
 
 
 def _review_file(file_path: Path, sample_limit: int = 5000, progress: ProgressCallback | None = None) -> dict:

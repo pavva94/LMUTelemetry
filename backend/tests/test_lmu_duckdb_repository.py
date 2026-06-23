@@ -5,7 +5,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.db.database import Base
-from app.db.models import AppSettingModel, LmuDuckdbSessionModel
+from app.db.models import AppSettingModel, LmuDuckdbSessionModel, LmuDuckdbSyncRunModel
 from app.services import lmu_duckdb_repository
 
 
@@ -404,6 +404,76 @@ def test_sync_marks_removed_files_inactive(monkeypatch, tmp_path) -> None:
 
     assert result["inactive"] == 1
     assert result["active_sessions"] == 0
+
+
+def test_sync_commits_processed_files_when_later_file_fails(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(lmu_duckdb_repository, "SessionLocal", factory)
+    good_path = tmp_path / "good.duckdb"
+    broken_path = tmp_path / "broken.duckdb"
+    _make_channel_duckdb(good_path)
+    _make_channel_duckdb(broken_path)
+    original_review = lmu_duckdb_repository._review_file
+
+    def flaky_review(file_path, *args, **kwargs):
+        if file_path.name == "broken.duckdb":
+            raise RuntimeError("broken file")
+        return original_review(file_path, *args, **kwargs)
+
+    monkeypatch.setattr(lmu_duckdb_repository, "_review_file", flaky_review)
+
+    result = lmu_duckdb_repository.sync_folder(str(tmp_path))
+
+    assert result["processed"] == 1
+    assert result["failed"] == 1
+    with factory() as db:
+        assert db.query(LmuDuckdbSessionModel).filter_by(active=True).count() == 1
+        run = db.query(LmuDuckdbSyncRunModel).one()
+        assert run.status == "complete"
+        assert run.processed == 1
+        assert run.failed == 1
+
+
+def test_interrupted_sync_does_not_mark_removed_files_inactive(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(lmu_duckdb_repository, "SessionLocal", factory)
+    db_path = tmp_path / "session_tables.duckdb"
+    _make_channel_duckdb(db_path)
+    lmu_duckdb_repository.sync_folder(str(tmp_path))
+    db_path.unlink()
+    with factory() as db:
+        db.add(
+            LmuDuckdbSyncRunModel(
+                id="active-sync",
+                folder_path=str(tmp_path),
+                status="running",
+                warnings_json="[]",
+                started_at="2026-01-01T00:00:00",
+                updated_at="2026-01-01T00:00:00",
+            )
+        )
+        db.commit()
+
+    assert lmu_duckdb_repository.mark_interrupted_sync_runs() == 1
+    with factory() as db:
+        assert db.query(LmuDuckdbSessionModel).filter_by(active=True).count() == 1
+        assert db.get(LmuDuckdbSyncRunModel, "active-sync").status == "interrupted"
+
+
+def test_start_sync_run_reuses_active_run(monkeypatch, tmp_path) -> None:
+    factory = _session_factory()
+    monkeypatch.setattr(lmu_duckdb_repository, "SessionLocal", factory)
+    monkeypatch.setattr(lmu_duckdb_repository, "_ensure_sync_thread", lambda *_args, **_kwargs: None)
+    db_path = tmp_path / "session_tables.duckdb"
+    _make_channel_duckdb(db_path)
+
+    first = lmu_duckdb_repository.start_sync_run(str(tmp_path))
+    second = lmu_duckdb_repository.start_sync_run(str(tmp_path))
+
+    assert second["id"] == first["id"]
+    assert second["status"] == "queued"
+    with factory() as db:
+        assert db.query(LmuDuckdbSyncRunModel).count() == 1
 
 
 def test_configured_folder_lists_and_reviews_without_cache(monkeypatch, tmp_path) -> None:

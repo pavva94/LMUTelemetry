@@ -31,6 +31,24 @@ export type LmuDuckdbSettings = {
   warnings?: string[];
 };
 
+export type LmuDuckdbSyncStatus = {
+  id: string;
+  folder_path: string;
+  status: "queued" | "running" | "complete" | "failed" | "interrupted";
+  total_files: number;
+  processed: number;
+  skipped: number;
+  failed: number;
+  inactive: number;
+  completed_files: number;
+  current_file?: string | null;
+  warnings: string[];
+  started_at: string;
+  updated_at: string;
+  finished_at?: string | null;
+  percentage: number;
+};
+
 export type DuckdbJobStatus = {
   job_id: string;
   status: "queued" | "running" | "complete" | "failed";

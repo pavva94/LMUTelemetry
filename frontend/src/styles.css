@@ -406,6 +406,15 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .duckdb-selected-session strong, .duckdb-selected-session span { overflow-wrap: anywhere; }
 .duckdb-selected-session span { color: var(--text-soft); font-size: 12px; }
 .duckdb-selected-session small { color: var(--muted); font-size: 11px; }
+.sync-status { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(180px, .55fr) auto minmax(220px, .7fr); gap: 10px; align-items: center; margin-top: 10px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: #0b1117; }
+.sync-status > div:first-child { display: grid; gap: 3px; min-width: 0; }
+.sync-status strong { color: var(--text); }
+.sync-status span, .sync-status small { color: var(--text-soft); font-size: 12px; overflow-wrap: anywhere; }
+.sync-status b { color: var(--amber-2); font-variant-numeric: tabular-nums; }
+.sync-status-progress { height: 8px; overflow: hidden; border: 1px solid var(--border-strong); border-radius: 999px; background: #070b10; }
+.sync-status-progress span { display: block; height: 100%; min-width: 2px; background: linear-gradient(90deg, var(--blue), var(--amber)); }
+.sync-status-failed { border-color: rgba(255, 105, 105, .45); background: rgba(255, 105, 105, .08); }
+.sync-status-interrupted { border-color: rgba(243, 182, 66, .38); background: rgba(243, 182, 66, .08); }
 
 .report-toolbar { align-items: end; margin-bottom: 0; }
 .report-toolbar label { min-width: min(520px, 100%); flex: 1 1 360px; }
@@ -912,6 +921,7 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
   .lap-references { grid-column: 1; }
   .live-status-row, .live-status-row:has(.alert-card), .trend-grid { grid-template-columns: 1fr; }
   .position-chart { grid-column: 1; }
+  .sync-status { grid-template-columns: 1fr; align-items: stretch; }
   .vehicle-tyres { gap-inline: 44px; }
   .live-section, .status-card, .trend-card { padding: 11px; }
   .position-chart .live-section-heading { align-items: stretch; flex-direction: column; }

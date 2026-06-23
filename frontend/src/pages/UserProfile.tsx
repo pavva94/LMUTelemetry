@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
-import type { LmuDuckdbSettings } from "../types/lmuDuckdb";
+import type { LmuDuckdbSettings, LmuDuckdbSyncStatus } from "../types/lmuDuckdb";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import type { ProfileLap, ProfileOverview, ProfileSummary } from "../types/profile";
 
@@ -13,6 +13,8 @@ const fmt = (value?: number | null, digits = 1, suffix = "") =>
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
 const dateText = (value?: string | null) => value ? new Date(value).toLocaleString() : "--";
 const wearText = (value?: number | null) => fmt(value == null ? null : value * 100, 1, "%");
+const isSyncActive = (status?: LmuDuckdbSyncStatus | null) => status?.status === "queued" || status?.status === "running";
+const fileName = (path?: string | null) => path ? path.split(/[\\/]/).pop() || path : "";
 
 function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return <div className="metric compact"><span className="label">{label}</span><span className="value">{value}</span>{sub && <span className="subvalue">{sub}</span>}</div>;
@@ -83,6 +85,7 @@ export function UserProfile() {
   const [error, setError] = useState("");
   const [folder, setFolder] = useState(DEFAULT_FOLDER);
   const [settings, setSettings] = useState<LmuDuckdbSettings | null>(null);
+  const [syncStatus, setSyncStatus] = useState<LmuDuckdbSyncStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [loadingOverview, setLoadingOverview] = useState(true);
 
@@ -108,18 +111,54 @@ export function UserProfile() {
         if (data.folder_path) setFolder(data.folder_path);
       })
       .catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
+    api.currentLmuDuckdbSyncRun()
+      .then((status) => {
+        setSyncStatus(status);
+        setSyncing(isSyncActive(status));
+      })
+      .catch(() => undefined);
     void loadOverview();
   }, []);
+
+  useEffect(() => {
+    if (!syncing) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const status = await api.currentLmuDuckdbSyncRun();
+        if (cancelled) return;
+        setSyncStatus(status);
+        const active = isSyncActive(status);
+        setSyncing(active);
+        if (!active) {
+          setSettings(await api.lmuDuckdbSettings());
+          await loadOverview();
+        }
+      } catch (exc) {
+        if (!cancelled) {
+          setSyncing(false);
+          setError(exc instanceof Error ? exc.message : String(exc));
+        }
+      }
+    };
+    const id = window.setInterval(refresh, 2000);
+    void refresh();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [syncing]);
 
   const saveAndSync = async () => {
     if (!folder.trim()) return;
     setSyncing(true);
     try {
-      await api.saveLmuDuckdbSettings(folder.trim());
-      const result = await runDuckdbJob<LmuDuckdbSettings>(() => api.startDuckdbSyncJob());
-      setSettings(result);
-      if (result.folder_path) setFolder(result.folder_path);
-      await loadOverview();
+      const saved = await api.saveLmuDuckdbSettings(folder.trim());
+      setSettings(saved);
+      if (saved.folder_path) setFolder(saved.folder_path);
+      const status = await api.startLmuDuckdbSyncRun(saved.folder_path || folder.trim());
+      setSyncStatus(status);
+      setSyncing(isSyncActive(status));
       setError("");
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -162,15 +201,28 @@ export function UserProfile() {
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={syncing || loadingOverview} title={duckdbProgress?.phase || (syncing ? "Syncing saved sessions" : "Loading profile")} detail={duckdbProgress?.message || (syncing ? "Scanning the LMU telemetry folder and refreshing the local cache." : "Reading saved-session profile totals and best laps.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
+      <LoadingOverlay show={loadingOverview} title={duckdbProgress?.phase || "Loading profile"} detail={duckdbProgress?.message || "Reading saved-session profile totals and best laps."} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       {error && <section className="card span-12"><div className="error-box">{error}</div></section>}
       <section className="card span-12">
         <h2>LMU Session Source</h2>
         <div className="duckdb-path-grid profile-source">
           <label>Telemetry folder<input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder={DEFAULT_FOLDER} /></label>
-          <button className="primary" disabled={syncing || !folder.trim()} onClick={() => void saveAndSync()}>{syncing ? "Syncing" : "Save and sync"}</button>
+          <button className="primary" disabled={syncing || !folder.trim()} onClick={() => void saveAndSync()}>{syncing ? "Sync running" : "Save and sync"}</button>
           <input value={settings?.last_sync_status || "No sync has run yet"} readOnly />
         </div>
+        {syncStatus && (
+          <div className={`sync-status sync-status-${syncStatus.status}`}>
+            <div>
+              <strong>{syncStatus.status === "running" || syncStatus.status === "queued" ? "Syncing saved sessions" : `Sync ${syncStatus.status}`}</strong>
+              <span>{syncStatus.completed_files} of {syncStatus.total_files} files checked{syncStatus.current_file ? ` - ${fileName(syncStatus.current_file)}` : ""}</span>
+            </div>
+            <div className="sync-status-progress" role="progressbar" aria-label="Saved session sync" aria-valuemin={0} aria-valuemax={100} aria-valuenow={syncStatus.percentage}>
+              <span style={{ width: `${syncStatus.percentage}%` }} />
+            </div>
+            <b>{syncStatus.percentage}%</b>
+            <small>Processed {syncStatus.processed}; skipped {syncStatus.skipped}; failed {syncStatus.failed}; inactive {syncStatus.inactive}</small>
+          </div>
+        )}
         <div className="header-grid">
           <Metric label="Cached sessions" value={text(settings?.active_sessions)} sub={`${text(settings?.cached_sessions)} total records`} />
           <Metric label="Warnings" value={text(settings?.warning_count)} />

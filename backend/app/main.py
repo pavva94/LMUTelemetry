@@ -36,7 +36,8 @@ logger = logging.getLogger(__name__)
 
 def _sync_lmu_duckdb_on_startup() -> None:
     try:
-        result = lmu_duckdb_repository.sync_folder()
+        interrupted = lmu_duckdb_repository.mark_interrupted_sync_runs()
+        result = lmu_duckdb_repository.start_sync_run()
     except FileNotFoundError:
         logger.info("Skipping LMU DuckDB startup sync: no telemetry folder configured.")
     except NotADirectoryError as exc:
@@ -47,11 +48,10 @@ def _sync_lmu_duckdb_on_startup() -> None:
         logger.exception("LMU DuckDB startup sync failed: %s", exc)
     else:
         logger.info(
-            "LMU DuckDB startup sync complete: processed=%s skipped=%s inactive=%s failed=%s",
-            result.get("processed", 0),
-            result.get("skipped", 0),
-            result.get("inactive", 0),
-            result.get("failed", 0),
+            "LMU DuckDB startup sync running: interrupted=%s run=%s status=%s",
+            interrupted,
+            result.get("id"),
+            result.get("status"),
         )
 
 

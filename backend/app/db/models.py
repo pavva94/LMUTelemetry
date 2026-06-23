@@ -178,6 +178,23 @@ class LmuDuckdbLapModel(Base):
     finish_status: Mapped[Optional[str]] = mapped_column(String)
 
 
+class LmuDuckdbSyncRunModel(Base):
+    __tablename__ = "lmu_duckdb_sync_runs"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    folder_path: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    total_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    inactive: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    current_file: Mapped[Optional[str]] = mapped_column(Text)
+    warnings_json: Mapped[Optional[str]] = mapped_column(Text)
+    started_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+    finished_at: Mapped[Optional[str]] = mapped_column(String)
+
+
 class TelemetrySampleModel(Base):
     __tablename__ = "telemetry_samples"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

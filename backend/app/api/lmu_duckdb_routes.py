@@ -44,10 +44,29 @@ def sync(payload: FolderRequest | None = None):
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
+@router.post("/sync-runs", status_code=202)
+def start_sync_run(payload: FolderRequest | None = None):
+    try:
+        return lmu_duckdb_repository.start_sync_run(payload.path if payload else None)
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@router.get("/sync-runs/current")
+def current_sync_run():
+    return lmu_duckdb_repository.current_sync_run()
+
+
 @router.post("/jobs/sync", status_code=202)
 def start_sync_job(payload: FolderRequest | None = None):
-    path = payload.path if payload else None
-    return duckdb_jobs.start(lambda progress: lmu_duckdb_repository.sync_folder(path, progress=progress))
+    try:
+        return lmu_duckdb_repository.start_sync_run(payload.path if payload else None)
+    except (FileNotFoundError, NotADirectoryError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/jobs/sessions", status_code=202)
