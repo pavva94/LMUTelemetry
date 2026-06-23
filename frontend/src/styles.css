@@ -467,6 +467,9 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .strategy-visual-summary > div:last-child { border-right: 0; }
 .strategy-visual-summary strong { color: #fff; font-size: 20px; font-variant-numeric: tabular-nums; }
 .pit-strategy-visualization .strategy-timeline { overflow: visible; }
+.live-style-strategy-timeline { overflow: visible; }
+.strategy-track-rail { min-width: 0; overflow-x: auto; padding: 1px 0 4px; scrollbar-width: thin; }
+.strategy-track-rail .strategy-track { min-width: 680px; }
 .pit-strategy-visualization .strategy-track { min-height: 126px; min-width: 680px; margin-top: 2px; padding: 28px 0 48px; overflow: visible; }
 .pit-strategy-visualization .strategy-stint { align-content: center; gap: 3px; min-width: 58px; background: linear-gradient(180deg, rgba(85,199,247,.18), rgba(85,199,247,.06)); }
 .pit-strategy-visualization .strategy-stint strong { font-size: 13px; }
@@ -517,6 +520,7 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
   .strategy-visual-summary > div:nth-child(2) { border-right: 0; }
   .strategy-visual-summary > div:nth-child(-n+2) { border-bottom: 1px solid var(--border); }
   .pit-strategy-visualization .strategy-timeline { overflow-x: auto; }
+  .pit-strategy-visualization .live-style-strategy-timeline { overflow: visible; }
   .stint-service-list { min-width: 0; grid-template-columns: 1fr; }
   .stint-service-body { grid-template-columns: 1fr; }
   .service-fuel { padding: 10px 0 0; border-top: 1px solid var(--border); border-left: 0; }
@@ -885,6 +889,8 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .standings-table tr.standings-player td { background: rgba(85,199,247,.12); border-top: 1px solid rgba(85,199,247,.36); border-bottom: 1px solid rgba(85,199,247,.36); }
 .standings-table tr.standings-player td:first-child { box-shadow: inset 3px 0 0 var(--cyan); }
 .best-lap-column { color: var(--green); font-weight: 900; }
+.standings-table td.class-fastest-lap { background: rgba(168,85,247,.18); color: #d9b4ff; box-shadow: inset 0 0 0 1px rgba(168,85,247,.54); }
+.standings-table tr.standings-player td.class-fastest-lap { background: linear-gradient(90deg, rgba(85,199,247,.12), rgba(168,85,247,.25)); }
 
 @media (max-width: 1320px) {
   .live-status-row, .live-status-row:has(.alert-card) { grid-template-columns: repeat(2,minmax(0,1fr)); }

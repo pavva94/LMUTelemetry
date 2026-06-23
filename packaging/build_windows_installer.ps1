@@ -3,7 +3,6 @@ param(
     [switch]$SkipFrontendTests,
     [switch]$SkipFrontendBuild,
     [switch]$SkipSmokeTest,
-    [switch]$SkipInstaller,
     [ValidatePattern('^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$')]
     [string]$AppVersion = "0.1.0"
 )
@@ -13,11 +12,16 @@ $PSNativeCommandUseErrorActionPreference = $true
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $VenvPython = Join-Path $RepoRoot "backend\.venv\Scripts\python.exe"
 $Python = if (Test-Path $VenvPython) { $VenvPython } else { "python" }
+$DistRoot = Join-Path $RepoRoot "dist"
 $FrontendIndex = Join-Path $RepoRoot "frontend\dist\index.html"
-$AppExe = Join-Path $RepoRoot "dist\LMUTelemetry\LMUTelemetry.exe"
-$PackagedFrontendIndex = Join-Path $RepoRoot "dist\LMUTelemetry\_internal\frontend\dist\index.html"
-$PackagedConfig = Join-Path $RepoRoot "dist\LMUTelemetry\_internal\config\default_strategy.yaml"
-$PackagedTelemetryModule = Join-Path $RepoRoot "dist\LMUTelemetry\_internal\pyLMUSharedMemory\lmu_data.py"
+$AppBundle = Join-Path $DistRoot "LMUTelemetry"
+$AppExe = Join-Path $AppBundle "LMUTelemetry.exe"
+$InstallerExe = Join-Path $DistRoot "LMUTelemetry-Setup-$AppVersion.exe"
+$PortableZip = Join-Path $DistRoot "LMUTelemetry-Windows-Portable-$AppVersion.zip"
+$ChecksumFile = Join-Path $DistRoot "SHA256SUMS-$AppVersion.txt"
+$PackagedFrontendIndex = Join-Path $AppBundle "_internal\frontend\dist\index.html"
+$PackagedConfig = Join-Path $AppBundle "_internal\config\default_strategy.yaml"
+$PackagedTelemetryModule = Join-Path $AppBundle "_internal\pyLMUSharedMemory\lmu_data.py"
 
 function Invoke-Step {
     param(
@@ -71,6 +75,21 @@ function Find-InnoSetup {
         return $command.Source
     }
     return $null
+}
+
+function New-PortableArchive {
+    if (Test-Path -LiteralPath $PortableZip) {
+        Remove-Item -LiteralPath $PortableZip -Force
+    }
+    Compress-Archive -LiteralPath $AppBundle -DestinationPath $PortableZip -CompressionLevel Optimal -Force
+}
+
+function Write-ArtifactChecksums {
+    $rows = @($InstallerExe, $PortableZip) | ForEach-Object {
+        $hash = Get-FileHash -LiteralPath $_ -Algorithm SHA256
+        "$($hash.Hash.ToLowerInvariant())  $(Split-Path -Leaf $_)"
+    }
+    $rows | Set-Content -LiteralPath $ChecksumFile -Encoding ascii
 }
 
 Push-Location $RepoRoot
@@ -152,26 +171,31 @@ try {
         }
     }
 
-    if (-not $SkipInstaller) {
-        Invoke-Step "Build installer" {
-            $iscc = Find-InnoSetup
-            if (-not $iscc) {
-                throw "Inno Setup 6 was not found. Install it from https://jrsoftware.org/isinfo.php or rerun with -SkipInstaller."
-            }
-            & $iscc "/DMyAppVersion=$AppVersion" "packaging\installer.iss"
-            Assert-NativeSuccess "Inno Setup"
+    Invoke-Step "Build installer" {
+        $iscc = Find-InnoSetup
+        if (-not $iscc) {
+            throw "Inno Setup 6 was not found. Install it from https://jrsoftware.org/isinfo.php."
         }
+        & $iscc "/DMyAppVersion=$AppVersion" "packaging\installer.iss"
+        Assert-NativeSuccess "Inno Setup"
     }
+    Assert-FileExists $InstallerExe "Installer executable"
+
+    Invoke-Step "Build portable archive" {
+        New-PortableArchive
+    }
+    Assert-FileExists $PortableZip "Portable archive"
+
+    Invoke-Step "Write artifact checksums" {
+        Write-ArtifactChecksums
+    }
+    Assert-FileExists $ChecksumFile "Checksum file"
 
     Write-Host ""
     Write-Host "Release artifacts are in:" -ForegroundColor Green
-    Write-Host "  $AppExe"
-    $exeInfo = Get-Item -LiteralPath $AppExe
-    $exeHash = Get-FileHash -LiteralPath $AppExe -Algorithm SHA256
-    Write-Host ("  Size: {0:N2} MB" -f ($exeInfo.Length / 1MB))
-    Write-Host "  SHA256: $($exeHash.Hash)"
-    if (-not $SkipInstaller) {
-        Write-Host "  $RepoRoot\release\LMUTelemetry-Setup-$AppVersion.exe"
+    foreach ($artifact in @($InstallerExe, $PortableZip, $ChecksumFile)) {
+        $artifactInfo = Get-Item -LiteralPath $artifact
+        Write-Host ("  {0} ({1:N2} MB)" -f $artifactInfo.FullName, ($artifactInfo.Length / 1MB))
     }
 }
 finally {

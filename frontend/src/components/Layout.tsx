@@ -41,7 +41,7 @@ const profileItems = [
 const modes = [
   ["live", "Live Mode", "Real-time telemetry", Gauge, liveItems],
   ["plan", "Plan Mode", "Strategy and session reports", FileText, planItems],
-  ["profile", "User Profile", "DuckDB career and review", UserRound, profileItems],
+  ["profile", "User Profile", "Career and sessions", UserRound, profileItems],
 ] as const;
 
 const items = [...liveItems, ...planItems, ...profileItems] as const;
@@ -61,8 +61,8 @@ const pageDescriptions: Record<PageKey, string> = {
   "lap-analysis": "Whole-session coaching from every clean lap: where time is lost, what repeats, and what to try next.",
   pit: "Pit-window guidance based on current strategy assumptions and live session state.",
   settings: "Configuration for connection, display, recording behavior, and strategy assumptions.",
-  profile: "DuckDB-only career profile and personal records built from the configured Le Mans Ultimate telemetry folder.",
-  review: "Read-only DuckDB session review using cached file metadata and raw samples loaded on demand from the selected database.",
+  profile: "Career profile and personal records built from the configured Le Mans Ultimate telemetry folder.",
+  review: "Read-only session review using cached session metadata and raw samples loaded on demand.",
 };
 
 const firstPageByMode: Record<ModeKey, PageKey> = {

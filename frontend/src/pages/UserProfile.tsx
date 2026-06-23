@@ -162,10 +162,10 @@ export function UserProfile() {
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={syncing || loadingOverview} title={duckdbProgress?.phase || (syncing ? "Syncing DuckDB sessions" : "Loading profile")} detail={duckdbProgress?.message || (syncing ? "Scanning the LMU telemetry folder and refreshing the local cache." : "Reading cached DuckDB profile totals and best laps.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
+      <LoadingOverlay show={syncing || loadingOverview} title={duckdbProgress?.phase || (syncing ? "Syncing saved sessions" : "Loading profile")} detail={duckdbProgress?.message || (syncing ? "Scanning the LMU telemetry folder and refreshing the local cache." : "Reading saved-session profile totals and best laps.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       {error && <section className="card span-12"><div className="error-box">{error}</div></section>}
       <section className="card span-12">
-        <h2>LMU DuckDB Source</h2>
+        <h2>LMU Session Source</h2>
         <div className="duckdb-path-grid profile-source">
           <label>Telemetry folder<input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder={DEFAULT_FOLDER} /></label>
           <button className="primary" disabled={syncing || !folder.trim()} onClick={() => void saveAndSync()}>{syncing ? "Syncing" : "Save and sync"}</button>
@@ -182,7 +182,7 @@ export function UserProfile() {
         <h2>Career Overview</h2>
         <div className="header-grid">
           <Metric label="Distance" value={fmt(totals.total_distance_km as number, 1, " km")} />
-          <Metric label="Sessions" value={text(totals.total_sessions as number)} sub={`${text(totals.duckdb_sessions as number)} DuckDB`} />
+          <Metric label="Sessions" value={text(totals.total_sessions as number)} sub={`${text(totals.duckdb_sessions as number)} saved`} />
           <Metric label="Detected laps" value={text(totals.total_laps as number)} sub={`${text(totals.completed_laps as number)} completed; ${text(totals.valid_laps as number)} ranking-valid`} />
           <Metric label="Completed driving time" value={formatDuration(totals.total_driving_time as number)} />
           <Metric label="Cars" value={text(totals.different_cars as number)} />
@@ -190,10 +190,6 @@ export function UserProfile() {
           <Metric label="Avg session" value={formatDuration(totals.average_session_duration as number)} />
           <Metric label="Avg distance" value={fmt(totals.average_distance_per_session as number, 1, " km")} />
           <Metric label="Avg laps" value={fmt(totals.average_laps_per_session as number, 1)} />
-          <Metric label="Wins" value={text(totals.wins as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
-          <Metric label="Podiums" value={text(totals.podiums as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
-          <Metric label="Top 10" value={text(totals.top10 as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
-          <Metric label="DNF/DNS/DQ" value={text(totals.dnf_dns as number)} sub={`${text(totals.status_race_sessions as number)} races with status data`} />
           <Metric label="Best-lap records" value={text(totals.best_lap_count as number)} />
         </div>
       </section>
@@ -218,7 +214,7 @@ export function UserProfile() {
         </div>
         {showExcluded
           ? (excludedLaps.length ? <LapTable rows={excludedLaps} sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="No excluded or suspicious laps were found." />)
-          : (bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU DuckDB folder is synced." />)}
+          : (bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU session folder is synced." />)}
       </section>
     </div>
   );
@@ -306,7 +302,7 @@ function LapTable({
               <th><ColumnFilter value={filters.ambient} onChange={(value) => updateFilter("ambient", value)} placeholder="Ambient" /></th>
               <th><ColumnFilter value={filters.engine} onChange={(value) => updateFilter("engine", value)} placeholder="Oil/water" /></th>
               <th><ColumnFilter value={filters.speed} onChange={(value) => updateFilter("speed", value)} placeholder="Speed" /></th>
-              <th><ColumnSelect value={filters.source} onChange={(value) => updateFilter("source", value)} options={["duckdb", "live"]} /></th>
+              <th><ColumnSelect value={filters.source} onChange={(value) => updateFilter("source", value)} options={[{ value: "duckdb", label: "Saved session" }, { value: "live", label: "Live" }]} /></th>
             </tr>
           </thead>
           <tbody>
@@ -349,11 +345,15 @@ function ColumnFilter({ value, onChange, placeholder }: { value: string; onChang
   return <input className="table-filter" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />;
 }
 
-function ColumnSelect({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: string[] }) {
+function ColumnSelect({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: Array<string | { value: string; label: string }> }) {
   return (
     <select className="table-filter" value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">All</option>
-      {options.map((option) => <option value={option} key={option}>{option}</option>)}
+      {options.map((option) => {
+        const value = typeof option === "string" ? option : option.value;
+        const label = typeof option === "string" ? option : option.label;
+        return <option value={value} key={value}>{label}</option>;
+      })}
     </select>
   );
 }
@@ -438,7 +438,7 @@ function compareLapRows(a: ProfileLap, b: ProfileLap, sort: string, direction: s
 
 function sourceBadge(source: ProfileLap["source"]) {
   if (source === "live") return <span className="badge blue">Live</span>;
-  return <span className="badge green">DuckDB</span>;
+  return <span className="badge green">Saved session</span>;
 }
 
 function validityBadge(lap: ProfileLap) {

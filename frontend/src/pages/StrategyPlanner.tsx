@@ -119,7 +119,7 @@ function sessionPaceEvidence(lapTimes: number[], fallback?: number | null): Pace
     paceDegradationPerLap: trend == null ? null : Math.max(0, trend),
     sampleLaps: lapTimes.length,
     confidence: lapTimes.length >= 10 ? "high" : lapTimes.length >= 7 ? "medium" : "low",
-    source: "DuckDB clean lap history",
+    source: "Saved-session clean lap history",
   };
 }
 
@@ -179,6 +179,17 @@ function tyreWearText(values?: Record<Wheel, number> | null) {
 function tyreRemainingText(values?: Record<Wheel, number> | null) {
   if (!values) return "--";
   return wheels.map((wheel) => `${wheelLabels[wheel]} ${fmt(values[wheel] * 100, 0, "%")}`).join(" / ");
+}
+
+function tyreLife(value: number | null | undefined) {
+  return value == null || !Number.isFinite(value) ? null : Math.max(0, Math.min(1, 1 - value));
+}
+
+function tyreLifeTone(value: number | null) {
+  if (value == null) return "unknown";
+  if (value <= 0.25) return "critical";
+  if (value <= 0.5) return "warning";
+  return "healthy";
 }
 
 function tyreChangeWearText(stop: StrategyCandidate["stopsDetail"][number]) {
@@ -409,6 +420,111 @@ function StrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
   );
 }
 
+function TyreLifeIndicator({ wheel, wear, change }: { wheel: Wheel; wear: number | null | undefined; change: boolean }) {
+  const life = tyreLife(wear);
+  const lifePercent = life == null ? 0 : Math.round(life * 100);
+  return (
+    <div className={`tyre-life ${tyreLifeTone(life)}${change ? " change" : ""}`}>
+      <div className="tyre-life-heading">
+        <strong>{wheelLabels[wheel]}</strong>
+        <span>{life == null ? "--" : `${lifePercent}%`}</span>
+      </div>
+      <div className="tyre-life-shape" aria-hidden="true">
+        <span style={{ height: `${lifePercent}%` }} />
+      </div>
+      <small>{change ? "Change" : "Keep"}</small>
+    </div>
+  );
+}
+
+function LiveStyleStrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
+  if (!plan) {
+    return <div className="empty-state"><strong>No strategy yet</strong><span>Collect valid fuel data or edit assumptions to create a race plan.</span></div>;
+  }
+  return (
+    <div className="strategy-timeline live-style-strategy-timeline">
+      <div className="strategy-visual-summary">
+        <div><span className="label">Selected plan</span><strong>{formatDuration(plan.totalTimeSeconds)}</strong></div>
+        <div><span className="label">Stops planned</span><strong>{plan.stops}</strong></div>
+        <div><span className="label">Race plan</span><strong>{fmt(plan.raceLaps, 1, " laps")}</strong></div>
+        <div><span className="label">Fuel at finish</span><strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")}</strong></div>
+      </div>
+      <div className="strategy-track-rail">
+        <div className="strategy-track">
+          {Array.from({ length: plan.stops + 1 }, (_, index) => {
+            const stint = plan.stintWear[index];
+            const stintLaps = stint ? stint.endLap - stint.startLap + 1 : plan.raceLaps / (plan.stops + 1);
+            return (
+              <span className="strategy-stint" key={index} style={{ width: `${(stintLaps / plan.raceLaps) * 100}%` }}>
+                <strong>Stint {index + 1}</strong>
+                <small>{Math.round(stintLaps)} laps</small>
+              </span>
+            );
+          })}
+          {plan.stopsDetail.map((stop, index) => (
+            <span
+              className="strategy-marker"
+              key={`${stop.lap}-${index}`}
+              style={{ left: `${Math.min(98, Math.max(2, (stop.lap / plan.raceLaps) * 100))}%` }}
+            >
+              <strong>Lap {stop.lap}</strong>
+              <small>Pit {index + 1}</small>
+            </span>
+          ))}
+        </div>
+      </div>
+      {plan.stintWear.length > 0 && (
+        <div className="stint-service-list">
+          {plan.stintWear.map((stint, index) => {
+            const stop = plan.stopsDetail[index];
+            const stintLaps = stint.endLap - stint.startLap + 1;
+            return (
+              <article className="stint-service" key={stint.stint}>
+                <header>
+                  <div>
+                    <span className="label">Stint {stint.stint} - {stintLaps} laps</span>
+                    <strong>{stop ? `Pit stop ${index + 1} - Lap ${stop.lap}` : "Finish"}</strong>
+                  </div>
+                  {stop && <span className="badge amber">{fmt(stop.stopTimeSeconds, 1, " s")} stop</span>}
+                </header>
+                <div className="stint-service-body">
+                  <div>
+                    <span className="label">Tyre life at {stop ? "pit entry" : "finish"}</span>
+                    <div className="tyre-life-set">
+                      {wheels.map((wheel) => (
+                        <TyreLifeIndicator
+                          wheel={wheel}
+                          wear={stint.endWear[wheel]}
+                          change={Boolean(stop?.tyresToChange.includes(wheel))}
+                          key={wheel}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="service-fuel">
+                    <span className="label">Fuel service</span>
+                    {stop ? (
+                      <>
+                        <strong>{fmt(stop.fuelRemainingLiters, 1, " L")} remaining</strong>
+                        <b>+ {fmt(stop.fuelAddedLiters, 1, " L")} to add</b>
+                      </>
+                    ) : (
+                      <>
+                        <strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")} remaining</strong>
+                        <b>No service</b>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategyState | null; telemetry?: TelemetrySnapshot | null }) {
   const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
   const seededSession = useRef<string | null>(null);
@@ -439,9 +555,9 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     runDuckdbJob<LmuDuckdbScanResponse>(() => api.startDuckdbSessionsJob(250))
       .then((payload) => {
         setSessions(payload.sessions);
-        setSourceStatus(payload.total ? "DuckDB sessions loaded" : "No synced DuckDB sessions");
+        setSourceStatus(payload.total ? "Saved sessions loaded" : "No synced sessions");
       })
-      .catch(() => setSourceStatus("DuckDB sessions unavailable; sync the folder in User Profile"))
+      .catch(() => setSourceStatus("Saved sessions unavailable; sync the folder in User Profile"))
       .finally(() => setSessionListLoading(false));
   }, []);
 
@@ -469,15 +585,15 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     appliedSessionModel.current = null;
     setModelSource("session");
     setSessionLoading(true);
-    setSourceStatus("Loading DuckDB session");
+    setSourceStatus("Loading saved session");
     runDuckdbJob<SessionReview>(() => api.startDuckdbReviewJob(selectedSessionId))
       .then((review) => {
         if (!cancelled) {
           setSessionReview(review);
-          setSourceStatus("DuckDB session loaded");
+          setSourceStatus("Saved session loaded");
         }
       })
-      .catch((exc) => !cancelled && setSourceStatus(exc instanceof Error ? exc.message : "Could not load DuckDB session"))
+      .catch((exc) => !cancelled && setSourceStatus(exc instanceof Error ? exc.message : "Could not load saved session"))
       .finally(() => {
         if (!cancelled) setSessionLoading(false);
       });
@@ -506,7 +622,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const visibleSessions = useMemo(() => filterDuckdbSessions(sessions, sessionSearch, selectedSessionId), [sessionSearch, selectedSessionId, sessions]);
   const sessionModel = useMemo(() => {
     const parts = duckdbSessionParts(selectedSession);
-    return modelFromSession(sessionReview, selectedSession ? `${parts.sessionType} - ${parts.track}` : "DuckDB session", form, paceBasis);
+    return modelFromSession(sessionReview, selectedSession ? `${parts.sessionType} - ${parts.track}` : "Saved session", form, paceBasis);
   }, [form, paceBasis, sessionReview, selectedSession]);
   const historyModel = useMemo(() => modelFromSession(historyReview, `Comparable history · ${historyCount} sessions`, form, paceBasis), [form, historyCount, historyReview, paceBasis]);
   const activeModel = modelSource === "history" && historyModel ? historyModel : modelSource === "session" && sessionModel ? sessionModel : liveModel;
@@ -533,7 +649,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   };
   const useSelectedSession = () => {
     if (!sessionModel) {
-      setSourceStatus("Select a DuckDB session with valid laps first");
+      setSourceStatus("Select a saved session with valid laps first");
       return;
     }
     setModelSource("session");
@@ -649,7 +765,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={sessionListLoading || sessionLoading} title={duckdbProgress?.phase || (sessionLoading ? "Loading DuckDB session" : "Loading session list")} detail={duckdbProgress?.message || (sessionLoading ? "Reading the selected session and calculating strategy inputs." : "Loading cached DuckDB sessions for the planner.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
+      <LoadingOverlay show={sessionListLoading || sessionLoading} title={duckdbProgress?.phase || (sessionLoading ? "Loading saved session" : "Loading session list")} detail={duckdbProgress?.message || (sessionLoading ? "Reading the selected session and calculating strategy inputs." : "Loading saved sessions for the planner.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       <section className="card span-12 strategy-source-panel">
         <div>
           <span className="eyebrow">PRE-RACE ENGINEERING</span>
@@ -697,7 +813,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
               </label>
               <label><span className="label">Pace basis</span><select value={paceBasis} onChange={(event) => setPaceBasis(event.target.value as PaceBasis)}><option value="median">Median valid lap</option><option value="trimmed">10% trimmed mean</option><option value="percentile">60th percentile race pace</option></select><span className="subvalue">Calculated from the reference session</span></label>
               <label><span className="label">Manual lap time</span><input value={manualLapText} onChange={(event) => updateLapTime(event.target.value)} placeholder="03:34.000" /><span className="subvalue">Optional override · mm:ss.mmm</span></label>
-              <label><span className="label">Active normal lap</span><input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? "DuckDB session/manual" : activeModel.label})`} readOnly /><span className="subvalue">Used by the strategy model</span></label>
+              <label><span className="label">Active normal lap</span><input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? "saved session/manual" : activeModel.label})`} readOnly /><span className="subvalue">Used by the strategy model</span></label>
             </fieldset>
 
             <fieldset className="strategy-assumption-group">
@@ -725,7 +841,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
         </div>
         <p className="control-row strategy-assumption-actions">
           <button type="button" onClick={useLiveData}>Use live data</button>
-          <button type="button" onClick={useSelectedSession}>Use selected DuckDB session</button>
+          <button type="button" onClick={useSelectedSession}>Use selected saved session</button>
           <button type="button" onClick={() => void useComparableHistory()}>Use comparable history</button>
           <button type="button" onClick={resetMeasuredModel}>Reset to measured model</button>
           <button className="primary" onClick={() => void api.updateAssumptions({
@@ -746,7 +862,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
       <section className="card span-12">
         <SectionTitle title="Model Status" help="Summarizes the live data feeding the race simulation. More valid fuel and tyre laps improve confidence." />
         <div className="analysis-value-grid">
-          <div><span className="label">Model source</span><strong>{activeModel.source === "session" ? "DuckDB session" : "Live"}</strong><span className="subvalue">{activeModel.label}</span></div>
+          <div><span className="label">Model source</span><strong>{activeModel.source === "session" ? "Saved session" : "Live"}</strong><span className="subvalue">{activeModel.label}</span></div>
           <div><span className="label">Pace model</span><strong>{formatRaceTime(paceEvidence.weightedRecentPace)}</strong><span className="subvalue">{paceEvidence.method || paceBasis} · {paceEvidence.source}</span></div>
           <div><span className="label">Pace windows</span><strong>{formatRaceTime(paceEvidence.last7LapAverage)} / {formatRaceTime(paceEvidence.last10LapAverage)}</strong><span className="subvalue">7-lap / 10-lap averages</span></div>
           <div><span className="label">Pace trend / spread</span><strong>{fmt(paceEvidence.paceTrendSecondsPerLap, 3, " s/lap")}</strong><span className="subvalue">spread {fmt(paceEvidence.spreadSeconds, 3, " s")} · {paceEvidence.confidence || "low"} confidence</span></div>
@@ -793,9 +909,9 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
         <section className="card span-12"><div className="empty-state"><strong>No viable strategy yet</strong><span>{missingPlanInputs.length ? `Missing ${missingPlanInputs.join(", ")}.` : "Try more stops, more start fuel, or a longer fuel-saving strategy."}</span></div></section>
       )}
 
-      <section className="card span-12">
-        <SectionTitle title="Pit Strategy Visualization" help="Shows the selected plan as stint blocks with stop lap, remaining fuel, fuel load, tyre count, and stop time." />
-        <StrategyTimeline plan={selectedPlan} />
+      <section className="card span-12 pit-strategy-visualization">
+        <SectionTitle title="Live Pit Strategy Visualization" help="Shows the selected plan as a stint timeline, then details tyre life and fuel service at every pit stop." />
+        <LiveStyleStrategyTimeline plan={selectedPlan} />
       </section>
     </div>
   );

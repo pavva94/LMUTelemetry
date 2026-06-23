@@ -31,7 +31,7 @@ const fileSize = (bytes?: number | null) => {
 };
 const sessionTitle = (session?: LmuDuckdbSession | null) => {
   const parts = duckdbSessionParts(session);
-  return session ? `${parts.sessionType} - ${parts.track} - ${parts.car}` : "DuckDB session";
+  return session ? `${parts.sessionType} - ${parts.track} - ${parts.car}` : "Saved session";
 };
 const percentDelta = (a?: number | null, b?: number | null) => {
   if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b)) return "--";
@@ -150,7 +150,7 @@ function lapFallbackRow(lap: Row): Row {
 }
 
 function Chart({ data, xKey = "game_time", lines, height = 240 }: { data: Row[]; xKey?: string; lines: Array<[string, string]>; height?: number }) {
-  if (!data.length) return <EmptyState detail="The selected DuckDB session has no samples for this chart." />;
+  if (!data.length) return <EmptyState detail="The selected session has no samples for this chart." />;
   const yTimeAxis = lines.some(([key]) => isRaceTimeField(key));
   const xTimeAxis = isRaceTimeField(xKey);
   return (
@@ -177,7 +177,7 @@ function ChannelSummary({ review }: { review: Review | null }) {
   }, {});
   return (
     <section className="card span-12">
-      <SectionTitle title="Available Channels" help="Shows DuckDB tables discovered in the selected file and how many are currently mapped into review fields." />
+      <SectionTitle title="Available Channels" help="Shows telemetry channels discovered in the selected session and how many are currently mapped into review fields." />
       <div className="header-grid">
         <Metric label="Tables" value={manifest.length} />
         <Metric label="Mapped" value={mapped.length} />
@@ -198,7 +198,7 @@ function hasFields(rows: Row[], keys: string[]) {
 
 function LatestValues({ rows, fields }: { rows: Row[]; fields: Array<[string, string]> }) {
   const latest = [...rows].reverse().find((row) => fields.some(([key]) => row[key] != null));
-  if (!latest) return <EmptyState detail="No values were found for this section in the selected DuckDB file." />;
+  if (!latest) return <EmptyState detail="No values were found for this section in the selected session." />;
   return (
     <div className="analysis-value-grid">
       {fields.map(([key, label]) => (
@@ -615,7 +615,7 @@ export function LmuDuckdbReview() {
 
   const loadPage = async (offset = 0) => {
     setBusy(true);
-    setStatus(offset ? "Loading cached DuckDB page" : "Loading cached DuckDB sessions");
+    setStatus(offset ? "Loading saved-session page" : "Loading saved sessions");
     if (!offset) {
       setWarnings([]);
       setReview(null);
@@ -632,7 +632,7 @@ export function LmuDuckdbReview() {
       const firstId = payload.sessions[0]?.id || "";
       setSelectedId(firstId);
       const loaded = offset + payload.sessions.length;
-      setStatus(payload.total ? `Showing ${offset + 1}-${loaded} of ${payload.total} cached DuckDB sessions` : "No cached DuckDB sessions found");
+      setStatus(payload.total ? `Showing ${offset + 1}-${loaded} of ${payload.total} saved sessions` : "No saved sessions found");
     } catch (exc) {
       if (!offset) {
         setSessions([]);
@@ -647,7 +647,7 @@ export function LmuDuckdbReview() {
   const useFolder = async () => {
     if (!folder.trim()) return;
     setBusy(true);
-    setStatus("Saving DuckDB folder");
+    setStatus("Saving session folder");
     try {
       const settings = await api.saveLmuDuckdbSettings(folder.trim());
       if (settings.folder_path) setFolder(settings.folder_path);
@@ -682,14 +682,14 @@ export function LmuDuckdbReview() {
     let mounted = true;
     setReview(null);
     setReviewLoading(true);
-    setStatus("Loading selected DuckDB session");
+    setStatus("Loading selected session");
     runDuckdbJob<Review>(() => api.startDuckdbReviewJob(selectedId, 300))
       .then((data) => {
         if (!mounted) return;
         setReview(data);
         const extraWarnings = ((data as Review & { warnings?: string[] }).warnings || []);
         setWarnings((current) => Array.from(new Set([...current, ...extraWarnings])));
-        setStatus("DuckDB session loaded");
+        setStatus("Session loaded");
       })
       .catch((exc) => mounted && setStatus(exc instanceof Error ? exc.message : String(exc)))
       .finally(() => {
@@ -780,16 +780,16 @@ export function LmuDuckdbReview() {
 
   return (
     <div className="duckdb-workspace">
-      <LoadingOverlay show={busy || reviewLoading} title={duckdbProgress?.phase || (reviewLoading ? "Loading DuckDB session" : "Loading DuckDB sessions")} detail={duckdbProgress?.message || (reviewLoading ? "Opening the selected native telemetry file and preparing review charts." : "Loading cached telemetry sessions from the local index.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
+      <LoadingOverlay show={busy || reviewLoading} title={duckdbProgress?.phase || (reviewLoading ? "Loading session" : "Loading sessions")} detail={duckdbProgress?.message || (reviewLoading ? "Opening the selected session and preparing review charts." : "Loading saved telemetry sessions from the local index.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       <section className="duckdb-browser">
-        <SectionTitle title="Session Review" help="Read-only review of cached Le Mans Ultimate DuckDB sessions. Raw chart samples are loaded from the selected DuckDB file on demand." />
+        <SectionTitle title="Session Review" help="Read-only review of saved Le Mans Ultimate sessions. Raw chart samples are loaded from the selected session on demand." />
         <div className="duckdb-path-grid">
           <label>Telemetry folder<input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder={DEFAULT_FOLDER} /></label>
           <label>Search sessions<input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search type, track, car, file, laps" /></label>
           <label>Session<select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} disabled={!sessions.length}>
             {sessions.length ? visibleSessions.map((session) => (
               <option key={session.id} value={session.id}>{duckdbSessionLabel(session)}</option>
-            )) : <option value="">No cached DuckDB sessions</option>}
+            )) : <option value="">No saved sessions</option>}
           </select></label>
           <button disabled={busy || !folder.trim()} onClick={() => void useFolder()}>Use folder</button>
           <button className="primary" disabled={busy} onClick={() => void loadPage(0)}>Refresh list</button>
@@ -807,7 +807,7 @@ export function LmuDuckdbReview() {
             <span>{text(selectedSession?.file_name)} / {dateText(selectedSession?.created_at)} / {fileSize(selectedSession?.file_size_bytes)}</span>
             {sessionSearch.trim() && <small>{visibleSessions.length}/{sessions.length} matches</small>}
           </div>
-        ) : <EmptyState detail="No sessions cached yet. Set and sync the LMU DuckDB folder from User Profile." />}
+        ) : <EmptyState detail="No sessions saved yet. Set and sync the LMU session folder from User Profile." />}
       </section>
 
       <main className="duckdb-analysis page grid">
@@ -836,7 +836,7 @@ export function LmuDuckdbReview() {
       </section>
       {metadataRows.length > 0 && (
         <section className="card span-12">
-          <SectionTitle title="Database Metadata" help="Values read from the native DuckDB metadata table for the selected session." />
+          <SectionTitle title="Session Metadata" help="Values read from the selected session metadata." />
           <div className="analysis-value-grid">
             {metadataRows.map(([key, value]) => <div key={key}><span className="label">{key}</span><strong title={value}>{metadataValueText(key, value)}</strong></div>)}
           </div>
@@ -846,7 +846,7 @@ export function LmuDuckdbReview() {
 
       <section className="card span-6"><SectionTitle title="Lap Times" help="Shows detected lap pace from native LMU telemetry." /><Chart data={laps} xKey="lap_number" lines={[["lap_time", "#6dd6ff"]]} /></section>
       <section className="card span-6"><SectionTitle title="Lap Fuel" help="Shows fuel used and added per detected lap." /><Chart data={laps} xKey="lap_number" lines={[["fuel_used", "#e6b450"], ["fuel_added", "#69d28f"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Speed And RPM" help="Shows powertrain and speed history from mapped DuckDB channels." /><Chart data={speedChart.data} xKey={speedChart.xKey} lines={speedLines} /></section>
+      <section className="card span-6"><SectionTitle title="Speed And RPM" help="Shows powertrain and speed history from mapped session channels." /><Chart data={speedChart.data} xKey={speedChart.xKey} lines={speedLines} /></section>
       <section className="card span-6"><SectionTitle title="Driver Inputs" help="Shows throttle, brake, and steering channels when available." /><Chart data={inputChart.data} xKey={inputChart.xKey} lines={inputLines} /></section>
       <section className="card span-6"><SectionTitle title="Tyre Wear" help="Tracks detected tyre wear by corner." /><Chart data={tyreWearChart.data} xKey={tyreWearChart.xKey} lines={tyreWearLines} /></section>
       <section className="card span-6"><SectionTitle title="Tyre Temperatures" help="Shows tyre heat by corner when available." /><Chart data={tyreTempChart.data} xKey={tyreTempChart.xKey} lines={tyreTempLines} /></section>
@@ -855,14 +855,14 @@ export function LmuDuckdbReview() {
       {available.sectors && <section className="card span-6"><SectionTitle title="Sectors" help="Shows current, last, and best sector timing channels when LMU stores them." /><Chart data={sectorChart.data} xKey={sectorChart.xKey} lines={sectorLines} /></section>}
       {available.flags && <section className="card span-6"><SectionTitle title="Flags" help="Shows sector and yellow flag state channels when available." /><Chart data={flagChart.data} xKey={flagChart.xKey} lines={flagLines} /></section>}
       {available.assists && <section className="card span-6"><SectionTitle title="Assists And Settings" help="Shows ABS, TC, fuel map, brake bias, and brake migration channels." /><Chart data={assistChart.data} xKey={assistChart.xKey} lines={assistLines} /></section>}
-      {available.gps && <section className="card span-6"><SectionTitle title="GPS, G-Force, And Path" help="Shows GPS, G-force, distance, and path channels from the native DuckDB." /><Chart data={gpsChart.data} xKey={gpsChart.xKey} lines={gpsLines} /></section>}
+      {available.gps && <section className="card span-6"><SectionTitle title="GPS, G-Force, And Path" help="Shows GPS, G-force, distance, and path channels from the selected session." /><Chart data={gpsChart.data} xKey={gpsChart.xKey} lines={gpsLines} /></section>}
       {available.brake_detail && <section className="card span-6"><SectionTitle title="Brake Detail" help="Shows brake air temperature, force, and thickness channels when available." /><Chart data={brakeDetailChart.data} xKey={brakeDetailChart.xKey} lines={brakeDetailLines} /></section>}
       {available.tyre_detail && <section className="card span-6"><SectionTitle title="Tyre Detail" help="Shows additional tyre carcass, rim, rubber, and tread temperature channels." /><Chart data={tyreDetailChart.data} xKey={tyreDetailChart.xKey} lines={tyreDetailLines} /></section>}
       {available.energy && <section className="card span-6"><SectionTitle title="Energy And Powertrain" help="Shows SoC, virtual energy, regen, turbo boost, clutch, and clutch RPM channels." /><Chart data={energyChart.data} xKey={energyChart.xKey} lines={energyLines} /></section>}
       {available.environment && <section className="card span-6"><SectionTitle title="Environment And Status" help="Shows wetness, wind, limiter, flap, and status channels when available." /><Chart data={environmentChart.data} xKey={environmentChart.xKey} lines={environmentLines} /></section>}
       {(hasFields(samples, ["headlights", "front_flap_active", "rear_flap_active", "rear_flap_legal", "surface_type_fl", "surface_type_fr", "wheels_detached_fl", "wheels_detached_fr", "tyre_compound_fl", "tyre_compound_fr"]) || available.environment || available.tyre_detail) && (
         <section className="card span-12">
-          <SectionTitle title="Latest Status Values" help="Shows the latest sparse or event-style values mapped from the selected DuckDB file." />
+          <SectionTitle title="Latest Status Values" help="Shows the latest sparse or event-style values mapped from the selected session." />
           <LatestValues rows={samples} fields={[
             ["headlights", "Headlights"],
             ["speed_limiter", "Speed limiter"],
@@ -907,7 +907,7 @@ export function LmuDuckdbReview() {
               </tbody>
             </table>
           </div>
-        ) : <EmptyState detail="No laps could be derived from the selected DuckDB file." />}
+        ) : <EmptyState detail="No laps could be derived from the selected session." />}
       </section>
 
       <section className="card span-12">
@@ -925,7 +925,7 @@ export function LmuDuckdbReview() {
       </section>
       {available.gps && (
         <section className="card span-12">
-          <SectionTitle title="Lap Trajectory Compare" help="Compares two GPS lap traces from the selected DuckDB session. Green means the primary lap reached that point sooner than the comparison lap, red means it was slower, and blue means the delta is very similar." />
+          <SectionTitle title="Lap Trajectory Compare" help="Compares two GPS lap traces from the selected session. Green means the primary lap reached that point sooner than the comparison lap, red means it was slower, and blue means the delta is very similar." />
           <LapTrajectoryMap sessionId={selectedId} samples={samples} laps={laps} />
         </section>
       )}

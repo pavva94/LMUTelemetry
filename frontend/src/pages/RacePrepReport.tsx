@@ -75,9 +75,9 @@ export function RacePrepReport({ strategy }: Props) {
     runDuckdbJob<LmuDuckdbScanResponse>(() => api.startDuckdbSessionsJob(250))
       .then((payload) => {
         setSessions(payload.sessions);
-        setStatus(payload.total ? "DuckDB sessions loaded" : "No synced DuckDB sessions");
+        setStatus(payload.total ? "Saved sessions loaded" : "No synced sessions");
       })
-      .catch((exc) => setStatus(exc instanceof Error ? exc.message : "Could not load DuckDB sessions"))
+      .catch((exc) => setStatus(exc instanceof Error ? exc.message : "Could not load saved sessions"))
       .finally(() => setSessionListLoading(false));
   }, []);
 
@@ -90,7 +90,7 @@ export function RacePrepReport({ strategy }: Props) {
         .then((data) => {
           if (!cancelled) {
             setReview(data);
-            setStatus(selected === "current" ? "Current live session report" : "DuckDB session report");
+            setStatus(selected === "current" ? "Current live session report" : "Saved session report");
           }
         })
         .catch((exc) => !cancelled && setStatus(exc instanceof Error ? exc.message : "Could not load report data"))
@@ -121,9 +121,9 @@ export function RacePrepReport({ strategy }: Props) {
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={sessionListLoading || (reportLoading && (selected !== "current" || !review))} title={selected !== "current" && duckdbProgress?.phase ? duckdbProgress.phase : reportLoading ? "Loading session report" : "Loading session list"} detail={selected !== "current" && duckdbProgress?.message ? duckdbProgress.message : selected === "current" ? "Preparing the current live session report." : "Reading the selected DuckDB session and building the report."} percentage={selected !== "current" || sessionListLoading ? duckdbProgress?.percentage : undefined} error={duckdbProgress?.error} />
+      <LoadingOverlay show={sessionListLoading || (reportLoading && (selected !== "current" || !review))} title={selected !== "current" && duckdbProgress?.phase ? duckdbProgress.phase : reportLoading ? "Loading session report" : "Loading session list"} detail={selected !== "current" && duckdbProgress?.message ? duckdbProgress.message : selected === "current" ? "Preparing the current live session report." : "Reading the selected saved session and building the report."} percentage={selected !== "current" || sessionListLoading ? duckdbProgress?.percentage : undefined} error={duckdbProgress?.error} />
       <section className="card span-12">
-        <SectionTitle title="Session Report" help="Reviews the current live session or a synced LMU DuckDB session with pace, fuel, tyre, environment, and engineering evidence." />
+        <SectionTitle title="Session Report" help="Reviews the current live session or a synced saved session with pace, fuel, tyre, environment, and engineering evidence." />
         <div className="section-toolbar report-toolbar">
           <label>
             <span className="label">Session</span>
@@ -143,7 +143,7 @@ export function RacePrepReport({ strategy }: Props) {
       </section>
 
       {!report ? (
-        <section className="card span-12"><EmptyState detail="Report appears once a live or synced DuckDB session can be loaded." /></section>
+        <section className="card span-12"><EmptyState detail="Report appears once a live or synced saved session can be loaded." /></section>
       ) : (
         <>
           <SessionOverview report={report} />

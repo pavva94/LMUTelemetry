@@ -6,7 +6,7 @@ type LoadingOverlayProps = {
   error?: string | null;
 };
 
-export function LoadingOverlay({ show, title = "Loading telemetry", detail = "Large DuckDB sessions can take a moment to read.", percentage, error }: LoadingOverlayProps) {
+export function LoadingOverlay({ show, title = "Loading telemetry", detail = "Large saved sessions can take a moment to read.", percentage, error }: LoadingOverlayProps) {
   if (!show) return null;
   const value = percentage == null ? null : Math.max(0, Math.min(100, Math.round(percentage)));
   return (
