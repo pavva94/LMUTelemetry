@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 Provenance = Literal["session_derived", "robust_estimate", "user_configured", "default_fallback"]
 PaceMode = Literal["push", "normal", "conserve"]
+TrafficPreset = Literal["clear", "light", "typical", "heavy"]
+TrafficAggression = Literal["conservative", "normal", "aggressive"]
 
 
 class SimulationStint(BaseModel):
@@ -39,4 +41,21 @@ class RaceSimulationRequest(BaseModel):
     service_model: Literal["sequential", "parallel"] = "parallel"
     race_start_new_tyres: bool = True
     tyre_wear_limit: float = Field(default=0.85, gt=0, le=1)
+    used_tyre_wear: float = Field(default=0.35, ge=0, le=0.95)
+    tyre_wear_variability: float = Field(default=0.12, ge=0, le=0.75)
+    pace_variability_multiplier: float = Field(default=1, ge=0, le=5)
+    pit_variability_multiplier: float = Field(default=1, ge=0, le=5)
+    field_size: int = Field(default=24, ge=1, le=80)
+    same_class_cars: int = Field(default=12, ge=0, le=80)
+    faster_class_cars: int = Field(default=4, ge=0, le=80)
+    slower_class_cars: int = Field(default=7, ge=0, le=80)
+    starting_position: int | None = Field(default=None, ge=1, le=80)
+    opponent_pace_spread_seconds: float = Field(default=1.2, ge=0.05, le=30)
+    faster_class_delta_seconds: float = Field(default=5, ge=0.1, le=120)
+    slower_class_delta_seconds: float = Field(default=5, ge=0.1, le=120)
+    traffic_preset: TrafficPreset = "typical"
+    traffic_aggression: TrafficAggression = "normal"
+    traffic_loss_seconds: float = Field(default=1.2, ge=0, le=60)
+    traffic_wear_multiplier: float = Field(default=0.12, ge=0, le=2)
+    traffic_fuel_multiplier: float = Field(default=0.01, ge=0, le=1)
     objective: Literal["expected_time", "median_time", "downside_risk", "fastest_probability", "balanced"] = "balanced"

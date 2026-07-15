@@ -41,10 +41,13 @@ function MonteCarloStrategyCard({ summary, selected, onSelect }: { summary: Race
       <div><span className="label">Mean</span><strong>{formatTotalTime(summary.mean_time)}</strong></div>
       <div><span className="label">Spread</span><strong>{fmt(summary.std_dev, 2, " s")}</strong></div>
       <div><span className="label">Pit time</span><strong>{fmt(summary.expected_pit_time, 1, " s")}</strong></div>
+      <div><span className="label">Traffic loss</span><strong>{fmt(summary.expected_traffic_loss, 1, " s")}</strong></div>
+      <div><span className="label">Traffic P90</span><strong>{fmt(summary.p90_traffic_loss, 1, " s")}</strong></div>
       <div><span className="label">Finish fuel</span><strong>{fmt(summary.expected_finish_fuel, 1, " L")}</strong></div>
       <div><span className="label">Max tyre wear</span><strong>{fmt(summary.expected_max_wear * 100, 0, "%")}</strong></div>
       <div><span className="label">Fastest probability</span><strong>{fmt(summary.fastest_probability * 100, 0, "%")}</strong></div>
     </div>
+    <div className="metric compact"><span className="label">Estimated traffic</span><span className="subvalue">{fmt(summary.expected_traffic_events, 1)} encounters · {fmt(summary.expected_traffic_wear * 100, 1, "%")} additional wear</span></div>
     <div className="metric compact"><span className="label">Monte Carlo risk</span><span className="subvalue">Fuel {fmt(summary.fuel_risk_probability * 100, 1, "%")} · Tyres {fmt(summary.tyre_risk_probability * 100, 1, "%")}</span></div>
     <button className={`strategy-select${selected ? " active-control" : ""}`} type="button" onClick={onSelect}>{selected ? "Selected strategy" : "Select strategy"}</button>
   </section>;
@@ -57,12 +60,43 @@ function MonteCarloTimeline({ summary, laps }: { summary?: RaceSimulationSummary
   return <div className="strategy-timeline live-style-strategy-timeline"><div className="strategy-visual-summary"><div><span className="label">Selected plan</span><strong>{formatTotalTime(summary.median_time)}</strong></div><div><span className="label">Stops planned</span><strong>{summary.stops}</strong></div><div><span className="label">Race plan</span><strong>{maxLap} laps</strong></div><div><span className="label">Fuel at finish</span><strong>{fmt(summary.expected_finish_fuel, 1, " L")}</strong></div></div><div className="strategy-track-rail"><div className="strategy-track">{stints.map((stint, index) => <span className="strategy-stint" key={index} style={{ width: `${stint.length / laps.length * 100}%` }}><strong>Stint {index + 1}</strong><small>{stint.length} laps</small></span>)}{laps.filter((lap) => lap.pit).map((lap) => <span className="strategy-marker" key={lap.lap} style={{ left: `${Math.min(98, Math.max(2, lap.lap / maxLap * 100))}%` }}><strong>Lap {lap.lap}</strong><small>Pit · {fmt(lap.fuel, 1, " L")} left</small></span>)}</div></div><div className="stint-service-list">{stints.map((stint, index) => { const last = stint[stint.length - 1]; return <article className="stint-service" key={index}><header><div><span className="label">Stint {index + 1} · {stint.length} laps</span><strong>{last.pit ? `Pit at lap ${last.lap}` : "Finish"}</strong></div>{last.pit && <span className="badge amber">Pit stop</span>}</header><div className="stint-service-body"><div><span className="label">Tyre wear</span><strong>{fmt(last.wear * 100, 0, "%")}</strong></div><div className="service-fuel"><span className="label">Fuel remaining</span><strong>{fmt(last.fuel, 1, " L")}</strong></div></div></article>; })}</div></div>;
 }
 
+function MonteCarloExecutionPlan({ summary }: { summary?: RaceSimulationSummary }) {
+  if (!summary) return null;
+  const plan = summary.plan;
+  return <section className="card span-12">
+    <SectionTitle title="Generated strategy instructions" help="Nominal pit-service targets are calculated from the selected strategy. Race traffic, fuel variation, and cautions can change the live recommendation." />
+    <div className="header-grid">
+      <Metric label="Initial fuel load" value={`${fmt(plan.initial_fuel_liters, 1)} L`} />
+      <Metric label="Start tyres" value={plan.start_new_tyres ? "New" : "Used"} />
+      <Metric label="Planned stops" value={plan.pits.length} />
+      <Metric label="Stints" value={plan.stints} />
+    </div>
+    {!plan.pits.length ? <p className="muted">No pit stops are planned for this strategy.</p> : <div className="table-wrap"><table><thead><tr><th>Stop</th><th>Pit lap</th><th>Next stint</th><th>Tyres</th><th>Fuel to add</th><th>Fuel target</th><th>Pace</th></tr></thead><tbody>{plan.pits.map((pit, index) => <tr key={pit.pit_lap}><td>#{index + 1}</td><td>{pit.pit_lap}</td><td>{pit.next_stint_laps} laps</td><td>{pit.change_tyres ? "Change all tyres" : "No tyre change"}</td><td>{fmt(pit.fuel_to_add_liters, 1, " L")}</td><td>{fmt(pit.target_fuel_liters, 1, " L")}</td><td>{pit.pace_mode}</td></tr>)}</tbody></table></div>}
+  </section>;
+}
+
 /** Shared Planner panel. The reference session and every race assumption are
  * owned by Strategy Planner so heuristic and Monte Carlo never drift apart. */
 export function MonteCarloStrategyPanel({ sessionId, assumptions }: { sessionId: string; assumptions: MonteCarloAssumptions }) {
   const { run, progress } = useDuckdbJob();
   const [simulations, setSimulations] = useState(1000);
   const [seed, setSeed] = useState(42);
+  const [fieldSize, setFieldSize] = useState(24);
+  const [sameClassCars, setSameClassCars] = useState(12);
+  const [fasterClassCars, setFasterClassCars] = useState(4);
+  const [slowerClassCars, setSlowerClassCars] = useState(7);
+  const [startingPosition, setStartingPosition] = useState(12);
+  const [opponentPaceSpread, setOpponentPaceSpread] = useState(1.2);
+  const [fasterClassDelta, setFasterClassDelta] = useState(5);
+  const [slowerClassDelta, setSlowerClassDelta] = useState(5);
+  const [trafficPreset, setTrafficPreset] = useState<"clear" | "light" | "typical" | "heavy">("typical");
+  const [trafficAggression, setTrafficAggression] = useState<"conservative" | "normal" | "aggressive">("normal");
+  const [trafficLoss, setTrafficLoss] = useState(1.2);
+  const [trafficWear, setTrafficWear] = useState(.12);
+  const [trafficFuel, setTrafficFuel] = useState(.01);
+  const [tyreVariability, setTyreVariability] = useState(.12);
+  const [paceVariability, setPaceVariability] = useState(1);
+  const [pitVariability, setPitVariability] = useState(1);
   const [result, setResult] = useState<RaceSimulationResult | null>(null);
   const [selectedStrategyName, setSelectedStrategyName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -83,8 +117,24 @@ export function MonteCarloStrategyPanel({ sessionId, assumptions }: { sessionId:
       refuel_seconds_per_5_liters: assumptions.refuelSecondsPer5Liters,
       service_model: assumptions.serviceModel,
       normal_lap_time: assumptions.normalLapTime,
-      fuel_per_lap_liters: assumptions.fuelPerLapLiters,
-      tyre_wear_rate_per_lap: assumptions.tyreWearRatePerLap,
+       fuel_per_lap_liters: assumptions.fuelPerLapLiters,
+       tyre_wear_rate_per_lap: assumptions.tyreWearRatePerLap,
+       field_size: fieldSize,
+       same_class_cars: sameClassCars,
+       faster_class_cars: fasterClassCars,
+       slower_class_cars: slowerClassCars,
+       starting_position: Math.min(startingPosition, fieldSize),
+       opponent_pace_spread_seconds: opponentPaceSpread,
+       faster_class_delta_seconds: fasterClassDelta,
+       slower_class_delta_seconds: slowerClassDelta,
+       traffic_preset: trafficPreset,
+       traffic_aggression: trafficAggression,
+       traffic_loss_seconds: trafficLoss,
+       traffic_wear_multiplier: trafficWear,
+       traffic_fuel_multiplier: trafficFuel,
+       tyre_wear_variability: tyreVariability,
+       pace_variability_multiplier: paceVariability,
+       pit_variability_multiplier: pitVariability,
     })).then((next) => { setResult(next); setSelectedStrategyName(next.recommended); }).catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
   };
   const selectedStrategy = result?.summaries.find((summary) => summary.name === selectedStrategyName) || result?.summaries.find((summary) => summary.name === result.recommended) || result?.summaries[0];
@@ -101,9 +151,33 @@ export function MonteCarloStrategyPanel({ sessionId, assumptions }: { sessionId:
       </div>
       {error && <p className="error-text">{error}</p>}
     </section>
+    <section className="card span-12">
+      <SectionTitle title="Estimated opponent field" help="No opponent telemetry is available, so every run generates a seeded synthetic field around your measured pace. These assumptions control traffic, fuel use, and tyre impact." />
+      <div className="section-toolbar report-toolbar">
+        <label><span className="label">Total cars</span><input type="number" min="1" max="80" value={fieldSize} onChange={(event) => setFieldSize(Math.max(1, Number(event.target.value)))} /></label>
+        <label><span className="label">Same class</span><input type="number" min="0" max="80" value={sameClassCars} onChange={(event) => setSameClassCars(Math.max(0, Number(event.target.value)))} /></label>
+        <label><span className="label">Faster class</span><input type="number" min="0" max="80" value={fasterClassCars} onChange={(event) => setFasterClassCars(Math.max(0, Number(event.target.value)))} /></label>
+        <label><span className="label">Slower class</span><input type="number" min="0" max="80" value={slowerClassCars} onChange={(event) => setSlowerClassCars(Math.max(0, Number(event.target.value)))} /></label>
+        <label><span className="label">Starting position</span><input type="number" min="1" max={fieldSize} value={Math.min(startingPosition, fieldSize)} onChange={(event) => setStartingPosition(Math.max(1, Number(event.target.value)))} /></label>
+        <label><span className="label">Traffic scenario</span><select value={trafficPreset} onChange={(event) => setTrafficPreset(event.target.value as typeof trafficPreset)}><option value="clear">Clear air</option><option value="light">Light</option><option value="typical">Typical</option><option value="heavy">Heavy</option></select></label>
+        <label><span className="label">Overtake approach</span><select value={trafficAggression} onChange={(event) => setTrafficAggression(event.target.value as typeof trafficAggression)}><option value="conservative">Conservative</option><option value="normal">Normal</option><option value="aggressive">Aggressive</option></select></label>
+      </div>
+      <details><summary>Advanced traffic and tyre uncertainty</summary><div className="section-toolbar report-toolbar">
+        <label><span className="label">Loss per encounter</span><input type="number" min="0" step=".1" value={trafficLoss} onChange={(event) => setTrafficLoss(Math.max(0, Number(event.target.value)))} /><span className="subvalue">seconds</span></label>
+        <label><span className="label">Traffic tyre multiplier</span><input type="number" min="0" step=".01" value={trafficWear} onChange={(event) => setTrafficWear(Math.max(0, Number(event.target.value)))} /><span className="subvalue">extra wear</span></label>
+        <label><span className="label">Traffic fuel multiplier</span><input type="number" min="0" step=".01" value={trafficFuel} onChange={(event) => setTrafficFuel(Math.max(0, Number(event.target.value)))} /><span className="subvalue">extra fuel</span></label>
+        <label><span className="label">Tyre variability</span><input type="number" min="0" max=".75" step=".01" value={tyreVariability} onChange={(event) => setTyreVariability(Math.max(0, Number(event.target.value)))} /><span className="subvalue">run-to-run spread</span></label>
+        <label><span className="label">Opponent pace spread</span><input type="number" min=".05" step=".1" value={opponentPaceSpread} onChange={(event) => setOpponentPaceSpread(Math.max(.05, Number(event.target.value)))} /><span className="subvalue">seconds/lap</span></label>
+        <label><span className="label">Faster-class pace gap</span><input type="number" min=".1" step=".1" value={fasterClassDelta} onChange={(event) => setFasterClassDelta(Math.max(.1, Number(event.target.value)))} /><span className="subvalue">seconds/lap</span></label>
+        <label><span className="label">Slower-class pace gap</span><input type="number" min=".1" step=".1" value={slowerClassDelta} onChange={(event) => setSlowerClassDelta(Math.max(.1, Number(event.target.value)))} /><span className="subvalue">seconds/lap</span></label>
+        <label><span className="label">Pace variability</span><input type="number" min="0" step=".1" value={paceVariability} onChange={(event) => setPaceVariability(Math.max(0, Number(event.target.value)))} /><span className="subvalue">multiplier</span></label>
+        <label><span className="label">Pit variability</span><input type="number" min="0" step=".1" value={pitVariability} onChange={(event) => setPitVariability(Math.max(0, Number(event.target.value)))} /><span className="subvalue">multiplier</span></label>
+      </div></details>
+    </section>
     {!result ? <section className="card span-12"><div className="empty-state"><strong>Ready to simulate</strong><span>Run the model to compare strategy outcomes and risk using the current Planner inputs.</span></div></section> : <>
       <section className="card span-12"><SectionTitle title="Monte Carlo recommendation" help="Distribution-aware recommendation from the same assumptions used by the Planner." /><div className="header-grid"><Metric label="Strategy" value={result.recommended} /><Metric label="Estimated laps" value={result.model.estimated_race_laps ?? "--"} /><Metric label="Clean laps" value={`${result.model.accepted}/${result.model.total}`} /><Metric label="Baseline pace" value={formatRaceTime(result.model.baseline)} /><Metric label="Fuel per lap" value={`${fmt(result.model.fuel_per_lap, 3)} L`} /><Metric label="Pit loss" value={`${fmt(result.model.pit_loss)} s`} /></div><p className="muted">{result.explanation}</p></section>
       {result.summaries.map((summary) => <MonteCarloStrategyCard key={summary.name} summary={summary} selected={summary.name === selectedStrategy?.name} onSelect={() => setSelectedStrategyName(summary.name)} />)}
+      <MonteCarloExecutionPlan summary={selectedStrategy} />
       <section className="card span-12 pit-strategy-visualization"><SectionTitle title="Monte Carlo pit strategy visualization" help="The selected Monte Carlo candidate uses the same stint, pit, fuel, and tyre layout as the heuristic planner." /><MonteCarloTimeline summary={selectedStrategy} laps={laps} /></section>
       <section className="card span-12"><SectionTitle title="Strategy comparison" help="Mean, median, downside, and reliability are calculated from the Monte Carlo samples." /><div className="table-wrap"><table><thead><tr><th>Strategy</th><th>Stops</th><th>Mean</th><th>Median</th><th>P90</th><th>Fastest</th><th>Fuel risk</th><th>Tyre risk</th></tr></thead><tbody>{result.summaries.map((summary) => <tr key={summary.name}><td>{summary.name}</td><td>{summary.stops}</td><td>{formatTotalTime(summary.mean_time)}</td><td>{formatTotalTime(summary.median_time)}</td><td>{formatTotalTime(summary.p90)}</td><td>{fmt(summary.fastest_probability * 100, 0)}%</td><td>{fmt(summary.fuel_risk_probability * 100, 0)}%</td><td>{fmt(summary.tyre_risk_probability * 100, 0)}%</td></tr>)}</tbody></table></div></section>
       <section className="card span-6"><SectionTitle title="Outcome distribution" help="P5, median, and P90 expose both expected time and downside." /><ResponsiveContainer width="100%" height={260}><BarChart data={result.summaries.map((summary) => ({ name: summary.name, p5: summary.p5, median: summary.median_time, p90: summary.p90 }))}><CartesianGrid stroke="#27313a" /><XAxis dataKey="name" /><YAxis tickFormatter={(value) => formatTotalTime(value)} /><Tooltip formatter={(value) => formatTotalTime(Number(value))} /><Legend /><Bar dataKey="p5" fill="#6dd6ff" /><Bar dataKey="median" fill="#e6b450" /><Bar dataKey="p90" fill="#ff8c69" /></BarChart></ResponsiveContainer></section>
