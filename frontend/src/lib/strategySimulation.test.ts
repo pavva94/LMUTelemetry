@@ -55,6 +55,14 @@ describe("strategy simulation", () => {
     }
   });
 
+  it("evaluates latest-feasible pit layouts alongside balanced stints", () => {
+    const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: 180 });
+    const late = plans.find((plan) => plan.reasons.some((reason) => reason.includes("latest fuel-feasible")));
+    expect(late).toBeDefined();
+    expect(late!.stopsDetail[0].lap).toBeGreaterThanOrEqual(Math.floor(late!.raceLaps / (late!.stops + 1)));
+    expect(late!.reasons.join(" ")).toContain("latest fuel-feasible");
+  });
+
   it("uses elapsed time so pit stops can reduce completed laps", () => {
     const noStop = simulateStrategies({ ...baseInput, fuelPerLap: 0.5, tankCapacityLiters: 100, maxStops: 0 })[0];
     const stopped = simulateStrategies({ ...baseInput, fuelPerLap: 0.5, tankCapacityLiters: 100, maxStops: 1 }).find((plan) => plan.stops === 1);
@@ -83,6 +91,16 @@ describe("strategy simulation", () => {
     const plan = simulateStrategies({ ...baseInput, raceDurationMinutes: 10.1, fuelPerLap: 0.5, tankCapacityLiters: 100, maxStops: 0 })[0];
     expect(plan.raceLaps).toBe(6);
     expect(plan.totalTimeSeconds).toBeGreaterThanOrEqual(10.1 * 60);
+  });
+
+  it("never returns a strategy that ends before the race-duration target", () => {
+    const durationMinutes = 180;
+    const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: durationMinutes });
+    expect(plans).toHaveLength(4);
+    plans.forEach((plan) => {
+      expect(plan.totalTimeSeconds).toBeGreaterThanOrEqual(durationMinutes * 60);
+      expect(plan.calculationBreakdown.timeRemainingSeconds).toBeLessThanOrEqual(0);
+    });
   });
 
   it("produces distinct ranked strategy categories", () => {
@@ -132,10 +150,10 @@ describe("strategy simulation", () => {
   });
 
   it("makes conservative fuel policy no less conservative than aggressive", () => {
-    const aggressive = simulateStrategies({ ...baseInput, safetyPolicy: "aggressive" })[0];
-    const conservative = simulateStrategies({ ...baseInput, safetyPolicy: "conservative" })[0];
-    expect(conservative.recommendedStartFuelLiters).toBeGreaterThanOrEqual(aggressive.recommendedStartFuelLiters);
+    const aggressive = simulateStrategies({ ...baseInput, safetyPolicy: "aggressive" }).find((plan) => plan.reasons.some((reason) => reason.includes("latest fuel-feasible")))!;
+    const conservative = simulateStrategies({ ...baseInput, safetyPolicy: "conservative" }).find((plan) => plan.reasons.some((reason) => reason.includes("latest fuel-feasible")))!;
     expect(conservative.finishFuelRemainingLiters).toBeGreaterThanOrEqual(aggressive.finishFuelRemainingLiters);
+    expect(conservative.fuelMarginLiters).toBeGreaterThanOrEqual(aggressive.fuelMarginLiters);
   });
 
   it("exposes a calculation breakdown that reconciles to elapsed time", () => {

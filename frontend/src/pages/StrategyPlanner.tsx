@@ -8,6 +8,7 @@ import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "..
 import { average, median, standardDeviation, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
 import { simulateStrategies, type PaceEvidence, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
+import { MonteCarloStrategyPanel } from "./RaceSimulation";
 import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview } from "../types/session";
 import type { StrategyState } from "../types/strategy";
@@ -546,6 +547,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const [tyrePolicy, setTyrePolicy] = useState<"automatic" | "all" | "never">("automatic");
   const [reserveUnit, setReserveUnit] = useState<"laps" | "liters">("laps");
   const [modelSource, setModelSource] = useState<ModelSource>("live");
+  const [strategyMethod, setStrategyMethod] = useState<"heuristic" | "monte-carlo">("heuristic");
   const [dirtyFields, setDirtyFields] = useState<Set<keyof FormState>>(() => new Set());
   const [sourceStatus, setSourceStatus] = useState("Live data");
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
@@ -795,6 +797,14 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
                 <strong>minutes</strong>
               </span>
             </label>
+            <label className="strategy-duration-field">
+              <span className="label">Strategy method</span>
+              <select value={strategyMethod} onChange={(event) => setStrategyMethod(event.target.value as "heuristic" | "monte-carlo")}>
+                <option value="heuristic">Heuristic planner</option>
+                <option value="monte-carlo">Monte Carlo simulation</option>
+              </select>
+              <span className="subvalue">Both methods use this page's reference session and race assumptions.</span>
+            </label>
             <div className="strategy-target-summary">
               <span>{fmt(plannedHours, plannedHours % 1 === 0 ? 0 : 2, " hours")}</span>
               <span>{estimatedPlanLaps == null ? "Laps calculated when pace is available" : `About ${estimatedPlanLaps} laps before pit losses`}</span>
@@ -861,6 +871,19 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
         </p>
       </section>
 
+      {strategyMethod === "monte-carlo" ? <MonteCarloStrategyPanel sessionId={selectedSessionId} assumptions={{
+        raceDurationMinutes: form.race_duration_minutes,
+        tankCapacityLiters: form.tank_capacity_liters,
+        finishReserveLiters: fuelSafetyMarginLiters,
+        pitLossSeconds: form.pit_loss_seconds,
+        tyreWearLimit: form.max_tyre_wear,
+        tyreChangeSecondsPerTyre: form.tyre_change_seconds_per_tyre,
+        refuelSecondsPer5Liters: form.refuel_seconds_per_5_liters,
+        serviceModel,
+        normalLapTime: form.normal_lap_time,
+        fuelPerLapLiters: fuelPerLap,
+        tyreWearRatePerLap: wearRate,
+      }} /> : <>
       <section className="card span-12">
         <SectionTitle title="Model Status" help="Summarizes the live data feeding the race simulation. More valid fuel and tyre laps improve confidence." />
         <div className="analysis-value-grid">
@@ -915,6 +938,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
         <SectionTitle title="Live Pit Strategy Visualization" help="Shows the selected plan as a stint timeline, then details tyre life and fuel service at every pit stop." />
         <LiveStyleStrategyTimeline plan={selectedPlan} />
       </section>
+      </>}
     </div>
   );
 }

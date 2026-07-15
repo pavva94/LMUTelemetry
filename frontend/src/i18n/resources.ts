@@ -92,6 +92,7 @@ export const resources = {
       settings: "Settings",
       strategyPlanner: "Strategy Planner",
       sessionReport: "Session Report",
+      raceSimulation: "Race Simulation",
       userProfile: "User Profile",
       sessionReview: "Session Review",
       descriptions: {
@@ -103,6 +104,7 @@ export const resources = {
         xyPlotter: "Custom plots for live and current-session channels while detailed telemetry is still available.",
         planner: "Strategy assumptions and planning tools that combine live telemetry with configurable race targets.",
         racePrep: "Selected-session report builder for reviewing pace, fuel, tyres, environment, and preparation notes.",
+        raceSimulation: "Monte Carlo clear-air strategy comparison from a selected validated historical session.",
         lapAnalysis: "Whole-session coaching from every clean lap: where time is lost, what repeats, and what to try next.",
         pit: "Pit-window guidance based on current strategy assumptions and live session state.",
         settings: "Configuration for connection, display, recording behavior, and strategy assumptions.",
@@ -409,6 +411,9 @@ export const resources = {
       otherwiseReferenceWear: "Otherwise uses reference-session wear",
       saveAssumptions: "Save assumptions",
     },
+    raceSimulation: {
+      title: "Race Simulation", help: "Builds transparent clear-air race-strategy distributions from a validated saved telemetry session.", session: "Historical session", selectSession: "Select a saved session", noSession: "No saved session selected", sessionLoadFailed: "Could not load saved sessions", raceDuration: "Race duration (minutes)", durationHelp: "Expected laps and stints are inferred from session pace, fuel capacity, and tyre wear.", estimatedLaps: "Estimated race laps", simulations: "Simulations", seed: "Random seed", run: "Run simulation", runFailed: "Simulation failed", loading: "Preparing simulation", loadingDetail: "Loading validated telemetry and building the Monte Carlo model.", awaitingRun: "Ready to simulate", awaitingRunDetail: "Select a saved session, set the race duration, and run at least 1,000 deterministic simulations.", recommendation: "Recommended strategy", recommendationHelp: "The recommendation uses the configured balanced objective: expected pace plus fuel and tyre risk.", strategy: "Strategy", cleanLaps: "Clean laps", baselinePace: "Baseline pace", fuelPerLap: "Fuel per lap", pitLoss: "Pit loss", comparison: "Strategy comparison", comparisonHelp: "Race-time distribution and risk metrics are calculated from the same seeded Monte Carlo runs.", stops: "Stops", mean: "Mean", median: "Median", p90: "P90", fastest: "Fastest probability", fuelRisk: "Fuel risk", tyreRisk: "Tyre risk", distribution: "Race-time percentile range", distributionHelp: "P5, median, and P90 show the central and downside distribution rather than a single average.", lapEvolution: "Representative lap evolution", lapEvolutionHelp: "One deterministic representative run exposes fuel, tyre and pit-state evolution lap by lap.", dataQuality: "Preprocessing summary", dataQualityHelp: "Every rejected lap remains visible by reason; the pace model only trains on accepted representative laps.", provenance: "Model provenance", provenanceHelp: "Measured, robustly estimated, configured, and fallback inputs are distinguished explicitly.", parameter: "Parameter", source: "Source", noRejections: "No additional laps were rejected after shared session validation."
+    },
     telemetry: {
       status: "Status",
       track: "Track",
@@ -590,6 +595,7 @@ export const resources = {
       settings: "Impostazioni",
       strategyPlanner: "Pianificatore Strategia",
       sessionReport: "Report Sessione",
+      raceSimulation: "Simulazione Gara",
       userProfile: "Profilo Utente",
       sessionReview: "Revisione Sessione",
       descriptions: {
@@ -601,6 +607,7 @@ export const resources = {
         xyPlotter: "Grafici personalizzati per canali live e della sessione corrente finche la telemetria dettagliata e disponibile.",
         planner: "Assunzioni strategiche e strumenti di pianificazione che combinano telemetria live e obiettivi gara configurabili.",
         racePrep: "Generatore di report per una sessione selezionata, utile per rivedere passo, carburante, gomme, ambiente e note di preparazione.",
+        raceSimulation: "Confronto strategico Monte Carlo in aria pulita basato su una sessione storica validata.",
         lapAnalysis: "Coaching sull'intera sessione da ogni giro pulito: dove si perde tempo, cosa si ripete e cosa provare dopo.",
         pit: "Guida alla finestra di pit stop basata sulle assunzioni strategiche correnti e sullo stato live della sessione.",
         settings: "Configurazione di connessione, display, registrazione e assunzioni strategiche.",
@@ -906,6 +913,9 @@ export const resources = {
       startOnNewTyres: "Inizia la gara pianificata con gomme nuove",
       otherwiseReferenceWear: "Altrimenti usa l'usura della sessione di riferimento",
       saveAssumptions: "Salva assunzioni",
+    },
+    raceSimulation: {
+      title: "Simulazione Gara", help: "Costruisce distribuzioni di strategia in aria pulita da una sessione telemetrica salvata e validata.", session: "Sessione storica", selectSession: "Seleziona una sessione salvata", noSession: "Nessuna sessione salvata selezionata", sessionLoadFailed: "Impossibile caricare le sessioni salvate", raceDuration: "Durata gara (minuti)", durationHelp: "Giri previsti e stint sono dedotti da passo sessione, capacita serbatoio e usura gomme.", estimatedLaps: "Giri gara stimati", simulations: "Simulazioni", seed: "Seed casuale", run: "Esegui simulazione", runFailed: "Simulazione non riuscita", loading: "Preparazione simulazione", loadingDetail: "Caricamento telemetria validata e costruzione del modello Monte Carlo.", awaitingRun: "Pronto a simulare", awaitingRunDetail: "Seleziona una sessione salvata, imposta la durata gara ed esegui almeno 1.000 simulazioni deterministiche.", recommendation: "Strategia consigliata", recommendationHelp: "La raccomandazione usa l'obiettivo bilanciato configurato: passo atteso piu rischio carburante e gomme.", strategy: "Strategia", cleanLaps: "Giri puliti", baselinePace: "Passo base", fuelPerLap: "Carburante per giro", pitLoss: "Perdita box", comparison: "Confronto strategie", comparisonHelp: "Distribuzione tempi gara e metriche di rischio sono calcolate dagli stessi run Monte Carlo con seed fisso.", stops: "Soste", mean: "Media", median: "Mediana", p90: "P90", fastest: "Probabilita piu veloce", fuelRisk: "Rischio carburante", tyreRisk: "Rischio gomme", distribution: "Intervallo percentili tempo gara", distributionHelp: "P5, mediana e P90 mostrano distribuzione centrale e downside invece di una sola media.", lapEvolution: "Evoluzione giro rappresentativa", lapEvolutionHelp: "Un run rappresentativo deterministico espone carburante, gomme e stato box giro per giro.", dataQuality: "Riepilogo preprocessing", dataQualityHelp: "Ogni giro rifiutato resta visibile per motivo; il modello passo usa solo giri rappresentativi accettati.", provenance: "Provenienza modello", provenanceHelp: "Input misurati, stimati robustamente, configurati e fallback sono distinti esplicitamente.", parameter: "Parametro", source: "Fonte", noRejections: "Nessun giro aggiuntivo rifiutato dopo la validazione condivisa della sessione."
     },
     telemetry: {
       status: "Stato",

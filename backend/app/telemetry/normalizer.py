@@ -191,6 +191,9 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
     wheels = list(attr(telemetry, "mWheels", default=[]) or [])
     def wheel_value(index: int, name: str) -> float | None:
         return safe_float(attr(wheels[index], name, default=None)) if index < len(wheels) else None
+    def wheel_int_value(index: int, name: str) -> int | None:
+        value = attr(wheels[index], name, default=None) if index < len(wheels) else None
+        return int(value) if isinstance(value, (int, float)) else None
     def accel_g(axis: str) -> float | None:
         value = safe_float(attr(attr(telemetry, "mLocalAccel", default=None), axis, default=None))
         return value / 9.80665 if value is not None else None
@@ -228,6 +231,10 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         fuel_capacity_liters=safe_float(attr(telemetry, "mFuelCapacity", default=None)),
         engine_oil_temp=safe_float(attr(telemetry, "mEngineOilTemp", default=None)),
         engine_water_temp=safe_float(attr(telemetry, "mEngineWaterTemp", default=None)),
+        surface_type_fl=wheel_int_value(0, "mSurfaceType"),
+        surface_type_fr=wheel_int_value(1, "mSurfaceType"),
+        surface_type_rl=wheel_int_value(2, "mSurfaceType"),
+        surface_type_rr=wheel_int_value(3, "mSurfaceType"),
         throttle=safe_float(attr(telemetry, "mUnfilteredThrottle", "mThrottle", default=None)),
         brake=safe_float(attr(telemetry, "mUnfilteredBrake", "mBrake", default=None)),
         steering=safe_float(attr(telemetry, "mUnfilteredSteering", "mSteering", default=None)),

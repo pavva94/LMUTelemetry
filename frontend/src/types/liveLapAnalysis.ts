@@ -4,12 +4,14 @@ export type LiveLapSummary = {
   sample_count?: number | null;
   top_speed?: number | null;
   valid_lap?: boolean | null;
+  automatic_valid_lap?: boolean | null;
+  included_in_analysis?: boolean | null;
   reason?: string | null;
   reason_codes?: string[];
   lap_invalidated?: boolean | null;
   in_pits?: boolean | null;
   yellow_flag?: boolean | null;
-  quality_state?: "Valid" | "Valid but noisy" | "Partially unreliable" | "Invalid for performance analysis";
+  quality_state?: "Valid" | "Valid but noisy" | "Partially unreliable" | "Invalid for performance analysis" | "Excluded from current analysis";
   quality_score?: number | null;
   flagged_samples?: number | null;
   timestamp_gaps?: number | null;

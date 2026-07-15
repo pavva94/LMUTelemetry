@@ -856,6 +856,8 @@ def _review_rows(raw_rows: list[dict], info: TableInfo) -> list[dict]:
     previous_lap_distance: float | None = None
     for index, raw in enumerate(raw_rows):
         row = {target: _mapped_value(raw, info, target) for target in CHANNEL_ALIASES}
+        for wheel in WHEELS:
+            row[f"surface_type_{wheel}"] = _mapped_value(raw, info, f"surface_type_{wheel}")
         if row.get("game_time") is None:
             row["game_time"] = float(index)
         if row.get("lap_number") is None:

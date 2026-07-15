@@ -106,6 +106,35 @@ def test_lap_quality_uses_session_median_only_after_three_clean_laps() -> None:
     assert laps[3]["invalid_reasons"] == ["lap_time_outside_session_pace_band"]
 
 
+def test_lap_quality_rejects_unflagged_fast_reset_against_clean_session_pace() -> None:
+    laps = [
+        {"lap_number": 1, "lap_time": 105.0, "valid_lap": True, "timing_source": "official"},
+        {"lap_number": 2, "lap_time": 104.8, "valid_lap": True, "timing_source": "official"},
+        {"lap_number": 3, "lap_time": 105.2, "valid_lap": True, "timing_source": "official"},
+        # Reset/cut-like timing: source did not set its invalidation flag.
+        {"lap_number": 4, "lap_time": 93.8, "valid_lap": True, "timing_source": "official"},
+    ]
+
+    valid = Repository()._valid_laps(laps)
+
+    assert [lap["lap_number"] for lap in valid] == [1, 2, 3]
+    assert laps[3]["invalid_reasons"] == ["lap_time_outside_session_pace_band"]
+
+
+def test_lap_quality_rejects_unflagged_slow_incident_against_clean_session_pace() -> None:
+    laps = [
+        {"lap_number": 1, "lap_time": 105.0, "valid_lap": True, "timing_source": "official"},
+        {"lap_number": 2, "lap_time": 104.8, "valid_lap": True, "timing_source": "official"},
+        {"lap_number": 3, "lap_time": 105.2, "valid_lap": True, "timing_source": "official"},
+        {"lap_number": 4, "lap_time": 130.0, "valid_lap": True, "timing_source": "official"},
+    ]
+
+    valid = Repository()._valid_laps(laps)
+
+    assert [lap["lap_number"] for lap in valid] == [1, 2, 3]
+    assert laps[3]["invalid_reasons"] == ["lap_time_outside_session_pace_band"]
+
+
 def test_session_aggregate_excludes_pit_lap_fuel_drop(monkeypatch) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(repository_module, "SessionLocal", factory)
