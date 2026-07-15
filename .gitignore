@@ -12,6 +12,7 @@ backend/pytest-basetemp/
 backend/.audit-tmp*/
 backend/.pytest-unlocked*/
 backend/pytest-of-*/
+backend/.pytest*/
 tmp-pytest-*/
 data/sessions/*.sqlite3
 data/sessions/*.sqlite3-*
