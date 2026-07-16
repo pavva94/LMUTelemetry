@@ -67,8 +67,11 @@ def derive_model(review: dict[str, Any], request: RaceSimulationRequest) -> dict
     if len(times) < 3:
         raise ValueError("At least three clean, representative laps are required for simulation.")
     baseline = request.normal_lap_time if request.normal_lap_time is not None else statistics.median(times)
-    residuals = [value - baseline for value in times]
-    residual_sigma = max((_mad(residuals, 0) * 1.4826), 0.08)
+    # Pace spread is a property of the observed laps, not of a user-provided
+    # baseline override. Centre it on the observed median so an override does
+    # not accidentally inflate variability by its offset from the session.
+    observed_median = statistics.median(times)
+    residual_sigma = max((_mad(times, observed_median) * 1.4826), 0.08)
     fuel = [_number(lap.get("fuel_used")) for lap in accepted]
     fuel = [value for value in fuel if value is not None and 0 < value < 30]
     fuel_per_lap = request.fuel_per_lap_liters if request.fuel_per_lap_liters is not None else (statistics.median(fuel) if fuel else 2.5)
@@ -80,7 +83,10 @@ def derive_model(review: dict[str, Any], request: RaceSimulationRequest) -> dict
         values = [value for value in values if value is not None and 0 <= value <= 1]
         if values:
             wear_end.append(sum(values) / len(values))
-    derived_wear_rate = max((wear_end[-1] - wear_end[0]) / max(1, len(wear_end) - 1), 0.001) if len(wear_end) >= 2 else 0.008
+    # Use positive lap-to-lap increments. A tyre change resets the recorded
+    # wear and must not flatten the rate across the whole session.
+    wear_increments = [current - previous for previous, current in zip(wear_end, wear_end[1:]) if 0 < current - previous <= 0.2]
+    derived_wear_rate = statistics.median(wear_increments) if wear_increments else 0.008
     wear_rate = request.tyre_wear_rate_per_lap if request.tyre_wear_rate_per_lap is not None else derived_wear_rate
     pit_losses = [_number(event.get("total_pit_loss")) for event in review.get("pit_events") or []]
     pit_losses = [value for value in pit_losses if value is not None and 1 <= value <= 180]
@@ -91,7 +97,7 @@ def derive_model(review: dict[str, Any], request: RaceSimulationRequest) -> dict
         "fuel_sigma": fuel_sigma, "wear_rate": wear_rate, "pit_loss": pit_loss,
         "accepted": len(accepted), "total": len(review.get("laps") or []), "reasons": dict(reasons),
         "provenance": {"baseline_pace": "robust_estimate", "fuel_per_lap": fuel_source,
-                       "tyre_wear_rate": "user_configured" if request.tyre_wear_rate_per_lap is not None else ("session_derived" if len(wear_end) >= 2 else "default_fallback"),
+                       "tyre_wear_rate": "user_configured" if request.tyre_wear_rate_per_lap is not None else ("session_derived" if wear_increments else "default_fallback"),
                        "pit_loss": pit_source, "lap_variability": "robust_estimate"},
     }
 
@@ -126,7 +132,7 @@ def generate_strategies(model: dict[str, Any], request: RaceSimulationRequest, t
     # Endurance races frequently require more than four stints. Generate the
     # minimum feasible plan plus nearby alternatives, bounded only to protect
     # the UI and runtime from unrealistic inputs.
-    for stint_count in range(minimum_stints, min(minimum_stints + 3, 25)):
+    for stint_count in range(minimum_stints, min(minimum_stints + 3, 25, race_laps + 1)):
         base, remainder = divmod(race_laps, stint_count)
         lengths = [base + (1 if index < remainder else 0) for index in range(stint_count)]
         if any(length > max_stint for length in lengths):
@@ -203,27 +209,33 @@ def _strategy_plan(strategy: SimulationStrategy, request: RaceSimulationRequest,
 def run_simulation(review: dict[str, Any], request: RaceSimulationRequest, progress: Progress | None = None) -> dict[str, Any]:
     model = derive_model(review, request)
     tank = request.fuel_tank_capacity_liters or max(20.0, request.starting_fuel_liters or 0, 90.0)
-    race_laps, strategies = generate_strategies(model, request, tank)
     if request.starting_fuel_liters is not None and request.starting_fuel_liters > tank:
         raise ValueError("Starting fuel exceeds tank capacity.")
-    rng = random.Random(request.random_seed)
+    if request.finish_reserve_liters >= tank:
+        raise ValueError("Finish reserve must be smaller than tank capacity.")
+    race_laps, strategies = generate_strategies(model, request, tank)
     strategy_runs: dict[str, list[dict[str, float]]] = {strategy.name: [] for strategy in strategies}
     representative: dict[str, list[dict[str, float | int | str | bool]]] = {}
     total = request.simulation_count * len(strategies)
     done = 0
     for strategy in strategies:
         for run_index in range(request.simulation_count):
+            # Re-seeding each strategy/run pair gives strategies the same
+            # scenario stream for a fairer paired comparison while preserving
+            # complete reproducibility from the configured seed.
+            rng = random.Random(request.random_seed + run_index)
             # Avoid carrying a full tank by default: load only enough for the
             # opening stint and reserve, then short-fill the following stint.
             starting_fuel = request.starting_fuel_liters if request.starting_fuel_liters is not None else strategy.stints[0].fuel_added_liters
-            fuel, total_time, max_wear, pit_time = starting_fuel, 0.0, 0.0, 0.0
+            fuel, minimum_fuel, total_time, max_wear, pit_time = starting_fuel, starting_fuel, 0.0, 0.0, 0.0
             traffic_time, traffic_wear, traffic_events = 0.0, 0.0, 0
             opponents = _synthetic_field(model, request, rng)
             laps: list[dict[str, float | int | str | bool]] = []
             race_temperature_bias = rng.gauss(0, 0.10)
             stint_index, tyre_age = 0, 0
             initial_wear = 0.0 if request.race_start_new_tyres else request.used_tyre_wear
-            stint_wear_bias = rng.gauss(1, request.tyre_wear_variability)
+            current_wear = initial_wear
+            stint_wear_bias = max(0.05, rng.gauss(1, request.tyre_wear_variability))
             after_pit = False
             for lap_number in range(1, race_laps + 1):
                 stint = strategy.stints[stint_index]
@@ -236,29 +248,35 @@ def run_simulation(review: dict[str, Any], request: RaceSimulationRequest, progr
                 lap_time = model["baseline"] + fuel_effect + warmup + tyre_effect + pace_effect + race_temperature_bias + traffic_loss + rng.gauss(0, model["residual_sigma"] * request.pace_variability_multiplier)
                 fuel_used = max(0.01, rng.gauss(model["fuel_per_lap"] * (1.015 if stint.pace_mode == "push" else 0.985 if stint.pace_mode == "conserve" else 1) * (1 + fuel_factor), model["fuel_sigma"]))
                 fuel -= fuel_used
-                base_wear = tyre_age * model["wear_rate"] * stint_wear_bias * (1.08 if stint.pace_mode == "push" else 1)
-                wear = min(1.5, initial_wear + base_wear * (1 + wear_factor))
+                minimum_fuel = min(minimum_fuel, fuel)
+                base_wear = model["wear_rate"] * stint_wear_bias * (1.08 if stint.pace_mode == "push" else 1)
+                current_wear = min(1.5, current_wear + base_wear * (1 + wear_factor))
+                wear = current_wear
                 max_wear = max(max_wear, wear)
                 total_time += lap_time
                 traffic_time += traffic_loss; traffic_wear += base_wear * wear_factor; traffic_events += int(encounter is not None)
                 pit = lap_number < race_laps and tyre_age == stint.laps
                 if pit:
                     next_stint = strategy.stints[stint_index + 1]
-                    fuel_added = max(0.0, next_stint.fuel_added_liters - fuel)
+                    # A negative fuel balance means this run starved before
+                    # reaching the pits. Do not count that deficit as fuel
+                    # physically added during service.
+                    fuel_added = max(0.0, next_stint.fuel_added_liters - max(0.0, fuel))
                     fuel_service = fuel_added / 5 * request.refuel_seconds_per_5_liters
                     tyre_service = 4 * request.tyre_change_seconds_per_tyre if strategy.stints[stint_index + 1].change_tyres else 0
                     stationary = max(fuel_service, tyre_service) if request.service_model == "parallel" else fuel_service + tyre_service
                     pit_component = max(1, rng.gauss(model["pit_loss"] + stationary, max(0.5, model["pit_loss"] * 0.06 * request.pit_variability_multiplier)))
                     total_time += pit_component; pit_time += pit_component
-                    fuel = min(tank, fuel + fuel_added)
+                    fuel = min(tank, max(0.0, fuel) + fuel_added)
                     stint_index += 1
                     if strategy.stints[stint_index].change_tyres:
                         tyre_age = 0
                         initial_wear = 0.0
-                    stint_wear_bias = rng.gauss(1, request.tyre_wear_variability)
+                        current_wear = 0.0
+                    stint_wear_bias = max(0.05, rng.gauss(1, request.tyre_wear_variability))
                 after_pit = pit
                 laps.append({"lap": lap_number, "lap_time": lap_time, "fuel": max(0, fuel), "wear": wear, "stint": stint_index + 1, "pit": pit, "traffic_loss": traffic_loss, "traffic_event": encounter or "clear"})
-            strategy_runs[strategy.name].append({"time": total_time, "fuel": fuel, "wear": max_wear, "pit_time": pit_time, "traffic_time": traffic_time, "traffic_wear": traffic_wear, "traffic_events": traffic_events})
+            strategy_runs[strategy.name].append({"time": total_time, "fuel": fuel, "minimum_fuel": minimum_fuel, "wear": max_wear, "pit_time": pit_time, "traffic_time": traffic_time, "traffic_wear": traffic_wear, "traffic_events": traffic_events})
             if run_index == 0:
                 representative[strategy.name] = laps
             done += 1
@@ -273,7 +291,7 @@ def run_simulation(review: dict[str, Any], request: RaceSimulationRequest, progr
         runs = strategy_runs[strategy.name]
         times = [run["time"] for run in runs]
         mean = statistics.fmean(times)
-        summaries.append({"name": strategy.name, "mean_time": mean, "median_time": _quantile(times, .5), "std_dev": statistics.pstdev(times), "p5": _quantile(times, .05), "p90": _quantile(times, .90), "fastest_probability": wins[strategy.name] / request.simulation_count, "fuel_risk_probability": sum(run["fuel"] < request.finish_reserve_liters for run in runs) / len(runs), "tyre_risk_probability": sum(run["wear"] > request.tyre_wear_limit for run in runs) / len(runs), "expected_finish_fuel": statistics.fmean(run["fuel"] for run in runs), "expected_max_wear": statistics.fmean(run["wear"] for run in runs), "expected_pit_time": statistics.fmean(run["pit_time"] for run in runs), "expected_traffic_loss": statistics.fmean(run["traffic_time"] for run in runs), "p90_traffic_loss": _quantile([run["traffic_time"] for run in runs], .9), "expected_traffic_events": statistics.fmean(run["traffic_events"] for run in runs), "expected_traffic_wear": statistics.fmean(run["traffic_wear"] for run in runs), "stops": len(strategy.stints) - 1, "plan": _strategy_plan(strategy, request, model, tank), "distribution": [_quantile(times, q) for q in (.05, .25, .5, .75, .9, .95)]})
+        summaries.append({"name": strategy.name, "mean_time": mean, "median_time": _quantile(times, .5), "std_dev": statistics.pstdev(times), "p5": _quantile(times, .05), "p90": _quantile(times, .90), "fastest_probability": wins[strategy.name] / request.simulation_count, "fuel_risk_probability": sum(run["minimum_fuel"] < 0 or run["fuel"] < request.finish_reserve_liters for run in runs) / len(runs), "tyre_risk_probability": sum(run["wear"] > request.tyre_wear_limit for run in runs) / len(runs), "expected_finish_fuel": statistics.fmean(run["fuel"] for run in runs), "expected_max_wear": statistics.fmean(run["wear"] for run in runs), "expected_pit_time": statistics.fmean(run["pit_time"] for run in runs), "expected_traffic_loss": statistics.fmean(run["traffic_time"] for run in runs), "p90_traffic_loss": _quantile([run["traffic_time"] for run in runs], .9), "expected_traffic_events": statistics.fmean(run["traffic_events"] for run in runs), "expected_traffic_wear": statistics.fmean(run["traffic_wear"] for run in runs), "stops": len(strategy.stints) - 1, "plan": _strategy_plan(strategy, request, model, tank), "distribution": [_quantile(times, q) for q in (.05, .25, .5, .75, .9, .95)]})
     key = {"expected_time": "mean_time", "median_time": "median_time", "downside_risk": "p90", "fastest_probability": "fastest_probability", "balanced": "mean_time"}[request.objective]
     summaries.sort(key=lambda item: -item[key] if request.objective == "fastest_probability" else item[key] + (item["fuel_risk_probability"] + item["tyre_risk_probability"]) * (5 if request.objective == "balanced" else 0))
     best = summaries[0]
