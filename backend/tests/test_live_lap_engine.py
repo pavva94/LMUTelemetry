@@ -141,6 +141,61 @@ def test_payload_lists_completed_laps_even_when_marked_not_clean() -> None:
     assert marked[3]["reason"] == "Pit lane"
 
 
+def test_live_coach_excludes_unflagged_fast_reset_from_reference() -> None:
+    config = VehicleAnalysisConfig(poll_hz=10)
+    buffer = LiveLapBuffer(config)
+    for lap_number, lap_time in ((1, 50.0), (2, 50.2), (3, 49.8)):
+        rows = make_lap(lap_number=lap_number)
+        rows[-1]["lap_time"] = lap_time
+        buffer._completed[lap_number] = rows
+    reset = make_lap(lap_number=4)
+    reset[-1]["lap_time"] = 44.0
+    buffer._completed[4] = reset
+
+    payload = analysis_payload(buffer, config)
+    marked = {lap["lap_number"]: lap for lap in payload["laps"]}
+
+    assert marked[4]["valid_lap"] is False
+    assert marked[4]["reason"] == "lap_time_outside_session_pace_band"
+    assert payload["reference_lap_number"] != 4
+
+
+def test_live_coach_excludes_unflagged_slow_incident_lap() -> None:
+    config = VehicleAnalysisConfig(poll_hz=10)
+    buffer = LiveLapBuffer(config)
+    for lap_number, lap_time in ((1, 50.0), (2, 50.2), (3, 49.8)):
+        rows = make_lap(lap_number=lap_number)
+        rows[-1]["lap_time"] = lap_time
+        buffer._completed[lap_number] = rows
+    incident = make_lap(lap_number=4)
+    incident[-1]["lap_time"] = 63.0
+    buffer._completed[4] = incident
+
+    payload = analysis_payload(buffer, config)
+    marked = {lap["lap_number"]: lap for lap in payload["laps"]}
+
+    assert marked[4]["valid_lap"] is False
+    assert marked[4]["reason"] == "lap_time_outside_session_pace_band"
+
+
+def test_live_coach_rebuilds_its_model_from_manual_lap_selection() -> None:
+    config = VehicleAnalysisConfig(poll_hz=10)
+    buffer = LiveLapBuffer(config)
+    for lap_number, lap_time in ((1, 50.0), (2, 50.2), (3, 49.8), (4, 63.0)):
+        rows = make_lap(lap_number=lap_number)
+        rows[-1]["lap_time"] = lap_time
+        buffer._completed[lap_number] = rows
+
+    payload = analysis_payload(buffer, config, analysis_laps={1, 4})
+    marked = {lap["lap_number"]: lap for lap in payload["laps"]}
+
+    assert marked[4]["automatic_valid_lap"] is False
+    assert marked[4]["included_in_analysis"] is True
+    assert marked[2]["included_in_analysis"] is False
+    assert payload["quality"]["clean_laps"] == 2
+    assert payload["session_summary"]["representative_pace"] == pytest.approx(56.5)
+
+
 def test_payload_honors_selected_marked_lap_for_comparison() -> None:
     config = VehicleAnalysisConfig(poll_hz=10)
     buffer = LiveLapBuffer(config)

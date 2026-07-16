@@ -59,6 +59,10 @@ export type PlayerState = {
   engine_torque?: number;
   engine_oil_temp?: number;
   engine_water_temp?: number;
+  surface_type_fl?: number;
+  surface_type_fr?: number;
+  surface_type_rl?: number;
+  surface_type_rr?: number;
   fuel_liters?: number;
   fuel_capacity_liters?: number;
   throttle?: number;

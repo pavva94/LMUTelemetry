@@ -37,9 +37,13 @@ def saved_session_dashboard(session_id: str, request: Request):
 
 
 @router.get("/live-lap-analysis")
-def live_lap_analysis(request: Request, selected_lap: int | None = None, reference_lap: int | None = None):
+def live_lap_analysis(request: Request, selected_lap: int | None = None, reference_lap: int | None = None, analysis_laps: str | None = None):
     service = request.app.state.telemetry_service
-    return service.live_lap_analysis(selected_lap=selected_lap, reference_lap=reference_lap)
+    try:
+        selected_for_analysis = {int(value) for value in analysis_laps.split(",") if value.strip()} if analysis_laps is not None else None
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="analysis_laps must be a comma-separated list of lap numbers") from exc
+    return service.live_lap_analysis(selected_lap=selected_lap, reference_lap=reference_lap, analysis_laps=selected_for_analysis)
 
 
 @router.get("/sessions")

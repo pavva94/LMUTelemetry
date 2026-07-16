@@ -150,6 +150,7 @@ export function RacePrepReport({ strategy }: Props) {
           <LapAnalysis report={report} />
           <FuelAnalysis report={report} />
           <DriverInputs report={report} />
+          <PowertrainAndSurface report={report} />
           <TyreWear report={report} />
           <TyreTempPressure report={report} />
           <BrakePlatform report={report} />
@@ -294,6 +295,32 @@ function DriverInputs({ report }: { report: RacePrepReportModel }) {
       <section className="card span-12">
         <SectionTitle title="G-Force" help="Shows lateral and longitudinal acceleration if the selected recording includes those channels." />
         <SessionChart data={report.charts.samples} xKey="game_time" lines={[["g_force_lat", "#6dd6ff"], ["g_force_long", "#ff8c69"], ["g_force_vert", "#91e48f"]]} height={220} />
+      </section>
+    </>
+  );
+}
+
+function PowertrainAndSurface({ report }: { report: RacePrepReportModel }) {
+  const data = report.charts.samples.length ? report.charts.samples : report.charts.laps;
+  const xKey = report.charts.samples.length ? "game_time" : "lap";
+  return (
+    <>
+      <section className="card span-6">
+        <SectionTitle title="Radiator Temperatures" help="Shows engine oil and water temperatures when the selected live or saved session exposes them." />
+        <SessionChart data={data} xKey={xKey} lines={[["engine_oil_temp", "#e6b450"], ["engine_water_temp", "#6dd6ff"]]} height={220} />
+        <div className="header-grid">
+          <Metric label="Oil avg / max" value={`${fmt(report.powertrain.oilTemp.average, 1, " C")} / ${fmt(report.powertrain.oilTemp.max, 1, " C")}`} />
+          <Metric label="Water avg / max" value={`${fmt(report.powertrain.waterTemp.average, 1, " C")} / ${fmt(report.powertrain.waterTemp.max, 1, " C")}`} />
+        </div>
+      </section>
+      <section className="card span-6">
+        <SectionTitle title="Grass Contact" help="Counts wheel samples reported on grass. Only shown when the recording includes wheel surface-type channels." />
+        {report.coverage.channelGroups.includes("Surface") ? (
+          <div className="header-grid">
+            {wheels.map((wheel) => <Metric key={wheel} label={`${wheelLabels[wheel]} grass`} value={report.surface.grassSamples[wheel]} />)}
+            <Metric label="Total grass samples" value={report.surface.totalGrassSamples} />
+          </div>
+        ) : <EmptyState detail="This session does not include wheel surface-type channels." />}
       </section>
     </>
   );

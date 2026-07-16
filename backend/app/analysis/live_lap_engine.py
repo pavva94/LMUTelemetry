@@ -6,6 +6,7 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
+from app.analysis.lap_quality import apply_lap_quality
 from app.schemas.telemetry import TelemetrySnapshot
 
 
@@ -16,7 +17,9 @@ GRAVITY = 9.80665
 @dataclass(frozen=True)
 class VehicleAnalysisConfig:
     poll_hz: int = 10
-    retained_laps: int = 10
+    # Keep a full normal driving session available for review and manual
+    # inclusion, rather than silently trimming the Coach ledger to ten laps.
+    retained_laps: int = 100
     tyre_radius_m: float = 0.32
     mass_kg: float = 1030.0
     roll_center_height_m: float = 0.08
@@ -696,7 +699,9 @@ def _session_model(completed: OrderedDict[int, list[dict]], summaries: list[dict
     quality_by_lap: dict[int, dict] = {}
     for lap, rows in completed.items():
         quality_rows[lap], quality_by_lap[lap] = _quality_rows(rows, config)
-    valid_summaries = [summary for summary in summaries if summary.get("valid_lap")]
+    # Validity is an automatic recommendation, not an irreversible decision.
+    # The driver may include any completed lap in the coaching population.
+    valid_summaries = [summary for summary in summaries if summary.get("included_in_analysis")]
     valid_times = [summary.get("lap_time") for summary in valid_summaries]
     median_time = _median(valid_times)
     pace_mad = _mad(valid_times)
@@ -711,9 +716,9 @@ def _session_model(completed: OrderedDict[int, list[dict]], summaries: list[dict
         lap = int(summary["lap_number"])
         q = quality_by_lap[lap]
         summary.update(q)
-        summary["quality_state"] = "Invalid for performance analysis" if not summary.get("valid_lap") else q["state"]
+        summary["quality_state"] = "Excluded from current analysis" if not summary.get("included_in_analysis") else q["state"]
         summary["gap_to_representative"] = summary.get("lap_time") - median_time if summary.get("lap_time") is not None and median_time is not None else None
-        summary["role"] = "Personal best valid lap" if best and lap == best["lap_number"] else "Representative fast lap" if representative_fast and lap == representative_fast["lap_number"] else "Clean comparable lap" if summary.get("valid_lap") else "Excluded lap"
+        summary["role"] = "Personal best selected lap" if best and lap == best["lap_number"] else "Representative selected lap" if representative_fast and lap == representative_fast["lap_number"] else "Selected for analysis" if summary.get("included_in_analysis") else "Not selected for analysis"
 
     reference_rows = quality_rows.get(reference_lap, [])
     detected = detect_corners(reference_rows)
@@ -836,10 +841,33 @@ def _session_model(completed: OrderedDict[int, list[dict]], summaries: list[dict
     }
 
 
-def analysis_payload(buffer: LiveLapBuffer, config: VehicleAnalysisConfig, selected_lap: int | None = None, reference_lap: int | None = None, session: dict | None = None) -> dict:
+def analysis_payload(
+    buffer: LiveLapBuffer,
+    config: VehicleAnalysisConfig,
+    selected_lap: int | None = None,
+    reference_lap: int | None = None,
+    session: dict | None = None,
+    analysis_laps: set[int] | None = None,
+) -> dict:
     completed = buffer.completed_laps()
-    valid = buffer.valid_laps()
     summaries = [lap_summary(lap, rows, config) for lap, rows in completed.items()]
+    # Apply the same session-relative guard used by stored sessions.  The live
+    # recorder can miss the game's one-tick invalidation flag after a reset, so
+    # a suddenly implausible fast lap must not become the coach's reference.
+    for summary in summaries:
+        summary["in_pit"] = summary.get("in_pits")
+        summary["under_yellow"] = summary.get("yellow_flag")
+    apply_lap_quality(summaries)
+    for summary in summaries:
+        summary["automatic_valid_lap"] = summary.get("valid_lap") is True
+        summary["included_in_analysis"] = (
+            int(summary["lap_number"]) in analysis_laps
+            if analysis_laps is not None
+            else summary["automatic_valid_lap"]
+        )
+        if summary.get("invalid_reasons"):
+            summary["reason"] = summary.get("reason") or ", ".join(summary["invalid_reasons"])
+            summary["reason_codes"] = list(summary["invalid_reasons"])
     if not completed:
         return {
             "session": session or {},
@@ -858,7 +886,7 @@ def analysis_payload(buffer: LiveLapBuffer, config: VehicleAnalysisConfig, selec
             "findings": [],
             "metrics": {"session_peak_combined_g": None, "understeer_gradient": None, "load_transfer_geom": None},
         }
-    valid_summaries = [summary for summary in summaries if summary.get("valid_lap")]
+    valid_summaries = [summary for summary in summaries if summary.get("included_in_analysis")]
     timed_summaries = valid_summaries or [summary for summary in summaries if summary.get("lap_time") is not None]
     fastest = min(timed_summaries, key=lambda item: item.get("lap_time") if item.get("lap_time") is not None else math.inf) if timed_summaries else summaries[-1]
     session_reference = int(fastest["lap_number"])

@@ -512,12 +512,12 @@ function SessionControls({ payload, selectedLap, referenceLap, setSelectedLap, s
           <button className={mode === "session" ? "active" : ""} onClick={() => setMode("session")} aria-pressed={mode === "session"}>{coachText("Session analysis", language)}</button>
           <button className={mode === "compare" ? "active" : ""} onClick={() => setMode("compare")} aria-pressed={mode === "compare"}>{coachText("Compare laps", language)}</button>
         </div>
-        {mode === "session" ? <div className="coach-scope"><Target size={15} /><span><strong>{coachText("All clean laps", language)}</strong><small>{coachText(`${payload.quality?.clean_laps ?? 0} laps build this coaching model`, language)}</small></span></div> : <>
+        {mode === "session" ? <div className="coach-scope"><Target size={15} /><span><strong>Selected laps</strong><small>{payload.laps.filter((lap) => lap.included_in_analysis).length} laps build this coaching model</small></span></div> : <>
           <label><span>{coachText("Lap", language)}</span><select value={selectedLap ?? ""} onChange={(event) => setSelectedLap(Number(event.target.value))}>
             {payload.laps.map((lap) => <option value={lap.lap_number} key={lap.lap_number}>{lapOptionLabel(lap, language)}</option>)}
           </select></label>
           <label><span>{coachText("Reference", language)}</span><select value={referenceLap ?? ""} onChange={(event) => setReferenceLap(Number(event.target.value))}>
-            {payload.laps.filter((lap) => lap.valid_lap !== false).map((lap) => <option value={lap.lap_number} key={lap.lap_number}>{coachText("Lap", language)} {lap.lap_number} · {coachText(lap.role || lapStatus(lap), language)}</option>)}
+            {payload.laps.map((lap) => <option value={lap.lap_number} key={lap.lap_number}>{coachText("Lap", language)} {lap.lap_number} · {coachText(lap.role || lapStatus(lap), language)}</option>)}
           </select></label>
         </>}
       </div>
@@ -645,9 +645,10 @@ function FindingDetail({ finding, current, reference, language }: { finding: Coa
   );
 }
 
-function LapQualityLedger({ laps, language }: { laps: LiveLapSummary[]; language: Language }) {
-  return <section className="coach-ledger" aria-labelledby="session-laps-title"><div className="coach-ledger-head"><span><ShieldCheck size={17} /><strong id="session-laps-title">{coachText("Session laps", language)}</strong></span><small>{coachText(`${laps.filter((lap) => lap.valid_lap !== false).length} used · ${laps.filter((lap) => lap.valid_lap === false).length} excluded`, language)}</small></div>
-    <div className="table-wrap"><table><thead><tr><th>{coachText("Lap", language)}</th><th>{coachText("Use", language)}</th><th>{coachText("Time", language)}</th><th>{coachText("Data", language)}</th><th>{coachText("Vs usual", language)}</th><th>{coachText("Reason", language)}</th></tr></thead><tbody>{laps.map((lap) => <tr key={lap.lap_number}><td><strong>#{lap.lap_number}</strong></td><td>{coachText(lap.role || "--", language)}</td><td>{formatRaceTime(lap.lap_time)}</td><td><span className={`quality-word ${qualityClass(lap.quality_state)}`}>{coachText(lap.quality_state || lapStatus(lap), language)}</span></td><td>{signed(lap.gap_to_representative)}</td><td>{coachText(lap.reason || `${lap.flagged_samples || 0} samples ignored · ${lap.quality_score ?? "--"}% quality`, language)}</td></tr>)}</tbody></table></div>
+function LapQualityLedger({ laps, onSetIncluded, onReset, language }: { laps: LiveLapSummary[]; onSetIncluded: (lapNumber: number, included: boolean) => void; onReset: () => void; language: Language }) {
+  const included = laps.filter((lap) => lap.included_in_analysis).length;
+  return <section className="coach-ledger" aria-labelledby="session-laps-title"><div className="coach-ledger-head"><span><ShieldCheck size={17} /><strong id="session-laps-title">{coachText("Session laps", language)}</strong></span><small>{included} selected · {laps.length - included} omitted</small><button type="button" className="coach-show-all" onClick={onReset}>Use suggested selection</button></div>
+    <div className="table-wrap"><table><thead><tr><th>{coachText("Use", language)}</th><th>{coachText("Lap", language)}</th><th>Automatic</th><th>{coachText("Time", language)}</th><th>{coachText("Data", language)}</th><th>{coachText("Vs usual", language)}</th><th>{coachText("Reason", language)}</th></tr></thead><tbody>{laps.map((lap) => <tr key={lap.lap_number}><td><input type="checkbox" checked={Boolean(lap.included_in_analysis)} onChange={(event) => onSetIncluded(lap.lap_number, event.target.checked)} aria-label={`Include lap ${lap.lap_number} in coaching analysis`} /></td><td><strong>#{lap.lap_number}</strong></td><td><span className={`quality-word ${lap.automatic_valid_lap ? "good" : "bad"}`}>{lap.automatic_valid_lap ? "Valid" : "Non-valid"}</span></td><td>{formatRaceTime(lap.lap_time)}</td><td><span className={`quality-word ${qualityClass(lap.quality_state)}`}>{coachText(lap.quality_state || lapStatus(lap), language)}</span></td><td>{signed(lap.gap_to_representative)}</td><td>{coachText(lap.reason || `${lap.flagged_samples || 0} samples ignored · ${lap.quality_score ?? "--"}% quality`, language)}</td></tr>)}</tbody></table></div>
   </section>;
 }
 
@@ -662,6 +663,9 @@ export function LiveLapAnalysis() {
   const [selectedCorner, setSelectedCorner] = useState<number | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [analysisMode, setAnalysisMode] = useState<"session" | "compare">("session");
+  // null follows the Coach's automatic recommendation; a concrete list is
+  // the driver's explicit coaching population.
+  const [analysisLaps, setAnalysisLaps] = useState<number[] | null>(null);
 
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: "auto" });
@@ -672,7 +676,7 @@ export function LiveLapAnalysis() {
     let timer: number | undefined;
     const load = async () => {
       try {
-        const data = await api.liveLapAnalysis(selectedLap, referenceLap);
+        const data = await api.liveLapAnalysis(selectedLap, referenceLap, analysisLaps);
         if (cancelled) return;
         setPayload(data);
         setSelectedLap((current) => data.laps.some((lap) => lap.lap_number === current) ? current : data.selected_lap_number ?? null);
@@ -696,7 +700,7 @@ export function LiveLapAnalysis() {
       cancelled = true;
       if (timer != null) window.clearTimeout(timer);
     };
-  }, [selectedLap, referenceLap]);
+  }, [selectedLap, referenceLap, analysisLaps]);
 
   const insights = useMemo(() => splitInsights(payload?.insights || []), [payload?.insights]);
   const findings = useMemo(() => (payload?.findings || []).filter((finding) => selectedCorner == null || finding.corner_id === selectedCorner), [payload?.findings, selectedCorner]);
@@ -741,7 +745,11 @@ export function LiveLapAnalysis() {
           </div>
         </div>
       </section>
-      <LapQualityLedger laps={payload.laps} language={language} />
+      <LapQualityLedger laps={payload.laps} language={language} onReset={() => setAnalysisLaps(null)} onSetIncluded={(lapNumber, included) => {
+        const current = new Set(payload.laps.filter((lap) => lap.included_in_analysis).map((lap) => lap.lap_number));
+        if (included) current.add(lapNumber); else current.delete(lapNumber);
+        setAnalysisLaps([...current].sort((a, b) => a - b));
+      }} />
     </>}
   </div>;
 }

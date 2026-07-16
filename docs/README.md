@@ -6,3 +6,4 @@ This documentation set explains how the application is built, how data moves thr
 - [Data Handling](data-handling.md): live telemetry normalization, DuckDB cache behavior, storage, pause rules, and saved reviews.
 - [Live Strategy Calculations](live-strategy-calculations.md): fuel, tyre, stint, pit-window, competitor, and recommendation rules.
 - [Page And Graph Calculations](page-and-graph-calculations.md): frontend page-by-page formula reference for live, review, race-prep, and engineering views.
+- [Monte Carlo Race Simulation](monte-carlo-simulation.md): data filtering, model variables, equations, parameters, risk definitions, outputs, and limitations.

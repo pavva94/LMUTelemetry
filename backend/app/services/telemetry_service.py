@@ -223,7 +223,7 @@ class TelemetryService:
         self.live_lap_buffer.reset()
         self._reset_live_models()
 
-    def live_lap_analysis(self, selected_lap: int | None = None, reference_lap: int | None = None) -> dict:
+    def live_lap_analysis(self, selected_lap: int | None = None, reference_lap: int | None = None, analysis_laps: set[int] | None = None) -> dict:
         player = self.latest_snapshot.player if self.latest_snapshot and self.latest_snapshot.player else None
         session_state = self.latest_snapshot.session if self.latest_snapshot and self.latest_snapshot.session else None
         session = {
@@ -232,7 +232,7 @@ class TelemetryService:
             "vehicle_name": player.vehicle_name if player else None,
             "vehicle_model": player.vehicle_model if player else None,
         }
-        return analysis_payload(self.live_lap_buffer, self.live_analysis_config, selected_lap, reference_lap, session)
+        return analysis_payload(self.live_lap_buffer, self.live_analysis_config, selected_lap, reference_lap, session, analysis_laps)
 
     def _maybe_rotate_session(self, snapshot: TelemetrySnapshot) -> None:
         session = snapshot.session
