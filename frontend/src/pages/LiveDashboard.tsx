@@ -352,7 +352,7 @@ function NearbyStandings({ mergedCars, paceHistory, telemetry }: { mergedCars: C
   return (
     <section className="live-section nearby-card">
       <div className="live-section-heading"><div><span>{t("liveDashboard.raceOrder")}</span><h2>{gridMode === "full" ? t("liveDashboard.fullGrid") : t("liveDashboard.nearbyDrivers")}</h2></div><div className="control-row"><button type="button" className={gridMode === "nearby" ? "active-control" : ""} onClick={() => changeGridMode("nearby")}>{t("liveDashboard.nearby")}</button><button type="button" className={gridMode === "full" ? "active-control" : ""} onClick={() => changeGridMode("full")}>{t("liveDashboard.fullGrid")}</button><small>{gridMode === "full" ? t("common.drivers", { count: rows.length }) : t("liveDashboard.upToSix")}</small></div></div>
-      {rows.length ? <div className="table-wrap"><table className="nearby-table"><thead><tr><th>{t("liveDashboard.pos")}</th><th>{t("liveDashboard.driverCar")}</th><th>{t("liveDashboard.laps")}</th><th>{t("liveDashboard.threeLapPace")}</th><th>{t("liveDashboard.sevenLapPace")}</th><th>{t("liveDashboard.deltaThreeVsYou")}</th><th>{t("liveDashboard.deltaSevenVsYou")}</th><th>{t("liveDashboard.pit")}</th></tr></thead><tbody>{rows.map((car) => {
+      {rows.length ? <div className="table-wrap"><table className="nearby-table"><thead><tr><th>{t("liveDashboard.pos")}</th><th>{t("liveDashboard.driverCar")}</th><th>{t("liveDashboard.laps")}</th><th>{t("liveDashboard.lastLap")}</th><th>{t("liveDashboard.fastestLap")}</th><th>{t("liveDashboard.threeLapPace")}</th><th>{t("liveDashboard.sevenLapPace")}</th><th>{t("liveDashboard.deltaThreeVsYou")}</th><th>{t("liveDashboard.deltaSevenVsYou")}</th><th>{t("liveDashboard.pit")}</th></tr></thead><tbody>{rows.map((car) => {
         const pace3 = rollingPace(paceHistory, car, 3);
         const pace7 = rollingPace(paceHistory, car, 7);
         const delta3 = !car.is_player && finite(pace3) && finite(playerPace3) ? pace3 - playerPace3 : undefined;
@@ -363,6 +363,8 @@ function NearbyStandings({ mergedCars, paceHistory, telemetry }: { mergedCars: C
           <td><strong>P{car.position ?? "--"}</strong></td>
           <td className={driverPaceClass} title={finite(delta3) ? delta3 > 0 ? t("liveDashboard.gainingThree") : t("liveDashboard.losingThree") : t("liveDashboard.threeUnavailable")}><div className="driver-cell"><strong>{car.is_player ? t("common.you") : car.driver_name || `${t("standings.car")} ${car.vehicle_id}`}</strong><small>{carName(car, t("liveDashboard.carUnavailable"))}</small></div></td>
           <td>{car.total_laps ?? car.current_lap ?? "--"}</td>
+          <td>{lapTime(car.last_lap_time)}</td>
+          <td className="best-lap-column">{lapTime(car.best_lap_time)}</td>
           <td>{lapTime(pace3)}</td>
           <td>{lapTime(pace7)}</td>
           <td className="pace-delta-cell">{car.is_player ? t("liveDashboard.ref") : paceDeltaText(delta3)}</td>

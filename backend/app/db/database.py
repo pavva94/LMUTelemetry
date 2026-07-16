@@ -161,3 +161,7 @@ def _ensure_sqlite_columns() -> None:
         with engine.begin() as connection:
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_sync_runs_status_updated ON lmu_duckdb_sync_runs (status, updated_at)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_sync_runs_folder_status ON lmu_duckdb_sync_runs (folder_path, status)"))
+
+    if "session_performance_reports" in table_names:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_performance_reports_session_generated ON session_performance_reports (session_id, generated_at)"))

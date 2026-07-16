@@ -66,3 +66,31 @@ export type SessionDashboard = {
   recommendation: RecommendationPayload;
   review: SessionReview;
 };
+
+export type PerformanceReportConfiguration = {
+  language: "en" | "it";
+  detail_level: "concise" | "detailed";
+  include_charts: boolean;
+  anonymize_driver: boolean;
+  title?: string | null;
+  driver_name?: string | null;
+  team_name?: string | null;
+  notes?: string | null;
+};
+
+export type PerformanceReportRecord = {
+  id: string;
+  session_id: string;
+  generated_at: string;
+  report_type: "practice" | "qualifying" | "race" | "pending";
+  report_version: string;
+  language: "en" | "it";
+  detail_level: "concise" | "detailed";
+  methodology_version: string;
+  configuration: PerformanceReportConfiguration;
+  checksum?: string | null;
+  status: "queued" | "running" | "complete" | "failed";
+  error_stage?: string | null;
+  error_details?: string | null;
+  download_available: boolean;
+};

@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
+import { PerformanceReportDialog } from "../components/PerformanceReportDialog";
 import { duckdbSessionLabel, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { buildRacePrepReport, type RacePrepReport as RacePrepReportModel, type Wheel } from "../lib/racePrepReport";
@@ -69,6 +70,7 @@ export function RacePrepReport({ strategy }: Props) {
   const [status, setStatus] = useState("Loading sessions");
   const [sessionListLoading, setSessionListLoading] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);
+  const [reportDialogOpen, setReportDialogOpen] = useState(false);
 
   useEffect(() => {
     setSessionListLoading(true);
@@ -138,9 +140,11 @@ export function RacePrepReport({ strategy }: Props) {
           </select>
           <span className="subvalue">{sessionSearch.trim() ? `${visibleSessions.length}/${sessions.length} matches` : "Live/current remains available"}</span>
           </label>
-          <span className="badge blue">{status}</span>
+          <div className="report-primary-actions"><span className="badge blue">{status}</span><button className="primary" onClick={() => setReportDialogOpen(true)} disabled={selected === "current" || !review?.session} title={selected === "current" ? "Select an imported historical session to generate a PDF" : undefined}>Generate Performance Report</button></div>
         </div>
       </section>
+
+      {reportDialogOpen && selected !== "current" && review?.session && <PerformanceReportDialog session={review.session} onClose={() => setReportDialogOpen(false)} />}
 
       {!report ? (
         <section className="card span-12"><EmptyState detail="Report appears once a live or synced saved session can be loaded." /></section>

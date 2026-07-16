@@ -156,6 +156,8 @@ CHANNEL_ALIASES: dict[str, tuple[str, ...]] = {
     "steering_shaft_torque": ("Steering Shaft Torque", "steering_shaft_torque"),
     "overheating_state": ("OverheatingState", "overheating_state"),
     "time_behind_next": ("Time Behind Next", "time_behind_next"),
+    "last_impact_magnitude": ("LastImpactMagnitude", "Last Impact Magnitude", "last_impact_magnitude"),
+    "anti_stall_active": ("AntiStall Activated", "Anti Stall Activated", "anti_stall_active"),
 }
 
 VECTOR_ALIASES: dict[str, tuple[str, ...]] = {
@@ -776,7 +778,7 @@ def _select_channel_rows(conn, layout: ChannelLayout, row_limit: int = MAX_REVIE
             if target in {"lap_number", "gear", "position", "class_position", "sector", "sector1_flag", "sector2_flag", "sector3_flag", "yellow_flag_state", "abs_level", "tc_level", "tc_cut", "tc_slip_angle", "fuel_mixture_map", "finish_status"}:
                 number = _num(value)
                 row[target] = int(number) if number is not None else None
-            elif target in {"in_pits", "abs_active", "tc_active", "front_flap_active", "rear_flap_active", "rear_flap_legal", "speed_limiter", "headlights", "offpath_wetness", "cloud_darkness"}:
+            elif target in {"in_pits", "abs_active", "tc_active", "front_flap_active", "rear_flap_active", "rear_flap_legal", "speed_limiter", "headlights", "offpath_wetness", "cloud_darkness", "anti_stall_active"}:
                 row[target] = bool(value)
             else:
                 row[target] = _num(value)
