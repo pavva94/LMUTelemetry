@@ -8,24 +8,11 @@ import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "..
 import { toFiniteNumber } from "../lib/sessionAnalysis";
 import { chartLabelFormatter, chartValueFormatter, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceTime } from "../lib/timeFormat";
+import { deltaSegments, lapElapsed, nearestByProgress, pathSegments, pointDistance, type GpsPoint } from "../lib/trajectory";
 import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview as Review } from "../types/session";
 
 type Row = Record<string, number | string | boolean | null | undefined>;
-type GpsPoint = {
-  lap: string;
-  lapLabel: string;
-  progress: number;
-  x: number;
-  y: number;
-  lat: number;
-  lon: number;
-  throttle: number | null;
-  brake: number | null;
-  speed: number | null;
-  time: number | null;
-};
-type TrackSegment = { from: GpsPoint; to: GpsPoint; color: string; delta: number | null };
 
 const DEFAULT_FOLDER = "G:\\SteamLibrary\\steamapps\\common\\Le Mans Ultimate\\UserData\\Telemetry";
 const SCAN_LIMIT = 250;
@@ -44,7 +31,7 @@ const fileSize = (bytes?: number | null) => {
 };
 const sessionTitle = (session?: LmuDuckdbSession | null) => {
   const parts = duckdbSessionParts(session);
-  return session ? `${parts.sessionType} - ${parts.track} - ${parts.car}` : "DuckDB session";
+  return session ? `${parts.sessionType} - ${parts.track} - ${parts.car}` : "Saved session";
 };
 const percentDelta = (a?: number | null, b?: number | null) => {
   if (a == null || b == null || !Number.isFinite(a) || !Number.isFinite(b)) return "--";
@@ -145,69 +132,6 @@ function withoutOutliers(values: number[]) {
   return filtered.length ? filtered : clean;
 }
 
-function nearestByPosition(points: GpsPoint[], target: GpsPoint) {
-  if (!points.length) return null;
-  return points.reduce((best, point) => {
-    const bestDistance = ((best.x - target.x) ** 2) + ((best.y - target.y) ** 2);
-    const pointDistance = ((point.x - target.x) ** 2) + ((point.y - target.y) ** 2);
-    return pointDistance < bestDistance ? point : best;
-  }, points[0]);
-}
-
-function pointDistance(a: GpsPoint, b: GpsPoint) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function shouldCloseLap(points: GpsPoint[]) {
-  if (points.length < 3) return false;
-  const first = points[0];
-  const last = points[points.length - 1];
-  const bounds = points.reduce((acc, point) => ({
-    minX: Math.min(acc.minX, point.x),
-    maxX: Math.max(acc.maxX, point.x),
-    minY: Math.min(acc.minY, point.y),
-    maxY: Math.max(acc.maxY, point.y),
-  }), { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity });
-  const diagonal = Math.hypot(bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
-  return pointDistance(first, last) <= Math.max(24, diagonal * 0.12);
-}
-
-function pathSegments(points: GpsPoint[]) {
-  const segments: Array<{ from: GpsPoint; to: GpsPoint }> = [];
-  for (let index = 0; index < points.length - 1; index += 1) {
-    segments.push({ from: points[index], to: points[index + 1] });
-  }
-  if (shouldCloseLap(points)) {
-    segments.push({ from: points[points.length - 1], to: points[0] });
-  }
-  return segments;
-}
-
-function lapElapsed(point: GpsPoint, lapStart: number | null) {
-  return point.time != null && lapStart != null ? point.time - lapStart : null;
-}
-
-function deltaColor(delta: number | null) {
-  if (delta == null || !Number.isFinite(delta)) return "#6fa8ff";
-  if (Math.abs(delta) <= 0.05) return "#6fa8ff";
-  return delta < 0 ? "#69d28f" : "#ff6961";
-}
-
-function deltaSegments(primary: GpsPoint[], comparison: GpsPoint[]): TrackSegment[] {
-  const segments: TrackSegment[] = [];
-  const primaryStart = primary[0]?.time ?? null;
-  const comparisonStart = comparison[0]?.time ?? null;
-  for (const segment of pathSegments(primary)) {
-    const point = segment.from;
-    const matched = nearestByPosition(comparison, point);
-    const primaryElapsed = lapElapsed(point, primaryStart);
-    const comparisonElapsed = matched ? lapElapsed(matched, comparisonStart) : null;
-    const delta = primaryElapsed != null && comparisonElapsed != null ? primaryElapsed - comparisonElapsed : null;
-    segments.push({ from: point, to: segment.to, color: deltaColor(delta), delta });
-  }
-  return segments;
-}
-
 function hasLineData(rows: Row[], lines: Array<[string, string]>) {
   return rows.some((row) => lines.some(([key]) => Number.isFinite(Number(row[key]))));
 }
@@ -226,7 +150,7 @@ function lapFallbackRow(lap: Row): Row {
 }
 
 function Chart({ data, xKey = "game_time", lines, height = 240 }: { data: Row[]; xKey?: string; lines: Array<[string, string]>; height?: number }) {
-  if (!data.length) return <EmptyState detail="The selected DuckDB session has no samples for this chart." />;
+  if (!data.length) return <EmptyState detail="The selected session has no samples for this chart." />;
   const yTimeAxis = lines.some(([key]) => isRaceTimeField(key));
   const xTimeAxis = isRaceTimeField(xKey);
   return (
@@ -253,7 +177,7 @@ function ChannelSummary({ review }: { review: Review | null }) {
   }, {});
   return (
     <section className="card span-12">
-      <SectionTitle title="Available Channels" help="Shows DuckDB tables discovered in the selected file and how many are currently mapped into review fields." />
+      <SectionTitle title="Available Channels" help="Shows telemetry channels discovered in the selected session and how many are currently mapped into review fields." />
       <div className="header-grid">
         <Metric label="Tables" value={manifest.length} />
         <Metric label="Mapped" value={mapped.length} />
@@ -274,7 +198,7 @@ function hasFields(rows: Row[], keys: string[]) {
 
 function LatestValues({ rows, fields }: { rows: Row[]; fields: Array<[string, string]> }) {
   const latest = [...rows].reverse().find((row) => fields.some(([key]) => row[key] != null));
-  if (!latest) return <EmptyState detail="No values were found for this section in the selected DuckDB file." />;
+  if (!latest) return <EmptyState detail="No values were found for this section in the selected session." />;
   return (
     <div className="analysis-value-grid">
       {fields.map(([key, label]) => (
@@ -357,8 +281,10 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
         brake: pointNumber(sample, "brake"),
         speed: pointNumber(sample, "speed_kph"),
         time: pointNumber(sample, "game_time"),
+        lapDistance: pointNumber(sample, "lap_distance"),
+        sourceProgress: pointNumber(sample, "progress"),
       }))
-      .filter((sample): sample is Omit<GpsPoint, "x" | "y" | "lapLabel"> => sample.lat != null && sample.lon != null);
+      .filter((sample): sample is typeof sample & { lat: number; lon: number } => sample.lat != null && sample.lon != null && !(sample.lat === 0 && sample.lon === 0));
     if (!raw.length) return { byLap: {} as Record<string, GpsPoint[]>, count: 0 };
     const rawLats = raw.map((point) => point.lat);
     const rawLons = raw.map((point) => point.lon);
@@ -369,11 +295,22 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
     const centerLon = lonDegrees.reduce((sum, value) => sum + value, 0) / lonDegrees.length;
     const metersPerDegreeLat = 111_132;
     const metersPerDegreeLon = Math.max(1, 111_320 * Math.cos(centerLat * Math.PI / 180));
-    const local = raw.map((point, index) => ({
+    const localRaw = raw.map((point, index) => ({
       ...point,
       mx: (lonDegrees[index] - centerLon) * metersPerDegreeLon,
       my: (latDegrees[index] - centerLat) * metersPerDegreeLat,
     }));
+    const localGroups = localRaw.reduce<Record<string, typeof localRaw>>((acc, point) => {
+      (acc[point.lap] ||= []).push(point);
+      return acc;
+    }, {});
+    const local = Object.values(localGroups).flatMap((lapPoints) => {
+      const ordered = [...lapPoints].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
+      const steps = ordered.slice(1).map((point, index) => Math.hypot(point.mx - ordered[index].mx, point.my - ordered[index].my)).filter((value) => value > 0);
+      const typical = quantile(steps, 0.5) || 1;
+      return ordered.filter((point, index) => index === 0 || Math.hypot(point.mx - ordered[index - 1].mx, point.my - ordered[index - 1].my) <= Math.max(250, typical * 20));
+    });
+    if (!local.length) return { byLap: {} as Record<string, GpsPoint[]>, count: 0 };
     const xs = local.map((point) => point.mx);
     const ys = local.map((point) => point.my);
     const minX = Math.min(...xs);
@@ -396,11 +333,26 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
     const byLap: Record<string, GpsPoint[]> = {};
     Object.entries(byLapRaw).forEach(([lap, lapPoints]) => {
       const orderedPoints = [...lapPoints].sort((a, b) => (a.time ?? 0) - (b.time ?? 0));
-      const denominator = Math.max(1, lapPoints.length - 1);
-      byLap[lap] = orderedPoints.map((point, index) => ({
+      const steps = orderedPoints.slice(1).map((point, index) => Math.hypot(point.mx - orderedPoints[index].mx, point.my - orderedPoints[index].my)).filter((value) => value > 0);
+      const typicalStep = quantile(steps, 0.5) || 1;
+      const cleanPoints = orderedPoints.filter((point, index) => index === 0 || Math.hypot(point.mx - orderedPoints[index - 1].mx, point.my - orderedPoints[index - 1].my) <= Math.max(250, typicalStep * 20));
+      const distances = cleanPoints.map((point) => point.lapDistance).filter((value): value is number => value != null && Number.isFinite(value));
+      const distanceMin = distances.length ? Math.min(...distances) : null;
+      const distanceSpan = distances.length && distanceMin != null ? Math.max(...distances) - distanceMin : 0;
+      const cumulative = cleanPoints.reduce<number[]>((values, point, index) => {
+        const previous = cleanPoints[index - 1];
+        values.push(index && previous ? values[index - 1] + Math.hypot(point.mx - previous.mx, point.my - previous.my) : 0);
+        return values;
+      }, []);
+      const cumulativeSpan = cumulative[cumulative.length - 1] || 1;
+      byLap[lap] = cleanPoints.map((point, index) => ({
         ...point,
         lapLabel: `Lap ${point.lap}`,
-        progress: index / denominator,
+        progress: point.sourceProgress != null && Number.isFinite(point.sourceProgress)
+          ? Math.max(0, Math.min(1, point.sourceProgress))
+          : point.lapDistance != null && distanceMin != null && distanceSpan > 1
+            ? Math.max(0, Math.min(1, (point.lapDistance - distanceMin) / distanceSpan))
+            : cumulative[index] / cumulativeSpan,
         x: offsetX + (point.mx - minX) * scale,
         y: offsetY + drawH - (point.my - minY) * scale,
       }));
@@ -415,7 +367,7 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
     if (!selectedPoint) return null;
     const otherLap = selectedPoint.lap === lapA ? lapB : lapA;
     const candidates = mapData.byLap[otherLap] || [];
-    return nearestByPosition(candidates, selectedPoint);
+    return nearestByProgress(candidates, selectedPoint);
   }, [selectedPoint, lapA, lapB, mapData.byLap]);
 
   const activePoints = [selectedPoint, pairedHover].filter((point): point is GpsPoint => Boolean(point));
@@ -663,7 +615,7 @@ export function LmuDuckdbReview() {
 
   const loadPage = async (offset = 0) => {
     setBusy(true);
-    setStatus(offset ? "Loading cached DuckDB page" : "Loading cached DuckDB sessions");
+    setStatus(offset ? "Loading saved-session page" : "Loading saved sessions");
     if (!offset) {
       setWarnings([]);
       setReview(null);
@@ -680,7 +632,7 @@ export function LmuDuckdbReview() {
       const firstId = payload.sessions[0]?.id || "";
       setSelectedId(firstId);
       const loaded = offset + payload.sessions.length;
-      setStatus(payload.total ? `Showing ${offset + 1}-${loaded} of ${payload.total} cached DuckDB sessions` : "No cached DuckDB sessions found");
+      setStatus(payload.total ? `Showing ${offset + 1}-${loaded} of ${payload.total} saved sessions` : "No saved sessions found");
     } catch (exc) {
       if (!offset) {
         setSessions([]);
@@ -695,7 +647,7 @@ export function LmuDuckdbReview() {
   const useFolder = async () => {
     if (!folder.trim()) return;
     setBusy(true);
-    setStatus("Saving DuckDB folder");
+    setStatus("Saving session folder");
     try {
       const settings = await api.saveLmuDuckdbSettings(folder.trim());
       if (settings.folder_path) setFolder(settings.folder_path);
@@ -730,14 +682,14 @@ export function LmuDuckdbReview() {
     let mounted = true;
     setReview(null);
     setReviewLoading(true);
-    setStatus("Loading selected DuckDB session");
+    setStatus("Loading selected session");
     runDuckdbJob<Review>(() => api.startDuckdbReviewJob(selectedId, 300))
       .then((data) => {
         if (!mounted) return;
         setReview(data);
         const extraWarnings = ((data as Review & { warnings?: string[] }).warnings || []);
         setWarnings((current) => Array.from(new Set([...current, ...extraWarnings])));
-        setStatus("DuckDB session loaded");
+        setStatus("Session loaded");
       })
       .catch((exc) => mounted && setStatus(exc instanceof Error ? exc.message : String(exc)))
       .finally(() => {
@@ -828,16 +780,16 @@ export function LmuDuckdbReview() {
 
   return (
     <div className="duckdb-workspace">
-      <LoadingOverlay show={busy || reviewLoading} title={duckdbProgress?.phase || (reviewLoading ? "Loading DuckDB session" : "Loading DuckDB sessions")} detail={duckdbProgress?.message || (reviewLoading ? "Opening the selected native telemetry file and preparing review charts." : "Loading cached telemetry sessions from the local index.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
+      <LoadingOverlay show={busy || reviewLoading} title={duckdbProgress?.phase || (reviewLoading ? "Loading session" : "Loading sessions")} detail={duckdbProgress?.message || (reviewLoading ? "Opening the selected session and preparing review charts." : "Loading saved telemetry sessions from the local index.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       <section className="duckdb-browser">
-        <SectionTitle title="Session Review" help="Read-only review of cached Le Mans Ultimate DuckDB sessions. Raw chart samples are loaded from the selected DuckDB file on demand." />
+        <SectionTitle title="Session Review" help="Read-only review of saved Le Mans Ultimate sessions. Raw chart samples are loaded from the selected session on demand." />
         <div className="duckdb-path-grid">
           <label>Telemetry folder<input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder={DEFAULT_FOLDER} /></label>
           <label>Search sessions<input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search type, track, car, file, laps" /></label>
           <label>Session<select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} disabled={!sessions.length}>
             {sessions.length ? visibleSessions.map((session) => (
               <option key={session.id} value={session.id}>{duckdbSessionLabel(session)}</option>
-            )) : <option value="">No cached DuckDB sessions</option>}
+            )) : <option value="">No saved sessions</option>}
           </select></label>
           <button disabled={busy || !folder.trim()} onClick={() => void useFolder()}>Use folder</button>
           <button className="primary" disabled={busy} onClick={() => void loadPage(0)}>Refresh list</button>
@@ -855,7 +807,7 @@ export function LmuDuckdbReview() {
             <span>{text(selectedSession?.file_name)} / {dateText(selectedSession?.created_at)} / {fileSize(selectedSession?.file_size_bytes)}</span>
             {sessionSearch.trim() && <small>{visibleSessions.length}/{sessions.length} matches</small>}
           </div>
-        ) : <EmptyState detail="No sessions cached yet. Set and sync the LMU DuckDB folder from User Profile." />}
+        ) : <EmptyState detail="No sessions saved yet. Set and sync the LMU session folder from User Profile." />}
       </section>
 
       <main className="duckdb-analysis page grid">
@@ -884,7 +836,7 @@ export function LmuDuckdbReview() {
       </section>
       {metadataRows.length > 0 && (
         <section className="card span-12">
-          <SectionTitle title="Database Metadata" help="Values read from the native DuckDB metadata table for the selected session." />
+          <SectionTitle title="Session Metadata" help="Values read from the selected session metadata." />
           <div className="analysis-value-grid">
             {metadataRows.map(([key, value]) => <div key={key}><span className="label">{key}</span><strong title={value}>{metadataValueText(key, value)}</strong></div>)}
           </div>
@@ -894,7 +846,7 @@ export function LmuDuckdbReview() {
 
       <section className="card span-6"><SectionTitle title="Lap Times" help="Shows detected lap pace from native LMU telemetry." /><Chart data={laps} xKey="lap_number" lines={[["lap_time", "#6dd6ff"]]} /></section>
       <section className="card span-6"><SectionTitle title="Lap Fuel" help="Shows fuel used and added per detected lap." /><Chart data={laps} xKey="lap_number" lines={[["fuel_used", "#e6b450"], ["fuel_added", "#69d28f"]]} /></section>
-      <section className="card span-6"><SectionTitle title="Speed And RPM" help="Shows powertrain and speed history from mapped DuckDB channels." /><Chart data={speedChart.data} xKey={speedChart.xKey} lines={speedLines} /></section>
+      <section className="card span-6"><SectionTitle title="Speed And RPM" help="Shows powertrain and speed history from mapped session channels." /><Chart data={speedChart.data} xKey={speedChart.xKey} lines={speedLines} /></section>
       <section className="card span-6"><SectionTitle title="Driver Inputs" help="Shows throttle, brake, and steering channels when available." /><Chart data={inputChart.data} xKey={inputChart.xKey} lines={inputLines} /></section>
       <section className="card span-6"><SectionTitle title="Tyre Wear" help="Tracks detected tyre wear by corner." /><Chart data={tyreWearChart.data} xKey={tyreWearChart.xKey} lines={tyreWearLines} /></section>
       <section className="card span-6"><SectionTitle title="Tyre Temperatures" help="Shows tyre heat by corner when available." /><Chart data={tyreTempChart.data} xKey={tyreTempChart.xKey} lines={tyreTempLines} /></section>
@@ -903,14 +855,14 @@ export function LmuDuckdbReview() {
       {available.sectors && <section className="card span-6"><SectionTitle title="Sectors" help="Shows current, last, and best sector timing channels when LMU stores them." /><Chart data={sectorChart.data} xKey={sectorChart.xKey} lines={sectorLines} /></section>}
       {available.flags && <section className="card span-6"><SectionTitle title="Flags" help="Shows sector and yellow flag state channels when available." /><Chart data={flagChart.data} xKey={flagChart.xKey} lines={flagLines} /></section>}
       {available.assists && <section className="card span-6"><SectionTitle title="Assists And Settings" help="Shows ABS, TC, fuel map, brake bias, and brake migration channels." /><Chart data={assistChart.data} xKey={assistChart.xKey} lines={assistLines} /></section>}
-      {available.gps && <section className="card span-6"><SectionTitle title="GPS, G-Force, And Path" help="Shows GPS, G-force, distance, and path channels from the native DuckDB." /><Chart data={gpsChart.data} xKey={gpsChart.xKey} lines={gpsLines} /></section>}
+      {available.gps && <section className="card span-6"><SectionTitle title="GPS, G-Force, And Path" help="Shows GPS, G-force, distance, and path channels from the selected session." /><Chart data={gpsChart.data} xKey={gpsChart.xKey} lines={gpsLines} /></section>}
       {available.brake_detail && <section className="card span-6"><SectionTitle title="Brake Detail" help="Shows brake air temperature, force, and thickness channels when available." /><Chart data={brakeDetailChart.data} xKey={brakeDetailChart.xKey} lines={brakeDetailLines} /></section>}
       {available.tyre_detail && <section className="card span-6"><SectionTitle title="Tyre Detail" help="Shows additional tyre carcass, rim, rubber, and tread temperature channels." /><Chart data={tyreDetailChart.data} xKey={tyreDetailChart.xKey} lines={tyreDetailLines} /></section>}
       {available.energy && <section className="card span-6"><SectionTitle title="Energy And Powertrain" help="Shows SoC, virtual energy, regen, turbo boost, clutch, and clutch RPM channels." /><Chart data={energyChart.data} xKey={energyChart.xKey} lines={energyLines} /></section>}
       {available.environment && <section className="card span-6"><SectionTitle title="Environment And Status" help="Shows wetness, wind, limiter, flap, and status channels when available." /><Chart data={environmentChart.data} xKey={environmentChart.xKey} lines={environmentLines} /></section>}
       {(hasFields(samples, ["headlights", "front_flap_active", "rear_flap_active", "rear_flap_legal", "surface_type_fl", "surface_type_fr", "wheels_detached_fl", "wheels_detached_fr", "tyre_compound_fl", "tyre_compound_fr"]) || available.environment || available.tyre_detail) && (
         <section className="card span-12">
-          <SectionTitle title="Latest Status Values" help="Shows the latest sparse or event-style values mapped from the selected DuckDB file." />
+          <SectionTitle title="Latest Status Values" help="Shows the latest sparse or event-style values mapped from the selected session." />
           <LatestValues rows={samples} fields={[
             ["headlights", "Headlights"],
             ["speed_limiter", "Speed limiter"],
@@ -955,7 +907,7 @@ export function LmuDuckdbReview() {
               </tbody>
             </table>
           </div>
-        ) : <EmptyState detail="No laps could be derived from the selected DuckDB file." />}
+        ) : <EmptyState detail="No laps could be derived from the selected session." />}
       </section>
 
       <section className="card span-12">
@@ -973,7 +925,7 @@ export function LmuDuckdbReview() {
       </section>
       {available.gps && (
         <section className="card span-12">
-          <SectionTitle title="Lap Trajectory Compare" help="Compares two GPS lap traces from the selected DuckDB session. Green means the primary lap reached that point sooner than the comparison lap, red means it was slower, and blue means the delta is very similar." />
+          <SectionTitle title="Lap Trajectory Compare" help="Compares two GPS lap traces from the selected session. Green means the primary lap reached that point sooner than the comparison lap, red means it was slower, and blue means the delta is very similar." />
           <LapTrajectoryMap sessionId={selectedId} samples={samples} laps={laps} />
         </section>
       )}

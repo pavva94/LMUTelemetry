@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
+import { PerformanceReportDialog } from "../components/PerformanceReportDialog";
 import { duckdbSessionLabel, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { buildRacePrepReport, type RacePrepReport as RacePrepReportModel, type Wheel } from "../lib/racePrepReport";
@@ -69,15 +70,16 @@ export function RacePrepReport({ strategy }: Props) {
   const [status, setStatus] = useState("Loading sessions");
   const [sessionListLoading, setSessionListLoading] = useState(true);
   const [reportLoading, setReportLoading] = useState(false);
+  const [reportDialogOpen, setReportDialogOpen] = useState(false);
 
   useEffect(() => {
     setSessionListLoading(true);
     runDuckdbJob<LmuDuckdbScanResponse>(() => api.startDuckdbSessionsJob(250))
       .then((payload) => {
         setSessions(payload.sessions);
-        setStatus(payload.total ? "DuckDB sessions loaded" : "No synced DuckDB sessions");
+        setStatus(payload.total ? "Saved sessions loaded" : "No synced sessions");
       })
-      .catch((exc) => setStatus(exc instanceof Error ? exc.message : "Could not load DuckDB sessions"))
+      .catch((exc) => setStatus(exc instanceof Error ? exc.message : "Could not load saved sessions"))
       .finally(() => setSessionListLoading(false));
   }, []);
 
@@ -90,7 +92,7 @@ export function RacePrepReport({ strategy }: Props) {
         .then((data) => {
           if (!cancelled) {
             setReview(data);
-            setStatus(selected === "current" ? "Current live session report" : "DuckDB session report");
+            setStatus(selected === "current" ? "Current live session report" : "Saved session report");
           }
         })
         .catch((exc) => !cancelled && setStatus(exc instanceof Error ? exc.message : "Could not load report data"))
@@ -121,9 +123,9 @@ export function RacePrepReport({ strategy }: Props) {
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={sessionListLoading || (reportLoading && (selected !== "current" || !review))} title={selected !== "current" && duckdbProgress?.phase ? duckdbProgress.phase : reportLoading ? "Loading session report" : "Loading session list"} detail={selected !== "current" && duckdbProgress?.message ? duckdbProgress.message : selected === "current" ? "Preparing the current live session report." : "Reading the selected DuckDB session and building the report."} percentage={selected !== "current" || sessionListLoading ? duckdbProgress?.percentage : undefined} error={duckdbProgress?.error} />
+      <LoadingOverlay show={sessionListLoading || (reportLoading && (selected !== "current" || !review))} title={selected !== "current" && duckdbProgress?.phase ? duckdbProgress.phase : reportLoading ? "Loading session report" : "Loading session list"} detail={selected !== "current" && duckdbProgress?.message ? duckdbProgress.message : selected === "current" ? "Preparing the current live session report." : "Reading the selected saved session and building the report."} percentage={selected !== "current" || sessionListLoading ? duckdbProgress?.percentage : undefined} error={duckdbProgress?.error} />
       <section className="card span-12">
-        <SectionTitle title="Session Report" help="Reviews the current live session or a synced LMU DuckDB session with pace, fuel, tyre, environment, and engineering evidence." />
+        <SectionTitle title="Session Report" help="Reviews the current live session or a synced saved session with pace, fuel, tyre, environment, and engineering evidence." />
         <div className="section-toolbar report-toolbar">
           <label>
             <span className="label">Session</span>
@@ -138,18 +140,21 @@ export function RacePrepReport({ strategy }: Props) {
           </select>
           <span className="subvalue">{sessionSearch.trim() ? `${visibleSessions.length}/${sessions.length} matches` : "Live/current remains available"}</span>
           </label>
-          <span className="badge blue">{status}</span>
+          <div className="report-primary-actions"><span className="badge blue">{status}</span><button className="primary" onClick={() => setReportDialogOpen(true)} disabled={selected === "current" || !review?.session} title={selected === "current" ? "Select an imported historical session to generate a PDF" : undefined}>Generate Performance Report</button></div>
         </div>
       </section>
 
+      {reportDialogOpen && selected !== "current" && review?.session && <PerformanceReportDialog session={review.session} onClose={() => setReportDialogOpen(false)} />}
+
       {!report ? (
-        <section className="card span-12"><EmptyState detail="Report appears once a live or synced DuckDB session can be loaded." /></section>
+        <section className="card span-12"><EmptyState detail="Report appears once a live or synced saved session can be loaded." /></section>
       ) : (
         <>
           <SessionOverview report={report} />
           <LapAnalysis report={report} />
           <FuelAnalysis report={report} />
           <DriverInputs report={report} />
+          <PowertrainAndSurface report={report} />
           <TyreWear report={report} />
           <TyreTempPressure report={report} />
           <BrakePlatform report={report} />
@@ -294,6 +299,32 @@ function DriverInputs({ report }: { report: RacePrepReportModel }) {
       <section className="card span-12">
         <SectionTitle title="G-Force" help="Shows lateral and longitudinal acceleration if the selected recording includes those channels." />
         <SessionChart data={report.charts.samples} xKey="game_time" lines={[["g_force_lat", "#6dd6ff"], ["g_force_long", "#ff8c69"], ["g_force_vert", "#91e48f"]]} height={220} />
+      </section>
+    </>
+  );
+}
+
+function PowertrainAndSurface({ report }: { report: RacePrepReportModel }) {
+  const data = report.charts.samples.length ? report.charts.samples : report.charts.laps;
+  const xKey = report.charts.samples.length ? "game_time" : "lap";
+  return (
+    <>
+      <section className="card span-6">
+        <SectionTitle title="Radiator Temperatures" help="Shows engine oil and water temperatures when the selected live or saved session exposes them." />
+        <SessionChart data={data} xKey={xKey} lines={[["engine_oil_temp", "#e6b450"], ["engine_water_temp", "#6dd6ff"]]} height={220} />
+        <div className="header-grid">
+          <Metric label="Oil avg / max" value={`${fmt(report.powertrain.oilTemp.average, 1, " C")} / ${fmt(report.powertrain.oilTemp.max, 1, " C")}`} />
+          <Metric label="Water avg / max" value={`${fmt(report.powertrain.waterTemp.average, 1, " C")} / ${fmt(report.powertrain.waterTemp.max, 1, " C")}`} />
+        </div>
+      </section>
+      <section className="card span-6">
+        <SectionTitle title="Grass Contact" help="Counts wheel samples reported on grass. Only shown when the recording includes wheel surface-type channels." />
+        {report.coverage.channelGroups.includes("Surface") ? (
+          <div className="header-grid">
+            {wheels.map((wheel) => <Metric key={wheel} label={`${wheelLabels[wheel]} grass`} value={report.surface.grassSamples[wheel]} />)}
+            <Metric label="Total grass samples" value={report.surface.totalGrassSamples} />
+          </div>
+        ) : <EmptyState detail="This session does not include wheel surface-type channels." />}
       </section>
     </>
   );

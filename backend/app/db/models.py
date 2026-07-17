@@ -178,6 +178,42 @@ class LmuDuckdbLapModel(Base):
     finish_status: Mapped[Optional[str]] = mapped_column(String)
 
 
+class LmuDuckdbSyncRunModel(Base):
+    __tablename__ = "lmu_duckdb_sync_runs"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    folder_path: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    total_files: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    inactive: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    current_file: Mapped[Optional[str]] = mapped_column(Text)
+    warnings_json: Mapped[Optional[str]] = mapped_column(Text)
+    started_at: Mapped[str] = mapped_column(String, nullable=False)
+    updated_at: Mapped[str] = mapped_column(String, nullable=False)
+    finished_at: Mapped[Optional[str]] = mapped_column(String)
+
+
+class SessionPerformanceReportModel(Base):
+    __tablename__ = "session_performance_reports"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    session_id: Mapped[str] = mapped_column(String, nullable=False)
+    generated_at: Mapped[str] = mapped_column(String, nullable=False)
+    report_type: Mapped[str] = mapped_column(String, nullable=False)
+    report_version: Mapped[str] = mapped_column(String, nullable=False)
+    language: Mapped[str] = mapped_column(String, nullable=False)
+    detail_level: Mapped[str] = mapped_column(String, nullable=False)
+    methodology_version: Mapped[str] = mapped_column(String, nullable=False)
+    configuration_json: Mapped[str] = mapped_column(Text, nullable=False)
+    analysis_json: Mapped[Optional[str]] = mapped_column(Text)
+    generated_file_path: Mapped[Optional[str]] = mapped_column(Text)
+    checksum: Mapped[Optional[str]] = mapped_column(String)
+    status: Mapped[str] = mapped_column(String, nullable=False, default="queued")
+    error_stage: Mapped[Optional[str]] = mapped_column(String)
+    error_details: Mapped[Optional[str]] = mapped_column(Text)
+
+
 class TelemetrySampleModel(Base):
     __tablename__ = "telemetry_samples"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -197,6 +233,10 @@ class TelemetrySampleModel(Base):
     fuel_capacity_liters: Mapped[Optional[float]] = mapped_column(Float)
     engine_oil_temp: Mapped[Optional[float]] = mapped_column(Float)
     engine_water_temp: Mapped[Optional[float]] = mapped_column(Float)
+    surface_type_fl: Mapped[Optional[int]] = mapped_column(Integer)
+    surface_type_fr: Mapped[Optional[int]] = mapped_column(Integer)
+    surface_type_rl: Mapped[Optional[int]] = mapped_column(Integer)
+    surface_type_rr: Mapped[Optional[int]] = mapped_column(Integer)
     throttle: Mapped[Optional[float]] = mapped_column(Float)
     brake: Mapped[Optional[float]] = mapped_column(Float)
     steering: Mapped[Optional[float]] = mapped_column(Float)

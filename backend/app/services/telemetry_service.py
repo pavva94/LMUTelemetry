@@ -200,6 +200,7 @@ class TelemetryService:
         if (not snapshot.connected or not snapshot.player) and self.latest_snapshot is not None:
             snapshot = self.latest_snapshot
         snapshot.feed_paused = True
+        snapshot.session_id = self.session_id
         snapshot.pause_reason = reason
         snapshot.strategy = self.strategy_state
         self.latest_snapshot = snapshot
@@ -222,7 +223,7 @@ class TelemetryService:
         self.live_lap_buffer.reset()
         self._reset_live_models()
 
-    def live_lap_analysis(self, selected_lap: int | None = None, reference_lap: int | None = None) -> dict:
+    def live_lap_analysis(self, selected_lap: int | None = None, reference_lap: int | None = None, analysis_laps: set[int] | None = None) -> dict:
         player = self.latest_snapshot.player if self.latest_snapshot and self.latest_snapshot.player else None
         session_state = self.latest_snapshot.session if self.latest_snapshot and self.latest_snapshot.session else None
         session = {
@@ -231,7 +232,7 @@ class TelemetryService:
             "vehicle_name": player.vehicle_name if player else None,
             "vehicle_model": player.vehicle_model if player else None,
         }
-        return analysis_payload(self.live_lap_buffer, self.live_analysis_config, selected_lap, reference_lap, session)
+        return analysis_payload(self.live_lap_buffer, self.live_analysis_config, selected_lap, reference_lap, session, analysis_laps)
 
     def _maybe_rotate_session(self, snapshot: TelemetrySnapshot) -> None:
         session = snapshot.session
@@ -301,8 +302,9 @@ class TelemetryService:
         self._resume_live_feed()
         snapshot.feed_paused = False
         snapshot.pause_reason = None
-        self.latest_snapshot = snapshot
         self._maybe_rotate_session(snapshot)
+        snapshot.session_id = self.session_id
+        self.latest_snapshot = snapshot
         events = self.event_detector.update(snapshot)
         fuel = self.fuel_model.update(snapshot)
         tyres = self.tyre_model.update(snapshot)

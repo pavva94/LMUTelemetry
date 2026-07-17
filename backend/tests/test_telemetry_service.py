@@ -57,6 +57,8 @@ def test_live_session_stays_open_when_driver_returns_to_menu() -> None:
     on_track.session.game_phase = "green"
     service._process(on_track)
     active_session_id = service.session_id
+    assert service.latest_snapshot is not None
+    assert service.latest_snapshot.session_id == active_session_id
 
     menu = collector.poll_once()
     menu.session.game_phase = "menu"
@@ -116,3 +118,5 @@ def test_live_session_finalizes_on_new_session_start() -> None:
 
     assert fake_repository.finalized == [active_session_id]
     assert service.session_id != active_session_id
+    assert service.latest_snapshot is not None
+    assert service.latest_snapshot.session_id == service.session_id

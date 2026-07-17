@@ -3,6 +3,24 @@ import { buildRacePrepReport } from "./racePrepReport";
 import type { SessionReview } from "../types/session";
 
 describe("race prep report", () => {
+  it("reports radiator temperatures and per-wheel grass contact when channels exist", () => {
+    const report = buildRacePrepReport({
+      session: null,
+      recommendations: [],
+      pit_events: [],
+      laps: [],
+      telemetry_samples: [
+        { game_time: 1, engine_oil_temp: 101, engine_water_temp: 89, surface_type_fl: 2, surface_type_fr: 0, surface_type_rl: 2, surface_type_rr: 0 },
+        { game_time: 2, engine_oil_temp: 103, engine_water_temp: 91, surface_type_fl: 0, surface_type_fr: 2, surface_type_rl: 0, surface_type_rr: 0 },
+      ],
+    });
+
+    expect(report.powertrain.oilTemp.average).toBe(102);
+    expect(report.powertrain.waterTemp.max).toBe(91);
+    expect(report.surface.grassSamples).toEqual({ fl: 1, fr: 1, rl: 1, rr: 0 });
+    expect(report.surface.totalGrassSamples).toBe(3);
+  });
+
   it("uses real tyre samples and ignores disconnected placeholder tyre rows", () => {
     const review: SessionReview = {
       session: null,

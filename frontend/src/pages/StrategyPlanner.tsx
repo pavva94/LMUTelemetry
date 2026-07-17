@@ -3,10 +3,12 @@ import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
+import { useT } from "../i18n/I18nProvider";
 import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { average, median, standardDeviation, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
 import { simulateStrategies, type PaceEvidence, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
+import { MonteCarloStrategyPanel } from "./RaceSimulation";
 import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview } from "../types/session";
 import type { StrategyState } from "../types/strategy";
@@ -119,7 +121,7 @@ function sessionPaceEvidence(lapTimes: number[], fallback?: number | null): Pace
     paceDegradationPerLap: trend == null ? null : Math.max(0, trend),
     sampleLaps: lapTimes.length,
     confidence: lapTimes.length >= 10 ? "high" : lapTimes.length >= 7 ? "medium" : "low",
-    source: "DuckDB clean lap history",
+    source: "Saved-session clean lap history",
   };
 }
 
@@ -179,6 +181,17 @@ function tyreWearText(values?: Record<Wheel, number> | null) {
 function tyreRemainingText(values?: Record<Wheel, number> | null) {
   if (!values) return "--";
   return wheels.map((wheel) => `${wheelLabels[wheel]} ${fmt(values[wheel] * 100, 0, "%")}`).join(" / ");
+}
+
+function tyreLife(value: number | null | undefined) {
+  return value == null || !Number.isFinite(value) ? null : Math.max(0, Math.min(1, 1 - value));
+}
+
+function tyreLifeTone(value: number | null) {
+  if (value == null) return "unknown";
+  if (value <= 0.25) return "critical";
+  if (value <= 0.5) return "warning";
+  return "healthy";
 }
 
 function tyreChangeWearText(stop: StrategyCandidate["stopsDetail"][number]) {
@@ -409,7 +422,113 @@ function StrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
   );
 }
 
+function TyreLifeIndicator({ wheel, wear, change }: { wheel: Wheel; wear: number | null | undefined; change: boolean }) {
+  const life = tyreLife(wear);
+  const lifePercent = life == null ? 0 : Math.round(life * 100);
+  return (
+    <div className={`tyre-life ${tyreLifeTone(life)}${change ? " change" : ""}`}>
+      <div className="tyre-life-heading">
+        <strong>{wheelLabels[wheel]}</strong>
+        <span>{life == null ? "--" : `${lifePercent}%`}</span>
+      </div>
+      <div className="tyre-life-shape" aria-hidden="true">
+        <span style={{ height: `${lifePercent}%` }} />
+      </div>
+      <small>{change ? "Change" : "Keep"}</small>
+    </div>
+  );
+}
+
+function LiveStyleStrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
+  if (!plan) {
+    return <div className="empty-state"><strong>No strategy yet</strong><span>Collect valid fuel data or edit assumptions to create a race plan.</span></div>;
+  }
+  return (
+    <div className="strategy-timeline live-style-strategy-timeline">
+      <div className="strategy-visual-summary">
+        <div><span className="label">Selected plan</span><strong>{formatDuration(plan.totalTimeSeconds)}</strong></div>
+        <div><span className="label">Stops planned</span><strong>{plan.stops}</strong></div>
+        <div><span className="label">Race plan</span><strong>{fmt(plan.raceLaps, 1, " laps")}</strong></div>
+        <div><span className="label">Fuel at finish</span><strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")}</strong></div>
+      </div>
+      <div className="strategy-track-rail">
+        <div className="strategy-track">
+          {Array.from({ length: plan.stops + 1 }, (_, index) => {
+            const stint = plan.stintWear[index];
+            const stintLaps = stint ? stint.endLap - stint.startLap + 1 : plan.raceLaps / (plan.stops + 1);
+            return (
+              <span className="strategy-stint" key={index} style={{ width: `${(stintLaps / plan.raceLaps) * 100}%` }}>
+                <strong>Stint {index + 1}</strong>
+                <small>{Math.round(stintLaps)} laps</small>
+              </span>
+            );
+          })}
+          {plan.stopsDetail.map((stop, index) => (
+            <span
+              className="strategy-marker"
+              key={`${stop.lap}-${index}`}
+              style={{ left: `${Math.min(98, Math.max(2, (stop.lap / plan.raceLaps) * 100))}%` }}
+            >
+              <strong>Lap {stop.lap}</strong>
+              <small>Pit {index + 1}</small>
+            </span>
+          ))}
+        </div>
+      </div>
+      {plan.stintWear.length > 0 && (
+        <div className="stint-service-list">
+          {plan.stintWear.map((stint, index) => {
+            const stop = plan.stopsDetail[index];
+            const stintLaps = stint.endLap - stint.startLap + 1;
+            return (
+              <article className="stint-service" key={stint.stint}>
+                <header>
+                  <div>
+                    <span className="label">Stint {stint.stint} - {stintLaps} laps</span>
+                    <strong>{stop ? `Pit stop ${index + 1} - Lap ${stop.lap}` : "Finish"}</strong>
+                  </div>
+                  {stop && <span className="badge amber">{fmt(stop.stopTimeSeconds, 1, " s")} stop</span>}
+                </header>
+                <div className="stint-service-body">
+                  <div>
+                    <span className="label">Tyre life at {stop ? "pit entry" : "finish"}</span>
+                    <div className="tyre-life-set">
+                      {wheels.map((wheel) => (
+                        <TyreLifeIndicator
+                          wheel={wheel}
+                          wear={stint.endWear[wheel]}
+                          change={Boolean(stop?.tyresToChange.includes(wheel))}
+                          key={wheel}
+                        />
+                      ))}
+                    </div>
+                  </div>
+                  <div className="service-fuel">
+                    <span className="label">Fuel service</span>
+                    {stop ? (
+                      <>
+                        <strong>{fmt(stop.fuelRemainingLiters, 1, " L")} remaining</strong>
+                        <b>+ {fmt(stop.fuelAddedLiters, 1, " L")} to add</b>
+                      </>
+                    ) : (
+                      <>
+                        <strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")} remaining</strong>
+                        <b>No service</b>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategyState | null; telemetry?: TelemetrySnapshot | null }) {
+  const t = useT();
   const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
   const seededSession = useRef<string | null>(null);
   const appliedSessionModel = useRef<string | null>(null);
@@ -428,6 +547,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const [tyrePolicy, setTyrePolicy] = useState<"automatic" | "all" | "never">("automatic");
   const [reserveUnit, setReserveUnit] = useState<"laps" | "liters">("laps");
   const [modelSource, setModelSource] = useState<ModelSource>("live");
+  const [strategyMethod, setStrategyMethod] = useState<"heuristic" | "monte-carlo">("heuristic");
   const [dirtyFields, setDirtyFields] = useState<Set<keyof FormState>>(() => new Set());
   const [sourceStatus, setSourceStatus] = useState("Live data");
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
@@ -439,9 +559,9 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     runDuckdbJob<LmuDuckdbScanResponse>(() => api.startDuckdbSessionsJob(250))
       .then((payload) => {
         setSessions(payload.sessions);
-        setSourceStatus(payload.total ? "DuckDB sessions loaded" : "No synced DuckDB sessions");
+        setSourceStatus(payload.total ? "Saved sessions loaded" : "No synced sessions");
       })
-      .catch(() => setSourceStatus("DuckDB sessions unavailable; sync the folder in User Profile"))
+      .catch(() => setSourceStatus("Saved sessions unavailable; sync the folder in User Profile"))
       .finally(() => setSessionListLoading(false));
   }, []);
 
@@ -469,15 +589,15 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     appliedSessionModel.current = null;
     setModelSource("session");
     setSessionLoading(true);
-    setSourceStatus("Loading DuckDB session");
+    setSourceStatus("Loading saved session");
     runDuckdbJob<SessionReview>(() => api.startDuckdbReviewJob(selectedSessionId))
       .then((review) => {
         if (!cancelled) {
           setSessionReview(review);
-          setSourceStatus("DuckDB session loaded");
+          setSourceStatus("Saved session loaded");
         }
       })
-      .catch((exc) => !cancelled && setSourceStatus(exc instanceof Error ? exc.message : "Could not load DuckDB session"))
+      .catch((exc) => !cancelled && setSourceStatus(exc instanceof Error ? exc.message : "Could not load saved session"))
       .finally(() => {
         if (!cancelled) setSessionLoading(false);
       });
@@ -506,7 +626,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const visibleSessions = useMemo(() => filterDuckdbSessions(sessions, sessionSearch, selectedSessionId), [sessionSearch, selectedSessionId, sessions]);
   const sessionModel = useMemo(() => {
     const parts = duckdbSessionParts(selectedSession);
-    return modelFromSession(sessionReview, selectedSession ? `${parts.sessionType} - ${parts.track}` : "DuckDB session", form, paceBasis);
+    return modelFromSession(sessionReview, selectedSession ? `${parts.sessionType} - ${parts.track}` : "Saved session", form, paceBasis);
   }, [form, paceBasis, sessionReview, selectedSession]);
   const historyModel = useMemo(() => modelFromSession(historyReview, `Comparable history · ${historyCount} sessions`, form, paceBasis), [form, historyCount, historyReview, paceBasis]);
   const activeModel = modelSource === "history" && historyModel ? historyModel : modelSource === "session" && sessionModel ? sessionModel : liveModel;
@@ -533,7 +653,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   };
   const useSelectedSession = () => {
     if (!sessionModel) {
-      setSourceStatus("Select a DuckDB session with valid laps first");
+      setSourceStatus("Select a saved session with valid laps first");
       return;
     }
     setModelSource("session");
@@ -649,7 +769,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={sessionListLoading || sessionLoading} title={duckdbProgress?.phase || (sessionLoading ? "Loading DuckDB session" : "Loading session list")} detail={duckdbProgress?.message || (sessionLoading ? "Reading the selected session and calculating strategy inputs." : "Loading cached DuckDB sessions for the planner.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
+      <LoadingOverlay show={sessionListLoading || sessionLoading} title={duckdbProgress?.phase || (sessionLoading ? "Loading saved session" : "Loading session list")} detail={duckdbProgress?.message || (sessionLoading ? "Reading the selected session and calculating strategy inputs." : "Loading saved sessions for the planner.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       <section className="card span-12 strategy-source-panel">
         <div>
           <span className="eyebrow">PRE-RACE ENGINEERING</span>
@@ -664,18 +784,26 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
         </div>
       </section>
       <section className="card span-12">
-        <SectionTitle title="Race Assumptions" help="Set the race you want to prepare for, then choose which measured session supplies the pace, fuel, and tyre evidence." />
+        <SectionTitle title={t("strategyPlanner.raceAssumptions")} help={t("strategyPlanner.raceAssumptionsHelp")} />
         <div className="strategy-assumption-layout">
           <div className="strategy-plan-target">
             <span className="eyebrow">PLAN TARGET</span>
-            <h3>How long is the race?</h3>
+            <h3>{t("strategyPlanner.howLongRace")}</h3>
             <p>Enter the total scheduled duration. This manual target stays unchanged when you switch telemetry sources.</p>
             <label className="strategy-duration-field">
-              <span className="label">Race duration</span>
+              <span className="label">{t("strategyPlanner.raceDuration")}</span>
               <span className="strategy-duration-control">
                 <input type="number" min="1" step="1" inputMode="numeric" value={form.race_duration_minutes} onChange={(event) => update("race_duration_minutes", event.target.value)} />
                 <strong>minutes</strong>
               </span>
+            </label>
+            <label className="strategy-duration-field">
+              <span className="label">Strategy method</span>
+              <select value={strategyMethod} onChange={(event) => setStrategyMethod(event.target.value as "heuristic" | "monte-carlo")}>
+                <option value="heuristic">Heuristic planner</option>
+                <option value="monte-carlo">Monte Carlo simulation</option>
+              </select>
+              <span className="subvalue">Both methods use this page's reference session and race assumptions.</span>
             </label>
             <div className="strategy-target-summary">
               <span>{fmt(plannedHours, plannedHours % 1 === 0 ? 0 : 2, " hours")}</span>
@@ -695,9 +823,9 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
                 </select>
                 <span className="subvalue">{sourceStatus}{sessionSearch.trim() ? ` - ${visibleSessions.length}/${sessions.length} matches` : ""}</span>
               </label>
-              <label><span className="label">Pace basis</span><select value={paceBasis} onChange={(event) => setPaceBasis(event.target.value as PaceBasis)}><option value="median">Median valid lap</option><option value="trimmed">10% trimmed mean</option><option value="percentile">60th percentile race pace</option></select><span className="subvalue">Calculated from the reference session</span></label>
+              <label><span className="label">{t("strategyPlanner.paceBasis")}</span><select value={paceBasis} onChange={(event) => setPaceBasis(event.target.value as PaceBasis)}><option value="median">{t("strategyPlanner.medianValidLap")}</option><option value="trimmed">{t("strategyPlanner.trimmedMean")}</option><option value="percentile">{t("strategyPlanner.percentileRacePace")}</option></select><span className="subvalue">{t("strategyPlanner.calculatedFromReference")}</span></label>
               <label><span className="label">Manual lap time</span><input value={manualLapText} onChange={(event) => updateLapTime(event.target.value)} placeholder="03:34.000" /><span className="subvalue">Optional override · mm:ss.mmm</span></label>
-              <label><span className="label">Active normal lap</span><input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? "DuckDB session/manual" : activeModel.label})`} readOnly /><span className="subvalue">Used by the strategy model</span></label>
+              <label><span className="label">{t("strategyPlanner.activeNormalLap")}</span><input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? t("strategyPlanner.savedSessionManual") : activeModel.label})`} readOnly /><span className="subvalue">{t("strategyPlanner.usedByStrategyModel")}</span></label>
             </fieldset>
 
             <fieldset className="strategy-assumption-group">
@@ -719,13 +847,13 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
               <legend>Tyre plan</legend>
               <label><span className="label">Maximum tyre wear</span><input type="number" min="0" max="1" step="0.01" value={form.max_tyre_wear} onChange={(event) => update("max_tyre_wear", event.target.value)} /><span className="subvalue">fraction · 0.75 means 75%</span></label>
               <label><span className="label">Tyre change policy</span><select value={tyrePolicy} onChange={(event) => setTyrePolicy(event.target.value as typeof tyrePolicy)}><option value="automatic">Automatic by corner</option><option value="all">All four at every stop</option><option value="never">Never (exploration)</option></select><span className="subvalue">Automatic changes threshold crossings</span></label>
-              <label><span className="label">Start tyre set</span><span className="toggle-line"><input type="checkbox" checked={form.race_start_new_tyres} onChange={(event) => updateBoolean("race_start_new_tyres", event.target.checked)} /><span>Start planned race on new tyres</span></span><span className="subvalue">Otherwise uses reference-session wear</span></label>
+              <label><span className="label">{t("strategyPlanner.startTyreSet")}</span><span className="toggle-line"><input type="checkbox" checked={form.race_start_new_tyres} onChange={(event) => updateBoolean("race_start_new_tyres", event.target.checked)} /><span>{t("strategyPlanner.startOnNewTyres")}</span></span><span className="subvalue">{t("strategyPlanner.otherwiseReferenceWear")}</span></label>
             </fieldset>
           </div>
         </div>
         <p className="control-row strategy-assumption-actions">
           <button type="button" onClick={useLiveData}>Use live data</button>
-          <button type="button" onClick={useSelectedSession}>Use selected DuckDB session</button>
+          <button type="button" onClick={useSelectedSession}>Use selected saved session</button>
           <button type="button" onClick={() => void useComparableHistory()}>Use comparable history</button>
           <button type="button" onClick={resetMeasuredModel}>Reset to measured model</button>
           <button className="primary" onClick={() => void api.updateAssumptions({
@@ -739,14 +867,27 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           fuel_safety_margin_liters: fuelSafetyMarginLiters,
           fuel_safety_margin_laps: form.fuel_safety_margin_laps,
           max_tyre_wear: form.max_tyre_wear,
-        })}>Save assumptions</button>
+        })}>{t("strategyPlanner.saveAssumptions")}</button>
         </p>
       </section>
 
+      {strategyMethod === "monte-carlo" ? <MonteCarloStrategyPanel sessionId={selectedSessionId} assumptions={{
+        raceDurationMinutes: form.race_duration_minutes,
+        tankCapacityLiters: form.tank_capacity_liters,
+        finishReserveLiters: fuelSafetyMarginLiters,
+        pitLossSeconds: form.pit_loss_seconds,
+        tyreWearLimit: form.max_tyre_wear,
+        tyreChangeSecondsPerTyre: form.tyre_change_seconds_per_tyre,
+        refuelSecondsPer5Liters: form.refuel_seconds_per_5_liters,
+        serviceModel,
+        normalLapTime: form.normal_lap_time,
+        fuelPerLapLiters: fuelPerLap,
+        tyreWearRatePerLap: wearRate,
+      }} /> : <>
       <section className="card span-12">
         <SectionTitle title="Model Status" help="Summarizes the live data feeding the race simulation. More valid fuel and tyre laps improve confidence." />
         <div className="analysis-value-grid">
-          <div><span className="label">Model source</span><strong>{activeModel.source === "session" ? "DuckDB session" : "Live"}</strong><span className="subvalue">{activeModel.label}</span></div>
+          <div><span className="label">Model source</span><strong>{activeModel.source === "session" ? "Saved session" : "Live"}</strong><span className="subvalue">{activeModel.label}</span></div>
           <div><span className="label">Pace model</span><strong>{formatRaceTime(paceEvidence.weightedRecentPace)}</strong><span className="subvalue">{paceEvidence.method || paceBasis} · {paceEvidence.source}</span></div>
           <div><span className="label">Pace windows</span><strong>{formatRaceTime(paceEvidence.last7LapAverage)} / {formatRaceTime(paceEvidence.last10LapAverage)}</strong><span className="subvalue">7-lap / 10-lap averages</span></div>
           <div><span className="label">Pace trend / spread</span><strong>{fmt(paceEvidence.paceTrendSecondsPerLap, 3, " s/lap")}</strong><span className="subvalue">spread {fmt(paceEvidence.spreadSeconds, 3, " s")} · {paceEvidence.confidence || "low"} confidence</span></div>
@@ -793,10 +934,11 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
         <section className="card span-12"><div className="empty-state"><strong>No viable strategy yet</strong><span>{missingPlanInputs.length ? `Missing ${missingPlanInputs.join(", ")}.` : "Try more stops, more start fuel, or a longer fuel-saving strategy."}</span></div></section>
       )}
 
-      <section className="card span-12">
-        <SectionTitle title="Pit Strategy Visualization" help="Shows the selected plan as stint blocks with stop lap, remaining fuel, fuel load, tyre count, and stop time." />
-        <StrategyTimeline plan={selectedPlan} />
+      <section className="card span-12 pit-strategy-visualization">
+        <SectionTitle title="Live Pit Strategy Visualization" help="Shows the selected plan as a stint timeline, then details tyre life and fuel service at every pit stop." />
+        <LiveStyleStrategyTimeline plan={selectedPlan} />
       </section>
+      </>}
     </div>
   );
 }

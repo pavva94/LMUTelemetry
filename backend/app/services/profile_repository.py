@@ -149,8 +149,11 @@ class ProfileFilters:
 
 
 class ProfileRepository:
-    min_lap_time_ratio = 0.85
-    max_lap_time_ratio = 1.35
+    # Keep historical PB selection aligned with the shared live/session guard.
+    # A reset or cut is often reported as a 10%+ improvement when LMU misses
+    # the transient invalidation flag.
+    min_lap_time_ratio = 0.90
+    max_lap_time_ratio = 1.20
     min_distance_ratio = 0.75
     _all_laps_cache_key: tuple[int | None, int, str | None] | None = None
     _all_laps_cache: list[dict] | None = None
@@ -390,7 +393,7 @@ class ProfileRepository:
                     "id": f"duckdb:{lap.session_id}:{lap.lap_number}",
                     "source": "duckdb",
                     "session_id": lap.session_id,
-                    "session_name": lap.session_type or session.session_type or "LMU DuckDB",
+                    "session_name": lap.session_type or session.session_type or "LMU session",
                     "source_file": lap.source_file or session.file_name,
                     "date": lap.date or session.created_at,
                     "track": lap.track or "Unknown track",

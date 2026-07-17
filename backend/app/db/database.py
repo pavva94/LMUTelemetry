@@ -80,6 +80,10 @@ def _ensure_sqlite_columns() -> None:
         "tc_cut_setting": "INTEGER",
         "engine_oil_temp": "FLOAT",
         "engine_water_temp": "FLOAT",
+        "surface_type_fl": "INTEGER",
+        "surface_type_fr": "INTEGER",
+        "surface_type_rl": "INTEGER",
+        "surface_type_rr": "INTEGER",
         "brake_temp_fl": "FLOAT",
         "brake_temp_fr": "FLOAT",
         "brake_temp_rl": "FLOAT",
@@ -152,3 +156,12 @@ def _ensure_sqlite_columns() -> None:
         with engine.begin() as connection:
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_laps_session_lap ON lmu_duckdb_laps (session_id, lap_number)"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_laps_track_car ON lmu_duckdb_laps (track, car, car_class)"))
+
+    if "lmu_duckdb_sync_runs" in table_names:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_sync_runs_status_updated ON lmu_duckdb_sync_runs (status, updated_at)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lmu_duckdb_sync_runs_folder_status ON lmu_duckdb_sync_runs (folder_path, status)"))
+
+    if "session_performance_reports" in table_names:
+        with engine.begin() as connection:
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_performance_reports_session_generated ON session_performance_reports (session_id, generated_at)"))

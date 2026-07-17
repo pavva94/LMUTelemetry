@@ -70,6 +70,10 @@ class PlayerState(BaseModel):
     fuel_capacity_liters: float | None = None
     engine_oil_temp: float | None = None
     engine_water_temp: float | None = None
+    surface_type_fl: int | None = None
+    surface_type_fr: int | None = None
+    surface_type_rl: int | None = None
+    surface_type_rr: int | None = None
     throttle: float | None = None
     brake: float | None = None
     steering: float | None = None
@@ -179,6 +183,7 @@ class CompetitorState(BaseModel):
 
 
 class TelemetrySnapshot(BaseModel):
+    session_id: str | None = None
     timestamp: datetime
     connected: bool
     feed_paused: bool = False

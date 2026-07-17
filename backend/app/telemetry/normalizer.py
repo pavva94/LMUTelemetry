@@ -191,6 +191,9 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
     wheels = list(attr(telemetry, "mWheels", default=[]) or [])
     def wheel_value(index: int, name: str) -> float | None:
         return safe_float(attr(wheels[index], name, default=None)) if index < len(wheels) else None
+    def wheel_int_value(index: int, name: str) -> int | None:
+        value = attr(wheels[index], name, default=None) if index < len(wheels) else None
+        return int(value) if isinstance(value, (int, float)) else None
     def accel_g(axis: str) -> float | None:
         value = safe_float(attr(attr(telemetry, "mLocalAccel", default=None), axis, default=None))
         return value / 9.80665 if value is not None else None
@@ -228,6 +231,10 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         fuel_capacity_liters=safe_float(attr(telemetry, "mFuelCapacity", default=None)),
         engine_oil_temp=safe_float(attr(telemetry, "mEngineOilTemp", default=None)),
         engine_water_temp=safe_float(attr(telemetry, "mEngineWaterTemp", default=None)),
+        surface_type_fl=wheel_int_value(0, "mSurfaceType"),
+        surface_type_fr=wheel_int_value(1, "mSurfaceType"),
+        surface_type_rl=wheel_int_value(2, "mSurfaceType"),
+        surface_type_rr=wheel_int_value(3, "mSurfaceType"),
         throttle=safe_float(attr(telemetry, "mUnfilteredThrottle", "mThrottle", default=None)),
         brake=safe_float(attr(telemetry, "mUnfilteredBrake", "mBrake", default=None)),
         steering=safe_float(attr(telemetry, "mUnfilteredSteering", "mSteering", default=None)),
@@ -292,7 +299,6 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
 
 def _normalize_tyres(vehicle: Any, telemetry: Any) -> TyreState:
     wear = list(attr(telemetry, "mWear", default=[]) or [])
-    temps = list(attr(telemetry, "mTireTemp", "mTyreTemp", default=[]) or [])
     pressures = list(attr(telemetry, "mPressure", default=[]) or [])
     wheels = list(attr(telemetry, "mWheels", default=[]) or [])
     def item(values: list, index: int) -> float | None:
@@ -302,14 +308,9 @@ def _normalize_tyres(vehicle: Any, telemetry: Any) -> TyreState:
     def wheel_value(index: int, name: str, minimum: float = 0.0) -> float | None:
         value = raw_wheel_value(index, name)
         return positive_channel(value, minimum)
-    def wheel_array(index: int, *names: str) -> list[float | None]:
-        raw = []
-        if index < len(wheels):
-            for name in names:
-                raw = attr(wheels[index], name, default=[])
-                if raw:
-                    break
-        return [kelvin_to_celsius(safe_float(value)) for value in list(raw or [])[:3]]
+    def wheel_array(index: int, name: str) -> list[float | None]:
+        raw = attr(wheels[index], name, default=[]) if index < len(wheels) else []
+        return [positive_channel(kelvin_to_celsius(safe_float(value)), 0.01) for value in list(raw or [])[:3]]
     def wear_value(index: int) -> float | None:
         value = item(wear, index) if wear else raw_wheel_value(index, "mWear")
         return tyre_wear_used_fraction(value)
@@ -317,11 +318,15 @@ def _normalize_tyres(vehicle: Any, telemetry: Any) -> TyreState:
         value = item(pressures, index) if pressures else wheel_value(index, "mPressure")
         return positive_channel(value, 0.01)
     def temp_value(index: int) -> TyreTemps:
-        if temps:
-            return TyreTemps(center_c=positive_channel(kelvin_to_celsius(item(temps, index)), 0.01))
-        inner = [positive_channel(value, 0.01) for value in wheel_array(index, "mTireInnerLayerTemperature", "mTemperature")]
+        # LMU exposes tread temperatures on each wheel as mTemperature[3].
+        # ctypes arrays are truthy even when every value is zero, so choose the
+        # first channel containing actual temperatures instead of testing the
+        # array object itself.
+        tread = wheel_array(index, "mTemperature")
+        inner = wheel_array(index, "mTireInnerLayerTemperature")
+        zones = tread if any(value is not None for value in tread) else inner
         carcass = positive_channel(kelvin_to_celsius(wheel_value(index, "mTireCarcassTemperature")), 0.01)
-        return TyreTemps(left_c=inner[0] if len(inner) > 0 else None, center_c=inner[1] if len(inner) > 1 else None, right_c=inner[2] if len(inner) > 2 else None, carcass_c=carcass)
+        return TyreTemps(left_c=zones[0] if len(zones) > 0 else None, center_c=zones[1] if len(zones) > 1 else None, right_c=zones[2] if len(zones) > 2 else None, carcass_c=carcass)
     temp_states = [temp_value(i) for i in range(4)]
     temp_values = [state.center_c if state.center_c is not None else state.carcass_c for state in temp_states]
     return TyreState(

@@ -8,6 +8,7 @@ from PyInstaller.utils.hooks import collect_submodules
 ROOT = Path(SPECPATH).parent
 BACKEND = ROOT / "backend"
 ICON = ROOT / "packaging" / "assets" / "app-icon.ico"
+VERSION_INFO = ROOT / "build" / "windows-version-info.txt"
 
 
 def collect_tree(source, destination, excluded_parts):
@@ -35,6 +36,7 @@ hiddenimports = [
     "pyLMUSharedMemory",
     "pyLMUSharedMemory.lmu_data",
     "pyLMUSharedMemory.lmu_mmap",
+    *collect_submodules("numpy._core"),
     *collect_submodules("webview"),
 ]
 
@@ -70,6 +72,7 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon=str(ICON),
+    version=str(VERSION_INFO),
 )
 
 coll = COLLECT(

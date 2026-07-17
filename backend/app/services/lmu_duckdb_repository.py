@@ -4,6 +4,10 @@ import hashlib
 import gc
 import json
 import math
+import os
+import re
+import threading
+import uuid
 from collections import OrderedDict
 from copy import deepcopy
 from dataclasses import dataclass
@@ -12,10 +16,10 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Callable
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, desc, func, select
 
 from app.db.database import SessionLocal
-from app.db.models import AppSettingModel, LmuDuckdbLapModel, LmuDuckdbSessionModel
+from app.db.models import AppSettingModel, LmuDuckdbLapModel, LmuDuckdbSessionModel, LmuDuckdbSyncRunModel
 from app.analysis.lap_quality import apply_lap_quality
 
 
@@ -33,10 +37,14 @@ FOLDER_SETTING_KEY = "lmu_duckdb_folder"
 SYNC_STATUS_SETTING_KEY = "lmu_duckdb_last_sync_status"
 SYNC_AT_SETTING_KEY = "lmu_duckdb_last_sync_at"
 DEFAULT_WINDOWS_TELEMETRY_FOLDER = Path("G:/SteamLibrary/steamapps/common/Le Mans Ultimate/UserData/Telemetry")
+LMU_TELEMETRY_RELATIVE_PATH = Path("steamapps/common/Le Mans Ultimate/UserData/Telemetry")
 ProgressCallback = Callable[[str, str, int, int, int], None]
 _REVIEW_CACHE_LIMIT = 8
 _review_cache: OrderedDict[tuple[str, str, int], dict] = OrderedDict()
 _review_cache_lock = Lock()
+_sync_thread_lock = Lock()
+_sync_threads: dict[str, threading.Thread] = {}
+_SYNC_ACTIVE_STATUSES = {"queued", "running"}
 
 
 def _report(progress: ProgressCallback | None, phase: str, message: str, completed: int, total: int, percentage: int) -> None:
@@ -148,6 +156,8 @@ CHANNEL_ALIASES: dict[str, tuple[str, ...]] = {
     "steering_shaft_torque": ("Steering Shaft Torque", "steering_shaft_torque"),
     "overheating_state": ("OverheatingState", "overheating_state"),
     "time_behind_next": ("Time Behind Next", "time_behind_next"),
+    "last_impact_magnitude": ("LastImpactMagnitude", "Last Impact Magnitude", "last_impact_magnitude"),
+    "anti_stall_active": ("AntiStall Activated", "Anti Stall Activated", "anti_stall_active"),
 }
 
 VECTOR_ALIASES: dict[str, tuple[str, ...]] = {
@@ -199,7 +209,7 @@ class ChannelLayout:
 
 def _require_duckdb() -> None:
     if duckdb is None:
-        raise RuntimeError("DuckDB support is not installed. Run `pip install -r backend/requirements.txt` and restart the backend.")
+        raise RuntimeError("Session file support is not installed. Run `pip install -r backend/requirements.txt` and restart the backend.")
 
 
 def _norm(value: str) -> str:
@@ -382,7 +392,7 @@ def _file_session(path: Path, info: TableInfo | ChannelLayout | None, warnings: 
         "created_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
         "track_name": _metadata_value(metadata, ("track", "track_name", "trackName", "circuit", "venue")),
         "track_layout": _metadata_value(metadata, ("layout", "track_layout", "trackLayout")),
-        "session_type": _metadata_value(metadata, ("session", "session_type", "sessionType", "session_name", "sessionName")) or "LMU DuckDB",
+        "session_type": _metadata_value(metadata, ("session", "session_type", "sessionType", "session_name", "sessionName")) or "LMU session",
         "vehicle_name": _metadata_value(metadata, ("vehicle", "vehicle_name", "vehicleName", "car", "car_name", "carName")),
         "vehicle_model": _metadata_value(metadata, ("vehicle_model", "vehicleModel", "car_model", "carModel")),
         "vehicle_class": _metadata_value(metadata, ("vehicle_class", "vehicleClass", "car_class", "carClass", "class")),
@@ -768,7 +778,7 @@ def _select_channel_rows(conn, layout: ChannelLayout, row_limit: int = MAX_REVIE
             if target in {"lap_number", "gear", "position", "class_position", "sector", "sector1_flag", "sector2_flag", "sector3_flag", "yellow_flag_state", "abs_level", "tc_level", "tc_cut", "tc_slip_angle", "fuel_mixture_map", "finish_status"}:
                 number = _num(value)
                 row[target] = int(number) if number is not None else None
-            elif target in {"in_pits", "abs_active", "tc_active", "front_flap_active", "rear_flap_active", "rear_flap_legal", "speed_limiter", "headlights", "offpath_wetness", "cloud_darkness"}:
+            elif target in {"in_pits", "abs_active", "tc_active", "front_flap_active", "rear_flap_active", "rear_flap_legal", "speed_limiter", "headlights", "offpath_wetness", "cloud_darkness", "anti_stall_active"}:
                 row[target] = bool(value)
             else:
                 row[target] = _num(value)
@@ -848,6 +858,8 @@ def _review_rows(raw_rows: list[dict], info: TableInfo) -> list[dict]:
     previous_lap_distance: float | None = None
     for index, raw in enumerate(raw_rows):
         row = {target: _mapped_value(raw, info, target) for target in CHANNEL_ALIASES}
+        for wheel in WHEELS:
+            row[f"surface_type_{wheel}"] = _mapped_value(raw, info, f"surface_type_{wheel}")
         if row.get("game_time") is None:
             row["game_time"] = float(index)
         if row.get("lap_number") is None:
@@ -964,7 +976,7 @@ def _pit_events(rows: list[dict]) -> list[dict]:
                     "pit_entry_time": entry_time,
                     "pit_exit_time": exit_time,
                     "total_pit_loss": exit_time - entry_time if exit_time is not None and entry_time is not None else None,
-                    "detected_from": "LMU DuckDB",
+                    "detected_from": "LMU session",
                     "message": "Pit stop detected from native telemetry",
                 }
             )
@@ -1100,7 +1112,19 @@ def _trajectory_rows(conn, layout: ChannelLayout, lap_numbers: list[str], max_po
     per_lap_limit = max(80, math.ceil(max_points / max(1, len(selected_laps))))
     rows: list[dict] = []
     for lap in lap_numbers:
-        rows.extend(_downsample_evenly(grouped.get(str(lap), []), per_lap_limit))
+        lap_rows = grouped.get(str(lap), [])
+        distances = [row.get("lap_distance") for row in lap_rows]
+        valid_distances = [float(value) for value in distances if isinstance(value, (int, float)) and math.isfinite(float(value))]
+        distance_min = min(valid_distances) if valid_distances else None
+        distance_span = (max(valid_distances) - distance_min) if distance_min is not None else 0.0
+        denominator = max(1, len(lap_rows) - 1)
+        for index, row in enumerate(lap_rows):
+            distance = row.get("lap_distance")
+            if distance_min is not None and distance_span > 1.0 and isinstance(distance, (int, float)):
+                row["progress"] = max(0.0, min(1.0, (float(distance) - distance_min) / distance_span))
+            else:
+                row["progress"] = index / denominator
+        rows.extend(_downsample_evenly(lap_rows, per_lap_limit))
     return rows, warnings
 
 
@@ -1177,13 +1201,60 @@ def _get_setting(key: str) -> str | None:
         return setting.value if setting else None
 
 
+def _steam_install_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    for env_key in ("PROGRAMFILES(X86)", "PROGRAMFILES"):
+        value = os.environ.get(env_key)
+        if value:
+            candidates.append(Path(value) / "Steam")
+    candidates.append(Path("C:/Program Files (x86)/Steam"))
+    candidates.append(Path("C:/Program Files/Steam"))
+    return list(dict.fromkeys(candidates))
+
+
+def _steam_library_roots() -> list[Path]:
+    roots: list[Path] = []
+    for steam_path in _steam_install_candidates():
+        if (steam_path / "steamapps").is_dir():
+            roots.append(steam_path)
+        manifest = steam_path / "steamapps" / "libraryfolders.vdf"
+        if not manifest.is_file():
+            continue
+        try:
+            text = manifest.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        for raw in re.findall(r'"path"\s+"([^"]+)"', text):
+            path = Path(raw.replace("\\\\", "\\"))
+            if (path / "steamapps").is_dir():
+                roots.append(path)
+    return list(dict.fromkeys(roots))
+
+
+def _common_steam_library_roots() -> list[Path]:
+    roots: list[Path] = []
+    for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        root = Path(f"{letter}:/SteamLibrary")
+        if (root / "steamapps").is_dir():
+            roots.append(root)
+    return roots
+
+
+def discover_lmu_telemetry_folder() -> str | None:
+    candidates = [DEFAULT_WINDOWS_TELEMETRY_FOLDER]
+    candidates.extend(root / LMU_TELEMETRY_RELATIVE_PATH for root in _steam_library_roots())
+    candidates.extend(root / LMU_TELEMETRY_RELATIVE_PATH for root in _common_steam_library_roots())
+    for folder in dict.fromkeys(candidates):
+        if folder.exists() and folder.is_dir():
+            return str(folder)
+    return None
+
+
 def _configured_folder_path() -> str | None:
     configured = _get_setting(FOLDER_SETTING_KEY)
     if configured:
         return configured
-    if DEFAULT_WINDOWS_TELEMETRY_FOLDER.exists() and DEFAULT_WINDOWS_TELEMETRY_FOLDER.is_dir():
-        return str(DEFAULT_WINDOWS_TELEMETRY_FOLDER)
-    return None
+    return discover_lmu_telemetry_folder()
 
 
 def _set_setting(db, key: str, value: str | None, now: str) -> None:
@@ -1226,6 +1297,77 @@ def save_settings(path: str) -> dict:
         _set_setting(db, FOLDER_SETTING_KEY, str(folder), now)
         db.commit()
     return get_settings()
+
+
+def _sync_run_to_dict(run: LmuDuckdbSyncRunModel) -> dict:
+    completed = int(run.processed or 0) + int(run.skipped or 0) + int(run.failed or 0)
+    total = max(0, int(run.total_files or 0))
+    percentage = 100 if run.status == "complete" else (round((completed / total) * 100) if total else 0)
+    try:
+        warnings = json.loads(run.warnings_json or "[]")
+    except Exception:
+        warnings = []
+    return {
+        "id": run.id,
+        "folder_path": run.folder_path,
+        "status": run.status,
+        "total_files": total,
+        "processed": int(run.processed or 0),
+        "skipped": int(run.skipped or 0),
+        "failed": int(run.failed or 0),
+        "inactive": int(run.inactive or 0),
+        "completed_files": completed,
+        "current_file": run.current_file,
+        "warnings": warnings,
+        "started_at": run.started_at,
+        "updated_at": run.updated_at,
+        "finished_at": run.finished_at,
+        "percentage": max(0, min(100, percentage)),
+    }
+
+
+def _latest_sync_run(db) -> LmuDuckdbSyncRunModel | None:
+    return db.scalars(select(LmuDuckdbSyncRunModel).order_by(desc(LmuDuckdbSyncRunModel.updated_at)).limit(1)).first()
+
+
+def _active_sync_run(db, folder: Path | None = None) -> LmuDuckdbSyncRunModel | None:
+    query = select(LmuDuckdbSyncRunModel).where(LmuDuckdbSyncRunModel.status.in_(_SYNC_ACTIVE_STATUSES))
+    if folder is not None:
+        query = query.where(LmuDuckdbSyncRunModel.folder_path == str(folder))
+    return db.scalars(query.order_by(desc(LmuDuckdbSyncRunModel.updated_at)).limit(1)).first()
+
+
+def current_sync_run() -> dict | None:
+    with SessionLocal() as db:
+        run = _active_sync_run(db) or _latest_sync_run(db)
+        return _sync_run_to_dict(run) if run else None
+
+
+def mark_interrupted_sync_runs() -> int:
+    now = datetime.utcnow().isoformat()
+    count = 0
+    with SessionLocal() as db:
+        runs = db.scalars(select(LmuDuckdbSyncRunModel).where(LmuDuckdbSyncRunModel.status.in_(_SYNC_ACTIVE_STATUSES))).all()
+        for run in runs:
+            run.status = "interrupted"
+            run.current_file = None
+            run.updated_at = now
+            run.finished_at = now
+            count += 1
+        db.commit()
+    return count
+
+
+def _create_sync_run(folder: Path) -> LmuDuckdbSyncRunModel:
+    now = datetime.utcnow().isoformat()
+    return LmuDuckdbSyncRunModel(
+        id=uuid.uuid4().hex,
+        folder_path=str(folder),
+        status="queued",
+        warnings_json="[]",
+        started_at=now,
+        updated_at=now,
+    )
 
 
 def _session_model_to_dict(session: LmuDuckdbSessionModel) -> dict:
@@ -1369,7 +1511,7 @@ def _review_from_validated_cache(file_path: Path, session_id: str, sample_limit:
             _review_cache.move_to_end(key)
             _report(progress, "Preparing page", "Using prepared validated session", 1, 1, 95)
             return deepcopy(hit)
-    _report(progress, "Reading telemetry", "Reading chart samples from DuckDB", 0, 1, 30)
+    _report(progress, "Reading telemetry", "Reading chart samples from the selected session", 0, 1, 30)
     rows, manifest, read_warnings, info = _display_rows(file_path, sample_limit)
     _report(progress, "Processing database", "Combining validated results with chart data", 1, 1, 85)
     result = {
@@ -1535,20 +1677,38 @@ def sessions_from_cache_or_setting(limit: int = DEFAULT_SCAN_LIMIT, offset: int 
         cached["warnings"] = [str(exc)]
         return cached
     scanned["warnings"] = [
-        "Showing configured folder files because no DuckDB cache exists yet. Use Save and sync in User Profile to populate profile totals.",
+        "Showing configured folder files because no session cache exists yet. Use Save and sync in User Profile to populate profile totals.",
         *(scanned.get("warnings") or []),
     ]
     return scanned
 
 
-def sync_folder(path: str | None = None, progress: ProgressCallback | None = None) -> dict:
-    folder_path = path or _configured_folder_path()
-    if not folder_path:
-        raise FileNotFoundError("No LMU DuckDB telemetry folder is configured.")
+def _sync_result_from_run(run: dict) -> dict:
+    result = get_settings()
+    result.update(
+        {
+            "processed": run["processed"],
+            "skipped": run["skipped"],
+            "inactive": run["inactive"],
+            "failed": run["failed"],
+            "warnings": run["warnings"][:200],
+            "sync_run": run,
+        }
+    )
+    return result
+
+
+def _set_run_progress(run: LmuDuckdbSyncRunModel, now: str, warnings: list[str]) -> None:
+    run.updated_at = now
+    run.warnings_json = _json(warnings[:200])
+
+
+def _execute_sync_run(run_id: str, folder_path: str, progress: ProgressCallback | None = None) -> dict:
     folder = _folder(folder_path)
-    now = datetime.utcnow().isoformat()
     candidates = _scan_candidates(folder)
-    _report(progress, "Loading database", f"Found {len(candidates)} DuckDB files", 0, max(1, len(candidates)), 8)
+    total = len(candidates)
+    now = datetime.utcnow().isoformat()
+    _report(progress, "Loading sessions", f"Found {total} session files", 0, max(1, total), 8)
     signatures = {str(file_path.resolve()): _file_signature(file_path) for file_path in candidates}
     present_keys = {_file_key(file_path) for file_path in candidates}
     processed = 0
@@ -1558,48 +1718,177 @@ def sync_folder(path: str | None = None, progress: ProgressCallback | None = Non
     warnings: list[str] = []
 
     with SessionLocal() as db:
+        run = db.get(LmuDuckdbSyncRunModel, run_id)
+        if run is None:
+            raise KeyError(run_id)
+        run.status = "running"
+        run.total_files = total
+        run.processed = 0
+        run.skipped = 0
+        run.failed = 0
+        run.inactive = 0
+        run.current_file = None
+        _set_run_progress(run, now, warnings)
+        db.commit()
+
         cached_by_file_key = {
             file_key: {"signature": signature, "active": active}
             for file_key, signature, active in db.execute(
                 select(LmuDuckdbSessionModel.file_key, LmuDuckdbSessionModel.signature, LmuDuckdbSessionModel.active)
             ).all()
         }
+
         for index, file_path in enumerate(candidates):
             signature = signatures[str(file_path.resolve())]
-            cached = cached_by_file_key.get(_file_key(file_path))
+            file_key = _file_key(file_path)
+            percent = 10 + round((index / max(1, total)) * 80)
+            run = db.get(LmuDuckdbSyncRunModel, run_id)
+            if run is None:
+                raise KeyError(run_id)
+            run.current_file = str(file_path)
+            _set_run_progress(run, datetime.utcnow().isoformat(), warnings)
+            db.commit()
+
+            cached = cached_by_file_key.get(file_key)
             if cached and cached["signature"] == signature and cached["active"]:
                 skipped += 1
-                percent = 10 + round(((index + 1) / max(1, len(candidates))) * 80)
-                _report(progress, "Validating telemetry", f"Checked {file_path.name}", index + 1, len(candidates), percent)
+                run = db.get(LmuDuckdbSyncRunModel, run_id)
+                if run is not None:
+                    run.skipped = skipped
+                    run.current_file = str(file_path)
+                    _set_run_progress(run, datetime.utcnow().isoformat(), warnings)
+                    db.commit()
+                _report(progress, "Validating telemetry", f"Checked {file_path.name}", index + 1, max(1, total), 10 + round(((index + 1) / max(1, total)) * 80))
                 continue
+
             try:
-                _report(progress, "Reading telemetry", f"Reading {file_path.name}", index, len(candidates), 10 + round((index / max(1, len(candidates))) * 80))
+                _report(progress, "Reading telemetry", f"Reading {file_path.name}", index, max(1, total), percent)
                 review = _review_file(file_path, sample_limit=0)
+                run = db.get(LmuDuckdbSyncRunModel, run_id)
+                if run is None:
+                    raise KeyError(run_id)
                 _store_review(db, file_path, review, signature, now)
+                processed += 1
+                run.processed = processed
+                run.current_file = str(file_path)
+                warnings.extend(f"{file_path.name}: {warning}" for warning in review.get("warnings") or [])
+                _set_run_progress(run, datetime.utcnow().isoformat(), warnings)
                 db.commit()
                 db.expunge_all()
+                cached_by_file_key[file_key] = {"signature": signature, "active": True}
                 _clear_review_cache(review["session"]["id"])
-                processed += 1
-                warnings.extend(f"{file_path.name}: {warning}" for warning in review.get("warnings") or [])
             except Exception as exc:
                 db.rollback()
                 failed += 1
                 warnings.append(f"{file_path.name}: {exc}")
-            percent = 10 + round(((index + 1) / max(1, len(candidates))) * 80)
-            _report(progress, "Validating telemetry", f"Processed {index + 1} of {len(candidates)} files", index + 1, len(candidates), percent)
+                run = db.get(LmuDuckdbSyncRunModel, run_id)
+                if run is not None:
+                    run.failed = failed
+                    run.current_file = str(file_path)
+                    _set_run_progress(run, datetime.utcnow().isoformat(), warnings)
+                    db.commit()
+
+            _report(progress, "Validating telemetry", f"Processed {index + 1} of {total} files", index + 1, max(1, total), 10 + round(((index + 1) / max(1, total)) * 80))
+
+        run = db.get(LmuDuckdbSyncRunModel, run_id)
+        if run is None:
+            raise KeyError(run_id)
         for cached in db.scalars(select(LmuDuckdbSessionModel).where(LmuDuckdbSessionModel.active.is_(True))).all():
             if cached.file_key not in present_keys:
                 cached.active = False
                 inactive += 1
+        finished = datetime.utcnow().isoformat()
         status = f"Processed {processed}, skipped {skipped}, marked inactive {inactive}, failed {failed}."
-        _set_setting(db, FOLDER_SETTING_KEY, str(folder), now)
-        _set_setting(db, SYNC_STATUS_SETTING_KEY, status, now)
-        _set_setting(db, SYNC_AT_SETTING_KEY, now, now)
+        _set_setting(db, FOLDER_SETTING_KEY, str(folder), finished)
+        _set_setting(db, SYNC_STATUS_SETTING_KEY, status, finished)
+        _set_setting(db, SYNC_AT_SETTING_KEY, finished, finished)
+        run.status = "complete"
+        run.processed = processed
+        run.skipped = skipped
+        run.failed = failed
+        run.inactive = inactive
+        run.current_file = None
+        run.finished_at = finished
+        _set_run_progress(run, finished, warnings)
         db.commit()
-    _report(progress, "Processing database", "Updating the local DuckDB index", len(candidates), max(1, len(candidates)), 94)
-    result = get_settings()
-    result.update({"processed": processed, "skipped": skipped, "inactive": inactive, "failed": failed, "warnings": warnings[:200]})
-    return result
+        run_dict = _sync_run_to_dict(run)
+
+    _report(progress, "Processing sessions", "Updating the local session index", total, max(1, total), 94)
+    return _sync_result_from_run(run_dict)
+
+
+def _fail_sync_run(run_id: str, exc: Exception) -> dict | None:
+    now = datetime.utcnow().isoformat()
+    with SessionLocal() as db:
+        run = db.get(LmuDuckdbSyncRunModel, run_id)
+        if run is None:
+            return None
+        try:
+            warnings = json.loads(run.warnings_json or "[]")
+        except Exception:
+            warnings = []
+        warnings.append(str(exc))
+        run.status = "failed"
+        run.current_file = None
+        run.finished_at = now
+        _set_run_progress(run, now, warnings)
+        db.commit()
+        return _sync_run_to_dict(run)
+
+
+def _sync_thread_target(run_id: str, folder_path: str) -> None:
+    try:
+        _execute_sync_run(run_id, folder_path)
+    except Exception as exc:
+        _fail_sync_run(run_id, exc)
+    finally:
+        with _sync_thread_lock:
+            _sync_threads.pop(run_id, None)
+
+
+def _ensure_sync_thread(run_id: str, folder_path: str) -> None:
+    with _sync_thread_lock:
+        existing = _sync_threads.get(run_id)
+        if existing and existing.is_alive():
+            return
+        thread = threading.Thread(target=_sync_thread_target, args=(run_id, folder_path), name=f"lmu-sync-{run_id[:8]}", daemon=True)
+        _sync_threads[run_id] = thread
+        thread.start()
+
+
+def start_sync_run(path: str | None = None) -> dict:
+    folder_path = path or _configured_folder_path()
+    if not folder_path:
+        raise FileNotFoundError("No LMU telemetry session folder is configured.")
+    folder = _folder(folder_path)
+    with _sync_thread_lock:
+        with SessionLocal() as db:
+            active = _active_sync_run(db, folder)
+            if active is None:
+                active = _create_sync_run(folder)
+                db.add(active)
+                db.commit()
+                db.refresh(active)
+            run_dict = _sync_run_to_dict(active)
+    _ensure_sync_thread(run_dict["id"], run_dict["folder_path"])
+    return run_dict
+
+
+def sync_folder(path: str | None = None, progress: ProgressCallback | None = None) -> dict:
+    folder_path = path or _configured_folder_path()
+    if not folder_path:
+        raise FileNotFoundError("No LMU telemetry session folder is configured.")
+    folder = _folder(folder_path)
+    with SessionLocal() as db:
+        run = _create_sync_run(folder)
+        db.add(run)
+        db.commit()
+        run_id = run.id
+    try:
+        return _execute_sync_run(run_id, str(folder), progress=progress)
+    except Exception as exc:
+        _fail_sync_run(run_id, exc)
+        raise
 
 
 def _review_file(file_path: Path, sample_limit: int = 5000, progress: ProgressCallback | None = None) -> dict:
@@ -1706,7 +1995,7 @@ def trajectory_session(session_id: str, lap_a: str | None = None, lap_b: str | N
     try:
         layout = _channel_layout(conn)
         if layout is None:
-            points, warnings = [], ["No supported DuckDB channel layout was found."]
+            points, warnings = [], ["No supported session channel layout was found."]
         else:
             points, warnings = _trajectory_rows(conn, layout, lap_numbers, max(200, min(5000, max_points)))
     finally:

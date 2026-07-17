@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
-import type { LmuDuckdbSettings } from "../types/lmuDuckdb";
+import type { LmuDuckdbSettings, LmuDuckdbSyncStatus } from "../types/lmuDuckdb";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import type { ProfileLap, ProfileOverview, ProfileSummary } from "../types/profile";
 
@@ -13,6 +13,8 @@ const fmt = (value?: number | null, digits = 1, suffix = "") =>
 const text = (value?: string | number | boolean | null) => (value == null || value === "" ? "--" : String(value));
 const dateText = (value?: string | null) => value ? new Date(value).toLocaleString() : "--";
 const wearText = (value?: number | null) => fmt(value == null ? null : value * 100, 1, "%");
+const isSyncActive = (status?: LmuDuckdbSyncStatus | null) => status?.status === "queued" || status?.status === "running";
+const fileName = (path?: string | null) => path ? path.split(/[\\/]/).pop() || path : "";
 
 function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return <div className="metric compact"><span className="label">{label}</span><span className="value">{value}</span>{sub && <span className="subvalue">{sub}</span>}</div>;
@@ -83,6 +85,7 @@ export function UserProfile() {
   const [error, setError] = useState("");
   const [folder, setFolder] = useState(DEFAULT_FOLDER);
   const [settings, setSettings] = useState<LmuDuckdbSettings | null>(null);
+  const [syncStatus, setSyncStatus] = useState<LmuDuckdbSyncStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [loadingOverview, setLoadingOverview] = useState(true);
 
@@ -108,18 +111,54 @@ export function UserProfile() {
         if (data.folder_path) setFolder(data.folder_path);
       })
       .catch((exc) => setError(exc instanceof Error ? exc.message : String(exc)));
+    api.currentLmuDuckdbSyncRun()
+      .then((status) => {
+        setSyncStatus(status);
+        setSyncing(isSyncActive(status));
+      })
+      .catch(() => undefined);
     void loadOverview();
   }, []);
+
+  useEffect(() => {
+    if (!syncing) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const status = await api.currentLmuDuckdbSyncRun();
+        if (cancelled) return;
+        setSyncStatus(status);
+        const active = isSyncActive(status);
+        setSyncing(active);
+        if (!active) {
+          setSettings(await api.lmuDuckdbSettings());
+          await loadOverview();
+        }
+      } catch (exc) {
+        if (!cancelled) {
+          setSyncing(false);
+          setError(exc instanceof Error ? exc.message : String(exc));
+        }
+      }
+    };
+    const id = window.setInterval(refresh, 2000);
+    void refresh();
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [syncing]);
 
   const saveAndSync = async () => {
     if (!folder.trim()) return;
     setSyncing(true);
     try {
-      await api.saveLmuDuckdbSettings(folder.trim());
-      const result = await runDuckdbJob<LmuDuckdbSettings>(() => api.startDuckdbSyncJob());
-      setSettings(result);
-      if (result.folder_path) setFolder(result.folder_path);
-      await loadOverview();
+      const saved = await api.saveLmuDuckdbSettings(folder.trim());
+      setSettings(saved);
+      if (saved.folder_path) setFolder(saved.folder_path);
+      const status = await api.startLmuDuckdbSyncRun(saved.folder_path || folder.trim());
+      setSyncStatus(status);
+      setSyncing(isSyncActive(status));
       setError("");
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -162,15 +201,28 @@ export function UserProfile() {
 
   return (
     <div className="page grid">
-      <LoadingOverlay show={syncing || loadingOverview} title={duckdbProgress?.phase || (syncing ? "Syncing DuckDB sessions" : "Loading profile")} detail={duckdbProgress?.message || (syncing ? "Scanning the LMU telemetry folder and refreshing the local cache." : "Reading cached DuckDB profile totals and best laps.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
+      <LoadingOverlay show={loadingOverview} title={duckdbProgress?.phase || "Loading profile"} detail={duckdbProgress?.message || "Reading saved-session profile totals and best laps."} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       {error && <section className="card span-12"><div className="error-box">{error}</div></section>}
       <section className="card span-12">
-        <h2>LMU DuckDB Source</h2>
+        <h2>LMU Session Source</h2>
         <div className="duckdb-path-grid profile-source">
           <label>Telemetry folder<input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder={DEFAULT_FOLDER} /></label>
-          <button className="primary" disabled={syncing || !folder.trim()} onClick={() => void saveAndSync()}>{syncing ? "Syncing" : "Save and sync"}</button>
+          <button className="primary" disabled={syncing || !folder.trim()} onClick={() => void saveAndSync()}>{syncing ? "Sync running" : "Save and sync"}</button>
           <input value={settings?.last_sync_status || "No sync has run yet"} readOnly />
         </div>
+        {syncStatus && (
+          <div className={`sync-status sync-status-${syncStatus.status}`}>
+            <div>
+              <strong>{syncStatus.status === "running" || syncStatus.status === "queued" ? "Syncing saved sessions" : `Sync ${syncStatus.status}`}</strong>
+              <span>{syncStatus.completed_files} of {syncStatus.total_files} files checked{syncStatus.current_file ? ` - ${fileName(syncStatus.current_file)}` : ""}</span>
+            </div>
+            <div className="sync-status-progress" role="progressbar" aria-label="Saved session sync" aria-valuemin={0} aria-valuemax={100} aria-valuenow={syncStatus.percentage}>
+              <span style={{ width: `${syncStatus.percentage}%` }} />
+            </div>
+            <b>{syncStatus.percentage}%</b>
+            <small>Processed {syncStatus.processed}; skipped {syncStatus.skipped}; failed {syncStatus.failed}; inactive {syncStatus.inactive}</small>
+          </div>
+        )}
         <div className="header-grid">
           <Metric label="Cached sessions" value={text(settings?.active_sessions)} sub={`${text(settings?.cached_sessions)} total records`} />
           <Metric label="Warnings" value={text(settings?.warning_count)} />
@@ -182,7 +234,7 @@ export function UserProfile() {
         <h2>Career Overview</h2>
         <div className="header-grid">
           <Metric label="Distance" value={fmt(totals.total_distance_km as number, 1, " km")} />
-          <Metric label="Sessions" value={text(totals.total_sessions as number)} sub={`${text(totals.duckdb_sessions as number)} DuckDB`} />
+          <Metric label="Sessions" value={text(totals.total_sessions as number)} sub={`${text(totals.duckdb_sessions as number)} saved`} />
           <Metric label="Detected laps" value={text(totals.total_laps as number)} sub={`${text(totals.completed_laps as number)} completed; ${text(totals.valid_laps as number)} ranking-valid`} />
           <Metric label="Completed driving time" value={formatDuration(totals.total_driving_time as number)} />
           <Metric label="Cars" value={text(totals.different_cars as number)} />
@@ -190,10 +242,6 @@ export function UserProfile() {
           <Metric label="Avg session" value={formatDuration(totals.average_session_duration as number)} />
           <Metric label="Avg distance" value={fmt(totals.average_distance_per_session as number, 1, " km")} />
           <Metric label="Avg laps" value={fmt(totals.average_laps_per_session as number, 1)} />
-          <Metric label="Wins" value={text(totals.wins as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
-          <Metric label="Podiums" value={text(totals.podiums as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
-          <Metric label="Top 10" value={text(totals.top10 as number)} sub={`${text(totals.positioned_race_sessions as number)} races with position data`} />
-          <Metric label="DNF/DNS/DQ" value={text(totals.dnf_dns as number)} sub={`${text(totals.status_race_sessions as number)} races with status data`} />
           <Metric label="Best-lap records" value={text(totals.best_lap_count as number)} />
         </div>
       </section>
@@ -218,7 +266,7 @@ export function UserProfile() {
         </div>
         {showExcluded
           ? (excludedLaps.length ? <LapTable rows={excludedLaps} sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="No excluded or suspicious laps were found." />)
-          : (bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU DuckDB folder is synced." />)}
+          : (bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU session folder is synced." />)}
       </section>
     </div>
   );
@@ -306,7 +354,7 @@ function LapTable({
               <th><ColumnFilter value={filters.ambient} onChange={(value) => updateFilter("ambient", value)} placeholder="Ambient" /></th>
               <th><ColumnFilter value={filters.engine} onChange={(value) => updateFilter("engine", value)} placeholder="Oil/water" /></th>
               <th><ColumnFilter value={filters.speed} onChange={(value) => updateFilter("speed", value)} placeholder="Speed" /></th>
-              <th><ColumnSelect value={filters.source} onChange={(value) => updateFilter("source", value)} options={["duckdb", "live"]} /></th>
+              <th><ColumnSelect value={filters.source} onChange={(value) => updateFilter("source", value)} options={[{ value: "duckdb", label: "Saved session" }, { value: "live", label: "Live" }]} /></th>
             </tr>
           </thead>
           <tbody>
@@ -349,11 +397,15 @@ function ColumnFilter({ value, onChange, placeholder }: { value: string; onChang
   return <input className="table-filter" value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} />;
 }
 
-function ColumnSelect({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: string[] }) {
+function ColumnSelect({ value, onChange, options }: { value: string; onChange: (value: string) => void; options: Array<string | { value: string; label: string }> }) {
   return (
     <select className="table-filter" value={value} onChange={(event) => onChange(event.target.value)}>
       <option value="">All</option>
-      {options.map((option) => <option value={option} key={option}>{option}</option>)}
+      {options.map((option) => {
+        const value = typeof option === "string" ? option : option.value;
+        const label = typeof option === "string" ? option : option.label;
+        return <option value={value} key={value}>{label}</option>;
+      })}
     </select>
   );
 }
@@ -438,7 +490,7 @@ function compareLapRows(a: ProfileLap, b: ProfileLap, sort: string, direction: s
 
 function sourceBadge(source: ProfileLap["source"]) {
   if (source === "live") return <span className="badge blue">Live</span>;
-  return <span className="badge green">DuckDB</span>;
+  return <span className="badge green">Saved session</span>;
 }
 
 function validityBadge(lap: ProfileLap) {

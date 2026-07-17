@@ -72,6 +72,24 @@ def test_tyre_normalizer_ignores_zero_channels_and_reads_temperature_fallback() 
     assert tyres.load_fr is None
 
 
+def test_tyre_normalizer_falls_back_to_inner_layer_temperature() -> None:
+    wheel = SimpleNamespace(
+        mWear=0.9,
+        mPressure=180.0,
+        mTireLoad=2000.0,
+        mTireCarcassTemperature=340.0,
+        mTemperature=[0.0, 0.0, 0.0],
+        mTireInnerLayerTemperature=[345.0, 346.0, 347.0],
+    )
+    telemetry = SimpleNamespace(mWheels=[wheel] * 4)
+
+    tyres = _normalize_tyres(SimpleNamespace(), telemetry)
+
+    assert round(tyres.temp_fl.left_c or 0, 1) == 71.9
+    assert round(tyres.temp_fl.center_c or 0, 1) == 72.9
+    assert round(tyres.temp_fl.right_c or 0, 1) == 73.9
+
+
 def test_competitor_normalizer_filters_placeholder_lap_times() -> None:
     vehicle = SimpleNamespace(
         mID=12,

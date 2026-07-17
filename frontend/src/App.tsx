@@ -22,7 +22,21 @@ import { useTelemetrySocket } from "./hooks/useTelemetrySocket";
 import type { CompetitorState } from "./types/telemetry";
 
 export default function App() {
-  const [page, setPage] = useState<PageKey>("live");
+  const pageFromHash = (): PageKey => {
+    const value = window.location.hash.replace(/^#\/?/, "");
+    if (value === "race-simulation") return "planner";
+    return ["live", "profile", "circle-map", "lap-compare", "one-lap", "race-history", "xy-plotter", "settings", "planner", "race-prep", "lap-analysis", "pit", "review"].includes(value) ? value as PageKey : "live";
+  };
+  const [page, setPage] = useState<PageKey>(pageFromHash);
+  useEffect(() => {
+    const sync = () => setPage(pageFromHash());
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+  const navigate = (next: PageKey) => {
+    window.location.hash = next;
+    setPage(next);
+  };
   const { data: telemetry, connected: telemetryConnected } = useTelemetrySocket();
   const { strategy, recommendation, connected: strategyConnected } = useStrategySocket();
   const [competitors, setCompetitors] = useState<CompetitorState[]>([]);
@@ -32,9 +46,11 @@ export default function App() {
   }, []);
   const currentCompetitors = telemetry?.competitors?.length ? telemetry.competitors : competitors;
   return (
-    <Layout page={page} setPage={setPage} connected={telemetryConnected || strategyConnected}>
-      <ErrorBoundary key={page}>
-        {page === "live" && <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} competitors={currentCompetitors} />}
+    <Layout page={page} setPage={navigate} connected={telemetryConnected || strategyConnected}>
+      <ErrorBoundary>
+        <div style={{ display: page === "live" ? "contents" : "none" }} aria-hidden={page !== "live"}>
+          <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} competitors={currentCompetitors} />
+        </div>
         {page === "profile" && <UserProfile />}
         {page === "circle-map" && <CircleMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "lap-compare" && <LapCompare telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}

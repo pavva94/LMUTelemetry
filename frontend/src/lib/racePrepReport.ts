@@ -85,6 +85,14 @@ export type RacePrepReport = {
     highestPressureTyre: Wheel | null;
     lowestPressureTyre: Wheel | null;
   };
+  powertrain: {
+    oilTemp: StatSummary;
+    waterTemp: StatSummary;
+  };
+  surface: {
+    grassSamples: Record<Wheel, number>;
+    totalGrassSamples: number;
+  };
   execution: {
     paceTargetLow: number | null;
     paceTargetHigh: number | null;
@@ -180,6 +188,8 @@ function buildCoverage(samples: Row[], laps: Row[]): RacePrepReport["coverage"] 
     ["Brakes", ["brake_temp_fl", "brake_temp_fr", "brake_temp_rl", "brake_temp_rr"]],
     ["Platform", ["ride_height_fl", "ride_height_fr", "ride_height_rl", "ride_height_rr", "front_ride_height", "rear_ride_height"]],
     ["G-force", ["g_force_lat", "g_force_long", "g_force_vert"]],
+    ["Powertrain", ["engine_oil_temp", "engine_water_temp"]],
+    ["Surface", ["surface_type_fl", "surface_type_fr", "surface_type_rl", "surface_type_rr"]],
     ["Environment", ["track_temp", "ambient_temp", "rain", "wetness"]],
   ];
   const source = [...samples, ...laps];
@@ -213,6 +223,8 @@ function buildLapSeries(laps: Row[], bestLap: number | null): ChartRow[] {
       tyre_wear_delta: tyreWearDelta,
       track_temp: chartNumber(lap.track_temp),
       ambient_temp: chartNumber(lap.ambient_temp),
+      engine_oil_temp: chartNumber(lap.engine_oil_temp),
+      engine_water_temp: chartNumber(lap.engine_water_temp),
       valid_lap: Boolean(valid),
       in_pit: lap.in_pit === true,
       invalid_marker: valid ? null : lapTime,
@@ -246,6 +258,8 @@ function buildSampleSeries(samples: Row[]): ChartRow[] {
       rear_ride_height: chartNumber(sample.rear_ride_height),
       track_temp: chartNumber(sample.track_temp),
       ambient_temp: chartNumber(sample.ambient_temp),
+      engine_oil_temp: chartNumber(sample.engine_oil_temp),
+      engine_water_temp: chartNumber(sample.engine_water_temp),
     };
     for (const wheel of wheels) {
       row[`tyre_wear_${wheel}`] = chartWear(sample[`tyre_wear_${wheel}`]);
@@ -253,6 +267,7 @@ function buildSampleSeries(samples: Row[]): ChartRow[] {
       row[`tyre_pressure_${wheel}`] = chartNumber(sample[`tyre_pressure_${wheel}`]);
       row[`brake_temp_${wheel}`] = chartNumber(sample[`brake_temp_${wheel}`]);
       row[`ride_height_${wheel}`] = chartNumber(sample[`ride_height_${wheel}`]);
+      row[`surface_type_${wheel}`] = chartNumber(sample[`surface_type_${wheel}`]);
     }
     return row;
   });
@@ -747,6 +762,11 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
   const pressure = Object.fromEntries(wheels.map((wheel) => [wheel, samples.length ? statFor(samples, `tyre_pressure_${wheel}`) : statForRows(allLaps, `tyre_pressure_${wheel}`, num(summary?.average_tyre_pressure))])) as Record<Wheel, StatSummary>;
   const tempAverages = Object.fromEntries(wheels.map((wheel) => [wheel, temperature[wheel].average])) as Record<Wheel, number | null>;
   const pressureAverages = Object.fromEntries(wheels.map((wheel) => [wheel, pressure[wheel].average])) as Record<Wheel, number | null>;
+  const powertrainRows = samples.length ? samples : allLaps;
+  const oilTemp = statForRows(powertrainRows, "engine_oil_temp");
+  const waterTemp = statForRows(powertrainRows, "engine_water_temp");
+  const grassSamples = Object.fromEntries(wheels.map((wheel) => [wheel, powertrainRows.filter((row) => num(row[`surface_type_${wheel}`]) === 2).length])) as Record<Wheel, number>;
+  const totalGrassSamples = wheels.reduce((total, wheel) => total + grassSamples[wheel], 0);
 
   const tyresAvailable = Math.max(4, Math.floor(options.tyresAvailable || 16));
   const tyreSetsAvailable = Math.floor(tyresAvailable / 4);
@@ -846,6 +866,8 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
       highestPressureTyre: bestWheel(pressureAverages, Math.max),
       lowestPressureTyre: bestWheel(pressureAverages, Math.min),
     },
+    powertrain: { oilTemp, waterTemp },
+    surface: { grassSamples, totalGrassSamples },
     execution: {
       paceTargetLow,
       paceTargetHigh,

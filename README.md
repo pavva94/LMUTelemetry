@@ -16,6 +16,7 @@ The application combines a FastAPI backend with a React/Vite interface. The back
   - [Local-First Storage And Background Recording](#local-first-storage-and-background-recording)
 - [Runtime Model](#runtime-model)
 - [Development Setup](#development-setup)
+- [Windows Release Builds](#windows-release-builds)
 - [Data Storage](#data-storage)
 - [API Highlights](#api-highlights)
 - [Documentation](#documentation)
@@ -194,6 +195,46 @@ python run_backend.py
 
 If LMU shared memory is unavailable, the backend stays running and reports that live telemetry is disconnected.
 
+## Windows Release Builds
+
+The Windows packaging script builds both distributable formats:
+
+- Installer: `dist\LMUTelemetry-Setup-<version>.exe`
+- Portable archive: `dist\LMUTelemetry-Windows-Portable-<version>.zip`
+- Checksums: `dist\SHA256SUMS-<version>.txt`
+
+Requirements:
+
+- Python 3.11+ with backend dependencies installable from `backend\requirements.txt`
+- Node.js 18+
+- Inno Setup 6 available as `ISCC.exe` or installed in the default Program Files location
+
+From the project root, run:
+
+```cmd
+packaging\build_windows_installer.cmd
+```
+
+PowerShell can call the script directly:
+
+```powershell
+.\packaging\build_windows_installer.ps1
+```
+
+To set the release version used in artifact names:
+
+```powershell
+.\packaging\build_windows_installer.ps1 -AppVersion 0.1.0
+```
+
+For a faster rebuild when dependencies are already installed:
+
+```powershell
+.\packaging\build_windows_installer.ps1 -SkipDependencyInstall
+```
+
+The script runs the frontend tests and build by default, embeds the requested version in `LMUTelemetry.exe`, packages it with PyInstaller, smoke-tests the packaged app in an isolated temporary data directory, builds the Inno Setup installer, creates the portable zip, and writes SHA-256 checksums.
+
 ## Data Storage
 
 Development currently stores local data under the repository:
@@ -246,6 +287,7 @@ LMU_TELEMETRY_DATA_DIR=C:\path\to\data
 
 - [Architecture](docs/architecture.md): runtime components, data flow, session rotation, API surface, and frontend routing.
 - [Data Handling](docs/data-handling.md): normalization, storage, caching, pause rules, saved reviews, CSV import, and sample decimation.
+- [Internationalization](docs/i18n.md): translation resources, language persistence, interpolation/plurals, and validation workflow.
 - [Live Strategy Calculations](docs/live-strategy-calculations.md): fuel, tyre, pace, stint, pit-window, competitor, and recommendation models.
 - [MoTeC / CSV Calculations](docs/motec-csv-calculations.md): channels, derived values, lap accumulation, fuel worksheets, and Race Engineer rules.
 - [Page And Graph Calculations](docs/page-and-graph-calculations.md): page-by-page formulas for live, review, race-prep, engineering, and MoTeC views.

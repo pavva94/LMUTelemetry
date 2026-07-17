@@ -50,10 +50,19 @@ def _find_port(preferred: int | None = None) -> int:
         return int(sock.getsockname()[1])
 
 
-def _wait_for_backend(url: str, timeout_seconds: float = 20.0) -> None:
+def _wait_for_backend(
+    url: str,
+    server_thread: threading.Thread,
+    server_errors: list[BaseException],
+    timeout_seconds: float = 60.0,
+) -> None:
     deadline = time.monotonic() + timeout_seconds
     last_error: Exception | None = None
     while time.monotonic() < deadline:
+        if server_errors:
+            raise RuntimeError("Backend server failed during startup.") from server_errors[0]
+        if not server_thread.is_alive():
+            raise RuntimeError("Backend server stopped before becoming ready.")
         try:
             with urlopen(f"{url}/api/health", timeout=1.0) as response:
                 if response.status < 500:
@@ -72,7 +81,7 @@ def _prepare_environment(use_mock: bool) -> None:
         path.mkdir(parents=True, exist_ok=True)
 
 
-def _run_server(port: int) -> tuple[uvicorn.Server, threading.Thread]:
+def _run_server(port: int) -> tuple[uvicorn.Server, threading.Thread, list[BaseException]]:
     config = uvicorn.Config(
         "app.main:app",
         host="127.0.0.1",
@@ -83,9 +92,18 @@ def _run_server(port: int) -> tuple[uvicorn.Server, threading.Thread]:
         access_log=False,
     )
     server = uvicorn.Server(config)
-    thread = threading.Thread(target=server.run, name="lmu-telemetry-backend", daemon=True)
+    server_errors: list[BaseException] = []
+
+    def run_server() -> None:
+        try:
+            server.run()
+        except BaseException as exc:
+            server_errors.append(exc)
+            _write_launcher_error(exc)
+
+    thread = threading.Thread(target=run_server, name="lmu-telemetry-backend", daemon=True)
     thread.start()
-    return server, thread
+    return server, thread, server_errors
 
 
 def _stop_server(server: uvicorn.Server, thread: threading.Thread) -> None:
@@ -140,8 +158,8 @@ def main() -> int:
         _prepare_environment(use_mock=args.mock or args.smoke_test)
         port = _find_port(args.port)
         base_url = f"http://127.0.0.1:{port}"
-        server, server_thread = _run_server(port)
-        _wait_for_backend(base_url)
+        server, server_thread, server_errors = _run_server(port)
+        _wait_for_backend(base_url, server_thread, server_errors)
         if args.smoke_test:
             _run_packaged_smoke_test(base_url)
             _stop_server(server, server_thread)
@@ -150,7 +168,8 @@ def main() -> int:
         if "server" in locals() and "server_thread" in locals():
             _stop_server(server, server_thread)
         _write_launcher_error(exc)
-        _message_box(APP_NAME, f"{APP_NAME} could not start.\n\n{exc}")
+        if not args.smoke_test:
+            _message_box(APP_NAME, f"{APP_NAME} could not start.\n\n{exc}")
         return 1
 
     try:

@@ -18,7 +18,7 @@ export function useDuckdbJob() {
       status = await api.duckdbJobStatus(status.job_id);
       if (generation.current === currentGeneration) setProgress(status);
     }
-    if (status.status === "failed") throw new Error(status.error || status.message || "DuckDB job failed");
+    if (status.status === "failed") throw new Error(status.error || status.message || "Session job failed");
     const result = await api.duckdbJobResult<T>(status.job_id);
     if (generation.current === currentGeneration) setProgress(status);
     return result;

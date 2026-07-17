@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import lmu_duckdb_routes, profile_routes, session_routes, strategy_routes, telemetry_routes, websocket_routes
+from app.api import lmu_duckdb_routes, performance_report_routes, profile_routes, race_simulation_routes, session_routes, strategy_routes, telemetry_routes, websocket_routes
 from app.core.config import get_settings
 from app.core.paths import frontend_dist_dir, log_dir
 from app.db.database import init_db
@@ -36,7 +36,8 @@ logger = logging.getLogger(__name__)
 
 def _sync_lmu_duckdb_on_startup() -> None:
     try:
-        result = lmu_duckdb_repository.sync_folder()
+        interrupted = lmu_duckdb_repository.mark_interrupted_sync_runs()
+        result = lmu_duckdb_repository.start_sync_run()
     except FileNotFoundError:
         logger.info("Skipping LMU DuckDB startup sync: no telemetry folder configured.")
     except NotADirectoryError as exc:
@@ -47,11 +48,10 @@ def _sync_lmu_duckdb_on_startup() -> None:
         logger.exception("LMU DuckDB startup sync failed: %s", exc)
     else:
         logger.info(
-            "LMU DuckDB startup sync complete: processed=%s skipped=%s inactive=%s failed=%s",
-            result.get("processed", 0),
-            result.get("skipped", 0),
-            result.get("inactive", 0),
-            result.get("failed", 0),
+            "LMU DuckDB startup sync running: interrupted=%s run=%s status=%s",
+            interrupted,
+            result.get("id"),
+            result.get("status"),
         )
 
 
@@ -91,6 +91,8 @@ app.include_router(session_routes.router)
 app.include_router(websocket_routes.router)
 app.include_router(lmu_duckdb_routes.router)
 app.include_router(profile_routes.router)
+app.include_router(race_simulation_routes.router)
+app.include_router(performance_report_routes.router)
 
 
 def _mount_packaged_frontend() -> None:

@@ -1,9 +1,10 @@
 import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
-import type { SavedSession, SessionDashboard, SessionReview } from "../types/session";
-import type { DuckdbJobStatus, LmuDuckdbScanResponse, LmuDuckdbSettings } from "../types/lmuDuckdb";
+import type { PerformanceReportConfiguration, PerformanceReportRecord, SavedSession, SessionDashboard, SessionReview } from "../types/session";
+import type { DuckdbJobStatus, LmuDuckdbScanResponse, LmuDuckdbSettings, LmuDuckdbSyncStatus } from "../types/lmuDuckdb";
 import type { LiveLapAnalysis } from "../types/liveLapAnalysis";
 import type { ProfileLap, ProfileLapResponse, ProfileOverview, ProfileSummary } from "../types/profile";
+import type { RaceSimulationResult } from "../types/raceSimulation";
 
 export const API_BASE = "";
 export const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
@@ -35,10 +36,11 @@ export const api = {
   review: (limit = REVIEW_SAMPLE_LIMIT) => getJson<SessionReview>(`/api/session/review?limit=${limit}`),
   reviewSession: (id: string, limit = REVIEW_SAMPLE_LIMIT) => getJson<SessionReview>(`/api/session/review/${encodeURIComponent(id)}?limit=${limit}`),
   sessionDashboard: (id: string) => getJson<SessionDashboard>(`/api/session/review/${encodeURIComponent(id)}/dashboard`),
-  liveLapAnalysis: (selectedLap?: number | null, referenceLap?: number | null) => {
+  liveLapAnalysis: (selectedLap?: number | null, referenceLap?: number | null, analysisLaps?: number[] | null) => {
     const params = new URLSearchParams();
     if (selectedLap != null) params.set("selected_lap", String(selectedLap));
     if (referenceLap != null) params.set("reference_lap", String(referenceLap));
+    if (analysisLaps != null) params.set("analysis_laps", analysisLaps.join(","));
     const suffix = params.toString() ? `?${params}` : "";
     return getJson<LiveLapAnalysis>(`/api/live-lap-analysis${suffix}`);
   },
@@ -66,6 +68,8 @@ export const api = {
   lmuDuckdbSettings: () => getJson<LmuDuckdbSettings>("/api/lmu-duckdb/settings"),
   saveLmuDuckdbSettings: (path: string) => postJson<LmuDuckdbSettings>("/api/lmu-duckdb/settings", { path }),
   syncLmuDuckdb: (path?: string) => postJson<LmuDuckdbSettings>("/api/lmu-duckdb/sync", path ? { path } : {}),
+  startLmuDuckdbSyncRun: (path?: string) => postJson<LmuDuckdbSyncStatus>("/api/lmu-duckdb/sync-runs", path ? { path } : {}),
+  currentLmuDuckdbSyncRun: () => getJson<LmuDuckdbSyncStatus | null>("/api/lmu-duckdb/sync-runs/current"),
   lmuDuckdbSessions: (limit = 250, offset = 0) => getJson<LmuDuckdbScanResponse>(`/api/lmu-duckdb/sessions?limit=${limit}&offset=${offset}`),
   reviewLmuDuckdbSession: (path: string, id: string, limit = REVIEW_SAMPLE_LIMIT) =>
     postJson<SessionReview>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review?limit=${limit}`, { path }),
@@ -78,10 +82,20 @@ export const api = {
     return getJson<{ session_id: string; laps: string[]; points: Array<Record<string, number | string | boolean | null>>; warnings: string[] }>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/trajectory?${params}`);
   },
   startDuckdbSessionsJob: (limit = 250, offset = 0) => postJson<DuckdbJobStatus>(`/api/lmu-duckdb/jobs/sessions?limit=${limit}&offset=${offset}`, {}),
-  startDuckdbSyncJob: (path?: string) => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/sync", path ? { path } : {}),
+  startDuckdbSyncJob: (path?: string) => postJson<LmuDuckdbSyncStatus>("/api/lmu-duckdb/jobs/sync", path ? { path } : {}),
   startDuckdbReviewJob: (id: string, limit = REVIEW_SAMPLE_LIMIT) => postJson<DuckdbJobStatus>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review-jobs?limit=${limit}`, {}),
   startDuckdbHistoryJob: (sessionIds: string[]) => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/history", { session_ids: sessionIds }),
   startProfileOverviewJob: () => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/profile-overview", {}),
+  startPerformanceReportJob: (sessionId: string, body: PerformanceReportConfiguration) => postJson<DuckdbJobStatus>(`/api/performance-reports/sessions/${encodeURIComponent(sessionId)}/jobs`, body as unknown as Record<string, unknown>),
+  performanceReports: (sessionId: string) => getJson<PerformanceReportRecord[]>(`/api/performance-reports/sessions/${encodeURIComponent(sessionId)}`),
+  performanceReportDownloadUrl: (reportId: string) => `${API_BASE}/api/performance-reports/${encodeURIComponent(reportId)}/download`,
+  deletePerformanceReport: async (reportId: string) => {
+    const response = await fetch(`${API_BASE}/api/performance-reports/${encodeURIComponent(reportId)}`, { method: "DELETE" });
+    if (!response.ok) throw new Error((await response.text()) || "Could not delete report");
+  },
+  startRaceSimulationJob: (body: Record<string, unknown>) => postJson<DuckdbJobStatus>("/api/race-simulation/jobs", body),
+  importRaceEvent: (sessionId: string) => getJson<Record<string, unknown>>(`/api/race-simulation/events/${encodeURIComponent(sessionId)}/import`),
+  startFullFieldRaceJob: (body: Record<string, unknown>) => postJson<DuckdbJobStatus>("/api/race-simulation/full-field/jobs", body),
   duckdbJobStatus: (id: string) => getJson<DuckdbJobStatus>(`/api/lmu-duckdb/jobs/${encodeURIComponent(id)}`),
   duckdbJobResult: <T>(id: string) => getJson<T>(`/api/lmu-duckdb/jobs/${encodeURIComponent(id)}/result`),
   profileOverview: () => getJson<ProfileOverview>("/api/profile/overview"),

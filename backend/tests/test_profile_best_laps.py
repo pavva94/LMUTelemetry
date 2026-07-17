@@ -109,3 +109,29 @@ def test_revalidation_promotes_next_valid_lap_when_corrupt_fastest_is_removed():
     rows = ProfileRepository()._with_lap_quality([corrupt, valid])
     best = ProfileRepository()._best_laps_from_laps(rows)
     assert [row["session_id"] for row in best] == ["good"]
+
+
+def test_history_rejects_unflagged_fast_reset_against_session_baseline():
+    laps = [
+        lap(lap_number=str(index), lap_time=60.0 + offset, average_speed=158.4 - offset)
+        for index, offset in ((1, 0.0), (2, 0.2), (3, -0.1))
+    ]
+    laps.append(lap(lap_number="4", lap_time=53.0, average_speed=179.3))
+
+    ProfileRepository()._with_lap_quality(laps)
+
+    assert laps[-1]["valid_lap"] is False
+    assert laps[-1]["lap_quality"] == "partial_or_out_lap"
+
+
+def test_history_rejects_unflagged_slow_incident_against_session_baseline():
+    laps = [
+        lap(lap_number=str(index), lap_time=60.0 + offset, average_speed=158.4 - offset)
+        for index, offset in ((1, 0.0), (2, 0.2), (3, -0.1))
+    ]
+    laps.append(lap(lap_number="4", lap_time=75.0, average_speed=126.7))
+
+    ProfileRepository()._with_lap_quality(laps)
+
+    assert laps[-1]["valid_lap"] is False
+    assert laps[-1]["lap_quality"] == "very_slow_or_incident_lap"
