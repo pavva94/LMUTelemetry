@@ -1,148 +1,178 @@
 <h1><img src="website/imgs/lmu-telemetry-icon.png" alt="LMU Telemetry icon" width="32" height="32" align="center"> LMU Telemetry</h1>
 
-LMU Telemetry is a local-first telemetry and race-engineering application for Le Mans Ultimate. It turns live shared-memory data, native LMU telemetry databases, and MoTeC-style CSV exports into race control, strategy planning, lap analysis, and post-session review tools.
+[Official Website](https://www.pavesialessandro.com/LMUTelemetry/website/en/index.html) · [Download LMU Telemetry for Windows](https://github.com/pavva94/LMUTelemetry/releases)
 
-The application combines a FastAPI backend with a React/Vite interface. The backend collects and records telemetry even when the frontend is closed; the frontend provides live dashboards and offline analysis workspaces.
+LMU Telemetry is a local-first telemetry, race-engineering, and strategy application for Le Mans Ultimate. It combines live shared-memory data with read-only analysis of LMU's native DuckDB telemetry files, providing race control, driver coaching, strategy planning, career statistics, and professional session reports in one Windows application.
 
-## Contents
+The main way to use LMU Telemetry is the ready-to-run **Windows executable**. Users do not need to install Python, Node.js, or developer tools.
 
-- [Features](#features)
-  - [Live Telemetry And Race Control](#live-telemetry-and-race-control)
-  - [Fuel, Tyre, Stint, And Pit Strategy](#fuel-tyre-stint-and-pit-strategy)
-  - [Lap Analysis And Driver Feedback](#lap-analysis-and-driver-feedback)
-  - [Competitor Timing And Traffic Awareness](#competitor-timing-and-traffic-awareness)
-  - [LMU Session Review And Career Profile](#lmu-session-review-and-career-profile)
-  - [MoTeC-Style CSV Analysis](#motec-style-csv-analysis)
-  - [Local-First Storage And Background Recording](#local-first-storage-and-background-recording)
-- [Runtime Model](#runtime-model)
-- [Development Setup](#development-setup)
-- [Windows Release Builds](#windows-release-builds)
-- [Data Storage](#data-storage)
-- [API Highlights](#api-highlights)
-- [Documentation](#documentation)
-- [Development Checks](#development-checks)
-- [Troubleshooting](#troubleshooting)
+## Download And Run On Windows
 
-## Features
+Download the latest version from the [LMU Telemetry download page](https://github.com/pavva94/LMUTelemetry/releases). Each release provides two ways to run the same desktop application:
 
-LMU Telemetry is organized into four working modes:
+- **Installer — `LMUTelemetry-Setup-<version>.exe`**: the recommended option for most users. Run the installer, then launch **LMU Telemetry** from the Start menu or optional desktop shortcut.
+- **Portable — `LMUTelemetry-Windows-Portable-<version>.zip`**: extract the archive and run `LMUTelemetry.exe` directly. Nothing is installed.
+- **Checksums — `SHA256SUMS-<version>.txt`**: SHA-256 hashes for verifying the installer and portable download.
 
-- **Live Mode** for real-time telemetry, timing, competitors, lap analysis, and strategy signals.
-- **Plan Mode** for strategy assumptions, pit plans, and session reports using live or cached data.
-- **User Profile** for career summaries and read-only review of native LMU DuckDB sessions.
-- **CSV Analysis** for offline engineering analysis of MoTeC-style exports.
+### First Run
 
-### Live Telemetry And Race Control
+1. Download and run the installer, or extract the portable archive and open `LMUTelemetry.exe`.
+2. Start Le Mans Ultimate and enter an active session.
+3. LMU Telemetry connects to the game's shared memory and begins showing and recording live data.
+4. To analyze existing LMU telemetry, open **User Profile**, select the folder containing the native LMU telemetry databases, and choose **Save and sync**.
 
-Live Mode reads LMU shared memory and presents the current session as a race-engineering dashboard. It includes:
+The executable includes the backend, frontend, desktop window, and LMU shared-memory integration. It starts its own private local service automatically; there is no server or command line for the user to configure. Closing the desktop window stops that service cleanly and finalizes the active recording.
 
-- Current position, lap count, lap times, race state, speed, gear, and engine speed.
-- Throttle, brake, and steering inputs.
-- Per-wheel tyre temperatures, wear estimates, brake data, and ride-height channels when supplied by LMU.
-- Fuel state, measured consumption, estimated laps remaining, and the projected fuel requirement at the next stop.
-- Current-session standings, race history, track-position views, lap comparison, and configurable X-Y telemetry plots.
-- Live warnings and strategy recommendations derived from the current telemetry stream.
+Visit the [official website](https://www.pavesialessandro.com/LMUTelemetry/website/en/index.html) for the product tour, feature overview, and screenshots.
+
+LMU Telemetry stores telemetry, cached session metadata, generated reports, and settings on the local computer. It does not upload telemetry to an external service.
+
+## Highlights
+
+- Live race-control dashboard with timing, position, driver inputs, tyres, fuel, alerts, and nearby competitors.
+- Automatic local recording and session rotation while live telemetry is active.
+- Fuel-range, tyre-wear, stint, pit-window, pace, and recommendation models.
+- Live lap coaching with lap-quality validation and corner-phase feedback.
+- Strategy Planner using live data, recorded history, or a selected native LMU session.
+- Seeded Monte Carlo strategy comparison with fuel, tyre, pit, traffic, and pace uncertainty.
+- Read-only LMU DuckDB sync, career profile, personal-best validation, and detailed session review.
+- GPS lap paths and aligned lap-delta comparison when the source session contains the required channels.
+- Deterministic PDF performance reports in English or Italian, with configurable detail and charts.
+- English and Italian interface languages.
+- Local mock telemetry for development and demonstrations without a running LMU session.
 
 ![Live LMU race-control dashboard showing position, nearby drivers, driver inputs, tyre condition, and fuel strategy](website/imgs/Screenshot%202026-06-22%20162630.png)
 
-*Live race control combines timing, nearby competitors, inputs, tyre state, and fuel projections in one view.*
+## Application Modes
 
-### Fuel, Tyre, Stint, And Pit Strategy
+The interface is organized into three main modes.
 
-The strategy tools combine configurable race assumptions with current or recorded session data:
+### Live Mode
 
-- Fuel modeling uses measured consumption to estimate remaining range and fuel required at a stop.
-- Tyre modeling tracks available wear and temperature channels per wheel.
-- Stint planning divides the remaining race into stops and projects fuel service and tyre life at pit entry and finish.
-- Pit-window guidance compares alternative stop laps and updates against live session state.
-- The Strategy Planner can use the current session or a cached LMU DuckDB session.
-- Session reports summarize pace, fuel, tyres, environment, and preparation notes for a selected session.
+Live Mode reads LMU shared memory and updates the application through WebSockets. Its pages include:
+
+- **Live Dashboard**: session state, position, lap timing, speed, gear, RPM, throttle, brake, steering, tyre state, fuel projections, alerts, and either nearby cars or the full grid.
+- **Circle Map**: a simplified lap-progress map for traffic awareness when real circuit geometry is unavailable.
+- **Lap Stats**: valid-lap comparison, pace trends, fuel use, tyre degradation, top speed, and session-wide insights.
+- **Standings**: race and class order, leader gaps, relative gaps, pit state, and field spread.
+- **Session History**: stint detection and comparisons of pace, fuel, tyre wear, and top speed.
+- **X-Y Plotter**: configurable scatter plots for numeric live channels, including common engineering presets and summary statistics.
+- **Driver Coach**: live lap validation, reference-lap comparison, corner segmentation, braking/rotation/apex/exit findings, synchronized traces, and confidence information.
+- **Pit Window**: selected strategy timeline, alternative stop options, live pit-window guidance, pace evidence, model inputs, and calculation breakdowns.
+- **Settings**: interface language and locally stored display preferences, plus connection, recording, strategy, and map status panels.
+
+Live calculations update fuel consumption and range, tyre wear, stint state, competitor context, pit windows, pace evidence, and rule-based recommendations. A field remains unavailable when LMU or the shared-memory integration does not provide the required channel; the UI does not invent missing values.
+
+### Plan Mode
+
+Plan Mode supports both live and historical planning.
+
+#### Strategy Planner
+
+The planner can derive its inputs from the current live session, recorded local history, or a selected LMU DuckDB session. It supports:
+
+- Timed-race planning with estimated race laps derived from the selected pace and service assumptions.
+- Configurable tank capacity, starting fuel, finish reserve, pit loss, refuelling rate, tyre service time, tyre-wear limit, and new/used starting tyres.
+- Robust pace selection and visible evidence for lap, fuel, and tyre assumptions.
+- Candidate stint layouts with pit laps, fuel targets, tyre service, race-time breakdowns, and risk warnings.
+- Heuristic comparison for quick planning.
+- Monte Carlo comparison using 1,000, 5,000, or 10,000 seeded simulations.
+- Synthetic traffic and multi-class field assumptions with configurable traffic intensity, overtaking approach, pace spread, tyre impact, fuel impact, and pit variability.
+- Distribution outputs including mean, median, P5/P90, fastest probability, finish fuel, maximum tyre wear, traffic loss, and fuel/tyre risk.
+- Nominal pit instructions and a representative lap-by-lap fuel, tyre, and stint trace.
+
+The Monte Carlo model is a transparent planning tool, not a vehicle-dynamics or race-control simulator. Its probabilities are conditional on the selected session and user assumptions. See [Monte Carlo Race Simulation](docs/monte-carlo-simulation.md) for the model, equations, exclusions, and interpretation guidance.
 
 ![Pit-strategy visualization showing three stints, planned stop laps, fuel service, projected tyre life, and alternative live options](website/imgs/Screenshot%202026-06-22%20164509.png)
 
-*The pit-strategy view lays out the selected plan by stint and keeps alternative stop options visible.*
+#### Session Report
 
-### Lap Analysis And Driver Feedback
+The in-app report workspace can analyze the current recorded session or a selected native LMU session. Depending on available channels, it covers:
 
-Lap Analysis evaluates high-frequency telemetry from valid laps and keeps the underlying traces synchronized with its findings. It provides:
+- Session context, data coverage, lap pace, consistency, and sector performance.
+- Fuel consumption, range, stint length, and fuel-saving requirements.
+- Driver inputs, speed, RPM, gear use, and track-surface indicators.
+- Tyre wear, temperature, pressure, balance, and projected service needs.
+- Brake temperatures, ride-height/platform behavior, and environmental trends.
+- Detected events, pit-stop fuel and tyre changes, and engineering recommendations.
 
-- Best-valid and typical pace, consistency, and theoretical improvement summaries.
-- Corner-by-corner time-loss analysis across entry, rotation, apex, and exit phases.
-- Driver feedback tied to braking, steering, throttle, and minimum-speed behavior.
-- Setup-oriented diagnostics based on the telemetry channels available in the recording.
-- Validity and confidence indicators so incomplete or noisy samples remain visible rather than being silently treated as clean data.
+For imported historical sessions, the app can generate a downloadable deterministic PDF performance report. Reports support English or Italian, concise or detailed output, optional charts, driver anonymization, custom driver/team details, and notes. Previously generated reports can be downloaded, regenerated, or deleted from the application.
 
-![Lap-analysis report showing a session verdict, pace summary, consistency, available improvement, and corner-level time loss](website/imgs/Screenshot%202026-06-22%20164817.png)
+### Profile Mode
 
-*The session verdict highlights repeatable losses and points to the corner phase where time is being left behind.*
+Profile Mode works with the folder where LMU stores native telemetry databases.
 
-### Competitor Timing And Traffic Awareness
+#### User Profile
 
-Live competitor telemetry is used to provide:
+- Recursively discovers supported LMU database files in the selected folder.
+- Caches session metadata and lap summaries for fast repeated access.
+- Shows total sessions, laps, distance, driving time, class distribution, most-used cars, and most-driven tracks.
+- Tracks personal bests with validity and data-quality indicators.
+- Supports history revalidation and inspection of excluded or suspicious best-lap candidates.
 
-- Current-session standings and nearby-driver views.
-- Driver, car, class, position, lap count, and pit-state context when available.
-- Short- and medium-window pace comparisons.
-- Relative deltas to nearby cars for traffic and race-context awareness.
-- A circle-map view of competitor placement around the circuit.
+#### Session Review
 
-These views depend on the competitor fields exposed by the active LMU shared-memory session.
-
-### LMU Session Review And Career Profile
-
-The User Profile and Session Review tools read native LMU DuckDB telemetry without modifying the source files:
-
-- Career overview, total distance, distance by class, most-used cars, most-driven tracks, and personal best laps.
-- Session discovery and metadata caching from a user-selected LMU telemetry folder.
-- Lap summaries, pace, fuel use, tyres, brakes, ride heights, driver inputs, and recorded events.
-- Available-channel inspection so each review reflects what the source database actually contains.
-- Detailed telemetry charts loaded from raw DuckDB samples on demand and downsampled for display.
+- Opens native LMU databases read-only; source files are never modified.
+- Filters sessions by track, car, class, session type, and other discovered metadata.
+- Loads raw samples only when a session is selected and downsamples them for display.
+- Displays available-channel coverage alongside every review.
+- Reviews lap time, fuel, speed, RPM, inputs, tyres, brakes, ride height, sectors, flags, assists, GPS/G-force, and detailed tyre/brake channels when present.
+- Compares selected laps using GPS paths and progress-aligned delta segments when suitable position data exists.
 
 ![Read-only LMU DuckDB session review showing metadata, available channels, lap times, fuel use, speed, RPM, and driver inputs](website/imgs/Screenshot%202026-06-22%20160910.png)
 
-*Session Review keeps source metadata and channel availability alongside the engineering plots.*
+## Data Sources And Storage
 
-### MoTeC-Style CSV Analysis
+### Live Shared Memory
 
-The MoTeC Workspace imports large CSV telemetry exports for offline analysis. It supports:
+With mock mode disabled, the backend reads LMU through `pyLMUSharedMemory`. It reconnects when shared memory is temporarily unavailable and reports a disconnected state instead of terminating.
 
-- Persisted session summaries and channel discovery.
-- Derived channels and lap accumulation.
-- Lap comparison and engineering plots.
-- Fuel worksheets and strategy calculations.
-- Rule-based Race Engineer findings covering driving, setup, strategy, and stint behavior.
+The recorder pauses or finalizes a session when telemetry disconnects, the player is unavailable, the game enters a garage/menu/replay/paused state, or the car remains inactive outside the pits. It rotates sessions when the track, session type, or player vehicle changes, or when LMU resets its session clock or lap counter.
 
-### Local-First Storage And Background Recording
+### Native LMU DuckDB Sessions
 
-- Live telemetry is normalized, streamed to the UI, and recorded by the backend.
-- Session logging continues while the frontend is closed.
-- Live sessions and imported CSV summaries are stored locally.
-- Native LMU DuckDB files remain in the selected telemetry folder and are opened read-only.
-- Raw DuckDB telemetry is loaded only when needed for review charts.
-- The local data directory can be moved with `LMU_TELEMETRY_DATA_DIR`.
+The app scans the configured folder recursively for supported database files. It uses file path, size, and modification time to avoid reopening unchanged files. Session metadata and lap summaries are cached locally, while raw LMU samples stay in their original databases and are queried read-only on demand.
 
-## Runtime Model
+### Local Application Data
 
-Development runtime:
+Development data defaults to:
 
-- Backend: `http://127.0.0.1:8000`
-- Frontend dev server: `http://127.0.0.1:5173`
-- Vite proxies `/api` and `/ws` to the backend
+```text
+data/sessions/lmu_strategy.sqlite3
+data/performance-reports/
+data/logs/
+```
 
-The frontend does not need to be open for live logging. Logging happens in the backend telemetry loop.
+Packaged Windows data defaults to:
 
-## Development Setup
+```text
+%LOCALAPPDATA%\LMUTelemetry\
+```
+
+Override the data and log locations when needed:
+
+```text
+LMU_TELEMETRY_DATA_DIR=C:\path\to\data
+LMU_TELEMETRY_LOG_DIR=C:\path\to\logs
+```
+
+See [Data Handling](docs/data-handling.md) for recording frequency, session boundaries, cache behavior, and stored tables.
+
+## Development From Source
+
+This section is for contributors and developers. Regular users should install or run the prebuilt executable from the [download page](https://github.com/pavva94/LMUTelemetry/releases).
 
 ### Requirements
 
-- Python 3.11+
-- Node.js 18+
-- Le Mans Ultimate for live shared-memory mode
-- `pyLMUSharedMemory` for real LMU telemetry
+- Windows for real LMU shared-memory telemetry and packaged desktop builds.
+- Python 3.11 or newer.
+- Node.js 18 or newer.
+- Le Mans Ultimate and `pyLMUSharedMemory` for live telemetry.
+- Inno Setup 6 only when building the Windows installer.
 
 ### Backend
 
-From the project root:
+From the repository root:
 
 ```cmd
 cd backend
@@ -152,9 +182,11 @@ pip install -r requirements.txt
 python run_backend.py
 ```
 
-The backend runs on `http://127.0.0.1:8000`.
+The development backend listens on `http://127.0.0.1:8000`.
 
 ### Frontend
+
+In another terminal:
 
 ```cmd
 cd frontend
@@ -162,18 +194,18 @@ npm install
 npm run dev
 ```
 
-The frontend dev server runs on `http://127.0.0.1:5173`. If Vite chooses another port, use the URL shown in the terminal.
+Vite normally listens on `http://127.0.0.1:5173` and proxies `/api` and `/ws` to the backend.
 
-### Live LMU Shared Memory
+### Real And Mock Telemetry
 
-For development, install or keep `pyLMUSharedMemory` inside the backend folder:
+Development defaults to mock telemetry through `config/default_strategy.yaml`. To use real telemetry, place `pyLMUSharedMemory` inside the backend folder:
 
 ```cmd
 cd backend
 git clone https://github.com/TinyPedal/pyLMUSharedMemory.git pyLMUSharedMemory
 ```
 
-Run the backend with real LMU telemetry instead of mock data.
+Then start the backend with mock mode disabled.
 
 CMD:
 
@@ -193,112 +225,62 @@ $env:USE_MOCK_TELEMETRY="false"
 python run_backend.py
 ```
 
-If LMU shared memory is unavailable, the backend stays running and reports that live telemetry is disconnected.
+Closing only the Vite/browser frontend does not stop a separately running development backend, so collection continues until the backend process is stopped. This differs from the packaged desktop application, where the window owns the embedded backend lifecycle.
 
 ## Windows Release Builds
 
-The Windows packaging script builds both distributable formats:
+The release script builds and verifies three distributable artifacts:
 
-- Installer: `dist\LMUTelemetry-Setup-<version>.exe`
-- Portable archive: `dist\LMUTelemetry-Windows-Portable-<version>.zip`
-- Checksums: `dist\SHA256SUMS-<version>.txt`
-
-Requirements:
-
-- Python 3.11+ with backend dependencies installable from `backend\requirements.txt`
-- Node.js 18+
-- Inno Setup 6 available as `ISCC.exe` or installed in the default Program Files location
-
-From the project root, run:
-
-```cmd
-packaging\build_windows_installer.cmd
+```text
+dist\LMUTelemetry-Setup-<version>.exe
+dist\LMUTelemetry-Windows-Portable-<version>.zip
+dist\SHA256SUMS-<version>.txt
 ```
 
-PowerShell can call the script directly:
-
-```powershell
-.\packaging\build_windows_installer.ps1
-```
-
-To set the release version used in artifact names:
+From the project root:
 
 ```powershell
 .\packaging\build_windows_installer.ps1 -AppVersion 0.1.0
 ```
 
-For a faster rebuild when dependencies are already installed:
+Or use the command wrapper:
 
-```powershell
-.\packaging\build_windows_installer.ps1 -SkipDependencyInstall
+```cmd
+packaging\build_windows_installer.cmd
 ```
 
-The script runs the frontend tests and build by default, embeds the requested version in `LMUTelemetry.exe`, packages it with PyInstaller, smoke-tests the packaged app in an isolated temporary data directory, builds the Inno Setup installer, creates the portable zip, and writes SHA-256 checksums.
+Useful development switches include `-SkipDependencyInstall`, `-SkipFrontendTests`, `-SkipFrontendBuild`, and `-SkipSmokeTest`. A normal release build installs dependencies, runs frontend tests, compiles the frontend, bundles the Python application with PyInstaller, verifies required resources and shared-memory modules, smoke-tests the packaged app in an isolated data directory, builds the Inno Setup installer, creates the portable archive, and writes SHA-256 checksums.
 
-## Data Storage
+The GitHub Actions release workflow performs the same Windows build for release branches, version tags, and manual runs, and can publish the artifacts to GitHub Releases.
 
-Development currently stores local data under the repository:
+## API Overview
 
-```text
-data/sessions/lmu_strategy.sqlite3
-data/motec/
-```
+The FastAPI backend exposes REST endpoints and three live WebSocket streams. Main endpoint groups are:
 
-Native LMU DuckDB files stay in the user-selected LMU telemetry folder. The app stores only the configured folder path, session metadata, and lap/profile cache rows in its local SQLite database; raw DuckDB telemetry is read on demand and downsampled for review charts.
+- `/api/telemetry`, `/api/strategy`, `/api/recommendations`, and `/api/competitors` for live state.
+- `/api/session` and `/api/sessions` for locally recorded sessions and live lap analysis.
+- `/api/lmu-duckdb` for settings, asynchronous sync/review jobs, session discovery, review data, and trajectories.
+- `/api/profile` for career summaries, laps, personal bests, exclusions, and revalidation.
+- `/api/race-simulation` for saved-session Monte Carlo jobs and the experimental full-field endurance API.
+- `/api/performance-reports` for PDF generation, history, download, regeneration, and deletion.
+- `/ws/telemetry`, `/ws/strategy`, and `/ws/recommendations` for live updates.
 
-The data root can be overridden for development and diagnostics:
-
-```text
-LMU_TELEMETRY_DATA_DIR=C:\path\to\data
-```
-
-## API Highlights
-
-- `GET /api/health`
-- `GET /api/session/current`
-- `GET /api/sessions`
-- `GET /api/session/review`
-- `GET /api/session/review/{session_id}`
-- `GET /api/session/review/{session_id}/dashboard`
-- `POST /api/session/current/finalize`
-- `GET /api/profile/overview`
-- `GET /api/profile/summary`
-- `GET /api/profile/best-laps`
-- `GET /api/profile/laps`
-- `GET /api/lmu-duckdb/settings`
-- `POST /api/lmu-duckdb/settings`
-- `POST /api/lmu-duckdb/sync`
-- `GET /api/lmu-duckdb/sessions`
-- `GET /api/lmu-duckdb/sessions/{session_id}/review`
-- `GET /api/telemetry/latest`
-- `GET /api/strategy/current`
-- `GET /api/competitors`
-- `GET /api/recommendations/current`
-- `POST /api/strategy/assumptions`
-- `GET /api/motec/sessions`
-- `POST /api/motec/sessions/import`
-- `GET /api/motec/sessions/{session_id}`
-- `GET /api/motec/sessions/{session_id}/samples`
-- `WS /ws/telemetry`
-- `WS /ws/strategy`
-- `WS /ws/recommendations`
+When the backend is running, its generated OpenAPI documentation is available at `/docs`.
 
 ## Documentation
 
+- [Documentation Index](docs/README.md)
 - [Architecture](docs/architecture.md): runtime components, data flow, session rotation, API surface, and frontend routing.
-- [Data Handling](docs/data-handling.md): normalization, storage, caching, pause rules, saved reviews, CSV import, and sample decimation.
-- [Internationalization](docs/i18n.md): translation resources, language persistence, interpolation/plurals, and validation workflow.
-- [Live Strategy Calculations](docs/live-strategy-calculations.md): fuel, tyre, pace, stint, pit-window, competitor, and recommendation models.
-- [MoTeC / CSV Calculations](docs/motec-csv-calculations.md): channels, derived values, lap accumulation, fuel worksheets, and Race Engineer rules.
-- [Page And Graph Calculations](docs/page-and-graph-calculations.md): page-by-page formulas for live, review, race-prep, engineering, and MoTeC views.
+- [Data Handling](docs/data-handling.md): live normalization, storage, cache behavior, saved review data, and privacy.
+- [Strategy Engine](docs/strategy-engine.md): live strategy model and recommendation behavior.
+- [Live Strategy Calculations](docs/live-strategy-calculations.md): fuel, tyres, pace, stints, pit windows, competitors, and recommendations.
+- [Strategy Time Calculation](docs/strategy-time-calculation.md): race-time and pit-service accounting.
+- [Monte Carlo Race Simulation](docs/monte-carlo-simulation.md): stochastic model, parameters, risk definitions, outputs, and limitations.
+- [Page And Graph Calculations](docs/page-and-graph-calculations.md): page-by-page formulas and chart derivations.
+- [Internationalization](docs/i18n.md): translation resources, persistence, formatting, and validation.
+- [Numerical Validation Report](docs/numerical-validation-report.md): numerical checks and model validation notes.
 
 ## Development Checks
-
-Backend syntax check:
-
-```cmd
-python -m compileall backend\app
-```
 
 Backend tests:
 
@@ -307,34 +289,43 @@ cd backend
 pytest
 ```
 
-Frontend build:
+Backend syntax check:
 
 ```cmd
-cd frontend
-npm run build
+python -m compileall backend\app
 ```
 
-Frontend tests:
+Frontend tests and build:
 
 ```cmd
 cd frontend
 npm run test:run
+npm run i18n:validate
+npm run build
 ```
 
 ## Troubleshooting
 
 ### No Live Telemetry Is Detected
 
-Make sure LMU is running and shared memory is available. In development, make sure `USE_MOCK_TELEMETRY=false` and `pyLMUSharedMemory` is available under `backend/pyLMUSharedMemory` or on `PYTHONPATH`.
+Confirm that LMU is running in an active session. For source development, verify that `USE_MOCK_TELEMETRY=false` and that `backend/pyLMUSharedMemory` exists or the module is otherwise on `PYTHONPATH`. A disconnected collector should leave the backend running and waiting to reconnect.
 
-### The Frontend Loads But Data Is Stale
+### Native LMU Sessions Do Not Appear
 
-Restart the backend after backend code changes. The frontend may call API routes that only exist after the backend has restarted.
+Open **User Profile**, select the folder containing LMU telemetry databases, and choose **Save and sync**. The scan is recursive. Check that the folder exists and that the current Windows user can read it.
 
-### Tyres, Brakes, Or Ride Height Show `--`
+### A Chart Or Metric Shows `--`
 
-Those fields depend on LMU shared-memory wheel channels. New recordings store available wheel channels, but older sessions only contain the fields recorded at the time.
+LMU sessions do not always contain every channel. The app exposes discovered-channel coverage and leaves unsupported values unavailable. Older recordings also contain only the fields captured by the application version that created them.
 
-### SQLite Cannot Open The Database File
+### The Packaged Application Does Not Open
 
-Make sure the app can create and write to `data/sessions/` and `data/motec/`, or set `LMU_TELEMETRY_DATA_DIR` to a writable folder.
+The desktop shell requires the Microsoft Edge WebView2 runtime. Review `%LOCALAPPDATA%\LMUTelemetry\logs\launcher-error.log` and `backend.log` for startup details. Antivirus or Windows SmartScreen may also warn about unsigned early releases.
+
+### SQLite Cannot Open The Database
+
+Make sure the configured data directory is writable. Packaged builds normally use `%LOCALAPPDATA%\LMUTelemetry`; development uses the repository `data` folder unless `LMU_TELEMETRY_DATA_DIR` overrides it.
+
+## Disclaimer
+
+LMU Telemetry is an independent community project and is not affiliated with or endorsed by Studio 397 or Motorsport Games. Strategy outputs are estimates based on available telemetry and configured assumptions; validate them against event rules, current conditions, and in-game race control before use.
