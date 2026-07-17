@@ -138,11 +138,6 @@ const coachLiterals: Record<string, string> = {
   "No repeatable coaching opportunity clears the current confidence floor.": "Nessuna opportunita di coaching ripetibile supera la soglia di confidenza attuale.",
   "Show top eight": "Mostra le prime otto",
   "04 · Corner coach": "04 - Coach curva",
-  "Track position": "Posizione sul tracciato",
-  "Analyzed corner": "Curva analizzata",
-  "Highlighted section shows the exact lap-distance window used by Corner Coach.": "La sezione evidenziata mostra l'intervallo esatto di distanza giro usato dal Coach curva.",
-  "Lap direction": "Direzione giro",
-  "Start / finish line": "Linea partenza / arrivo",
   "Select a coaching finding to inspect the exact telemetry evidence.": "Seleziona un finding di coaching per ispezionare la prova telemetrica esatta.",
   "Seen": "Visto",
   "Do this": "Fai questo",
@@ -576,41 +571,6 @@ function OpportunityMap({ corners, selectedCorner, onSelect, language }: { corne
   );
 }
 
-const coachTrackPath = "M116 236 C73 190 75 116 128 76 C184 34 253 57 292 92 C330 126 352 87 397 62 C451 32 535 55 559 113 C578 159 548 190 505 194 C462 198 454 235 418 263 C374 298 318 270 282 246 C244 221 213 274 163 270 C143 268 127 255 116 236 Z";
-
-function CornerTrackMap({ finding, language }: { finding: CoachingFinding; language: Language }) {
-  const start = Math.max(0, Math.min(100, finding.start_pct));
-  const end = Math.max(0, Math.min(100, finding.end_pct));
-  const length = Math.max(1.5, end >= start ? end - start : 100 - start + end);
-  const title = `${coachText("Analyzed corner", language)} T${finding.corner_id}: ${start.toFixed(1)}-${end.toFixed(1)}%`;
-  return (
-    <figure className="coach-track-location" aria-labelledby="coach-track-location-title">
-      <div className="coach-track-copy">
-        <span>{coachText("Track position", language)}</span>
-        <strong id="coach-track-location-title">{coachText("Analyzed corner", language)} <b>T{finding.corner_id}</b></strong>
-        <p>{coachText("Highlighted section shows the exact lap-distance window used by Corner Coach.", language)}</p>
-        <div><em>{start.toFixed(1)}%</em><i aria-hidden="true" /><em>{end.toFixed(1)}%</em></div>
-      </div>
-      <svg viewBox="0 0 640 320" role="img" aria-label={title}>
-        <title>{title}</title>
-        <defs>
-          <pattern id="coach-track-grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="rgba(255,255,255,.045)" strokeWidth="1" /></pattern>
-          <filter id="coach-track-glow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter>
-          <marker id="coach-track-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M0 0L10 5L0 10Z" fill="#74818a" /></marker>
-        </defs>
-        <rect width="640" height="320" fill="url(#coach-track-grid)" />
-        <path d={coachTrackPath} fill="none" stroke="#202a31" strokeWidth="30" strokeLinejoin="round" strokeLinecap="round" />
-        <path d={coachTrackPath} fill="none" stroke="#0b1014" strokeWidth="18" strokeLinejoin="round" strokeLinecap="round" />
-        <path d={coachTrackPath} pathLength="100" fill="none" stroke="#f3b642" strokeWidth="18" strokeLinecap="round" strokeDasharray={`${length} ${100 - length}`} strokeDashoffset={-start} filter="url(#coach-track-glow)" />
-        <path d="M112 216C91 174 95 127 122 96" fill="none" stroke="#74818a" strokeWidth="2" strokeDasharray="5 7" markerEnd="url(#coach-track-arrow)" />
-        <g transform="translate(102 222) rotate(-28)"><rect x="-2" y="-18" width="5" height="36" fill="#f0eadc" /><rect x="3" y="-18" width="5" height="36" fill="#59656e" /></g>
-        <g className="coach-track-badge" transform="translate(320 160)"><circle r="42" /><text textAnchor="middle" y="-5">T{finding.corner_id}</text><text className="coach-track-badge-phase" textAnchor="middle" y="16">{coachText(finding.phase, language)}</text></g>
-      </svg>
-      <figcaption><span><i className="analyzed" />{coachText("Analyzed corner", language)}</span><span><i />{coachText("Lap direction", language)}</span><span><i className="line" />{coachText("Start / finish line", language)}</span></figcaption>
-    </figure>
-  );
-}
-
 function FindingList({ findings, activeId, onSelect, showAll, setShowAll, language }: { findings: CoachingFinding[]; activeId: string | null; onSelect: (finding: CoachingFinding) => void; showAll: boolean; setShowAll: (value: boolean) => void; language: Language }) {
   const visible = showAll ? findings : findings.slice(0, 8);
   return (
@@ -659,7 +619,6 @@ function FindingDetail({ finding, current, reference, language }: { finding: Coa
   return (
     <section className="coach-detail" aria-labelledby="finding-detail-title">
       <div className="coach-detail-title"><div><span>{coachText("04 · Corner coach", language)}</span><h2 id="finding-detail-title">{coachText(finding.title, language)}</h2><p>{coachText(finding.summary, language)}{finding.affected_lap_numbers?.length ? ` ${coachText(`Seen on laps ${finding.affected_lap_numbers.join(", ")}.`, language)}` : ""}</p></div><div className={`confidence-stamp ${finding.confidence.toLowerCase()}`}><strong>{coachText(finding.confidence, language)}</strong><span>{coachText(`${finding.confidence_score}% confidence`, language)}</span><small>{coachText(`${finding.affected_laps}/${finding.clean_laps} clean laps`, language)}</small></div></div>
-      <CornerTrackMap finding={finding} language={language} />
       <div className="coach-explanation">
         <div><span>{coachText("Seen", language)}</span><p>{coachText(finding.what_happened, language)}</p></div>
         <div className="coach-try"><span>{coachText("Do this", language)}</span><p>{coachText(finding.primary_action, language)}</p></div>

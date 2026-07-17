@@ -196,6 +196,8 @@ const italianLegacyText: Record<string, string> = {
   "Warnings": "Avvisi",
   "Last sync": "Ultima sincronizzazione",
   "Career Overview": "Panoramica Carriera",
+  "Career telemetry": "Telemetria carriera",
+  "Your driving history distilled into distance, activity, variety, and validated pace records.": "La tua cronologia di guida sintetizzata in distanza, attivita, varieta e record di passo validati.",
   "Sessions": "Sessioni",
   "saved": "salvate",
   "Detected laps": "Giri rilevati",
