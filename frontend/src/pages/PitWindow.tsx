@@ -191,8 +191,8 @@ function LiveStrategyTimeline({ plan, currentLap }: { plan?: StrategyCandidate; 
               <article className="stint-service" key={stint.stint}>
                 <header>
                   <div>
-                    <span className="label">Stint {stint.stint} Â· {stintLaps} laps</span>
-                    <strong>{stop ? `Pit stop ${index + 1} Â· Lap ${absoluteStopLap(currentLap, stop.lap)}` : "Finish"}</strong>
+                    <span className="label">Stint {stint.stint} · {stintLaps} laps</span>
+                    <strong>{stop ? `Pit stop ${index + 1} · Lap ${absoluteStopLap(currentLap, stop.lap)}` : "Finish"}</strong>
                   </div>
                   {stop && <span className="badge amber">{fmt(stop.stopTimeSeconds, 1, " s")} stop</span>}
                 </header>

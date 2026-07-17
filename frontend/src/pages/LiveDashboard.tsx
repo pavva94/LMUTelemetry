@@ -31,8 +31,8 @@ const carName = (car?: CompetitorState, fallback = "Car unavailable") => car?.ve
 const displayFlag = (t: (key: string) => string, value?: string | null) => {
   const label = String(value ?? "").trim();
   const numericFlags: Record<string, string | undefined> = {
-    "-1": undefined, "0": undefined, "1": "FCY pending", "2": "FCY Â· pits closed", "3": "FCY Â· lead lap may pit",
-    "4": "FCY Â· pits open", "5": "FCY Â· last lap", "6": "Green Â· resume", "7": "Race halted",
+    "-1": undefined, "0": undefined, "1": "FCY pending", "2": "FCY · pits closed", "3": "FCY · lead lap may pit",
+    "4": "FCY · pits open", "5": "FCY · last lap", "6": "Green · resume", "7": "Race halted",
   };
   Object.assign(numericFlags, {
     "1": t("liveDashboard.fcyPending"), "2": t("liveDashboard.fcyPitsClosed"), "3": t("liveDashboard.fcyLeadLapMayPit"),
@@ -225,7 +225,7 @@ function RaceHeader({ telemetry, connected, averageLap }: { telemetry: Telemetry
     <section className="live-hero">
       <div className="live-session-strip">
         <span className={`live-connection ${connected && telemetry?.connected ? "is-live" : "is-offline"}`}><i />{telemetry?.feed_paused ? t("common.paused") : connected && telemetry?.connected ? t("common.live") : t("common.reconnecting")}</span>
-        {(session?.track_name || session?.session_type) && <strong>{[session.track_name, session.session_type].filter(Boolean).join(" Â· ")}</strong>}
+        {(session?.track_name || session?.session_type) && <strong>{[session.track_name, session.session_type].filter(Boolean).join(" · ")}</strong>}
         {vehicle !== t("liveDashboard.carUnavailable") && <span className="session-car"><b>{vehicle}</b>{vehicleClass && <small>{vehicleClass}</small>}</span>}
         {playerCar?.driver_name && <span className="session-driver">{playerCar.driver_name}</span>}
         {finite(session?.time_remaining) && session.time_remaining > 0 && <span className="live-time-remaining"><Timer size={18} /><small>{t("telemetry.remaining")}</small><strong>{formatDuration(session.time_remaining)}</strong></span>}
@@ -429,6 +429,16 @@ function heatColour(value?: number) {
   return `hsl(${hue} 72% 48%)`;
 }
 
+function brakeHeatColour(value?: number) {
+  if (!finite(value)) return "#24313d";
+  if (value < 200) return "#2d78d6";
+  if (value < 400) return "#24a7c7";
+  if (value <= 600) return "#34a96b";
+  if (value <= 700) return "#e6b450";
+  if (value <= 800) return "#f28c3a";
+  return "#e65353";
+}
+
 function TyreCard({ player }: { player?: PlayerState }) {
   const t = useT();
   const tyres = player?.tyre_state;
@@ -440,7 +450,7 @@ function TyreCard({ player }: { player?: PlayerState }) {
       const zones = [temp?.left_c, temp?.center_c ?? temp?.carcass_c, temp?.right_c];
       const wear = tyres?.[`wear_${key}`] as number | undefined;
       const brakeTemp = player?.[brakeTempKeys[key]];
-      return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong>{finite(wear) && <span>{percent(wear)} {t("liveDashboard.life")}</span>}</header><div>{zones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div><footer><span>{t("telemetry.brake")}</span><strong>{finite(brakeTemp) ? `${Math.round(brakeTemp)}°C` : "--"}</strong></footer></div>;
+      return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong>{finite(wear) && <span>{percent(wear)} {t("liveDashboard.life")}</span>}</header><div>{zones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div><footer style={{ background: brakeHeatColour(brakeTemp) }}><span>{t("telemetry.brake")}</span><strong>{finite(brakeTemp) ? `${Math.round(brakeTemp)}°C` : "--"}</strong></footer></div>;
     })}<div className="car-spine"><i /><span>{t("liveDashboard.front")}</span></div></div> : <EmptyState label={t("liveDashboard.tyreTempsUnavailable")} compact />}
     {hasTyreData && <div className="heat-key"><span>{t("liveDashboard.cool")}</span><i /><span>{t("liveDashboard.hot")}</span></div>}
   </section>;
