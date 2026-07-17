@@ -1,5 +1,5 @@
 ﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CircleGauge, Flag, Fuel, Gauge, Thermometer } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CircleGauge, Flag, Fuel, Gauge, Timer, Thermometer } from "lucide-react";
 import {
   CartesianGrid,
   Legend,
@@ -20,6 +20,7 @@ import type { CompetitorState, PlayerState, TelemetrySnapshot, TyreState, TyreTe
 const tyreKeys = ["fl", "fr", "rl", "rr"] as const;
 const tyreLabels = { fl: "FL", fr: "FR", rl: "RL", rr: "RR" } as const;
 const tyreColours = { fl: "#55c7f7", fr: "#7bb7ff", rl: "#f3b642", rr: "#ff8c69" } as const;
+const brakeTempKeys = { fl: "brake_temp_fl", fr: "brake_temp_fr", rl: "brake_temp_rl", rr: "brake_temp_rr" } as const;
 
 const finite = (value?: number | null): value is number => value != null && Number.isFinite(value);
 const fmt = (value?: number | null, digits = 1, suffix = "") => finite(value) ? `${value.toFixed(digits)}${suffix}` : "--";
@@ -64,6 +65,8 @@ type LapSample = {
   frTemp?: number;
   rlTemp?: number;
   rrTemp?: number;
+  oilTemp?: number;
+  waterTemp?: number;
 };
 
 type PositionRow = { lap: number; [driver: string]: number };
@@ -166,6 +169,7 @@ function useLiveRaceHistory(telemetry: TelemetrySnapshot | null, strategy: Strat
           flWear: tyres?.wear_fl, frWear: tyres?.wear_fr, rlWear: tyres?.wear_rl, rrWear: tyres?.wear_rr,
           flTemp: representativeTemp(tyres?.temp_fl), frTemp: representativeTemp(tyres?.temp_fr),
           rlTemp: representativeTemp(tyres?.temp_rl), rrTemp: representativeTemp(tyres?.temp_rr),
+          oilTemp: player.engine_oil_temp, waterTemp: player.engine_water_temp,
         };
         setLaps((current) => [...current.filter((row) => row.lap !== completedLap), sample].sort((a, b) => a.lap - b.lap).slice(-40));
       }
@@ -192,6 +196,7 @@ function useLiveRaceHistory(telemetry: TelemetrySnapshot | null, strategy: Strat
     flWear: tyres?.wear_fl, frWear: tyres?.wear_fr, rlWear: tyres?.wear_rl, rrWear: tyres?.wear_rr,
     flTemp: representativeTemp(tyres?.temp_fl), frTemp: representativeTemp(tyres?.temp_fr),
     rlTemp: representativeTemp(tyres?.temp_rl), rrTemp: representativeTemp(tyres?.temp_rr),
+    oilTemp: player.engine_oil_temp, waterTemp: player.engine_water_temp,
   } : undefined;
   const livePosition: PositionRow | undefined = finite(currentLap) ? { lap: currentLap } : undefined;
   if (livePosition) telemetry?.competitors.forEach((car) => {
@@ -223,7 +228,7 @@ function RaceHeader({ telemetry, connected, averageLap }: { telemetry: Telemetry
         {(session?.track_name || session?.session_type) && <strong>{[session.track_name, session.session_type].filter(Boolean).join(" Â· ")}</strong>}
         {vehicle !== t("liveDashboard.carUnavailable") && <span className="session-car"><b>{vehicle}</b>{vehicleClass && <small>{vehicleClass}</small>}</span>}
         {playerCar?.driver_name && <span className="session-driver">{playerCar.driver_name}</span>}
-        {finite(session?.time_remaining) && session.time_remaining > 0 && <span>{formatDuration(session.time_remaining)} {t("telemetry.remaining").toLowerCase()}</span>}
+        {finite(session?.time_remaining) && session.time_remaining > 0 && <span className="live-time-remaining"><Timer size={18} /><small>{t("telemetry.remaining")}</small><strong>{formatDuration(session.time_remaining)}</strong></span>}
       </div>
       <div className="race-core-grid">
         <div className="race-position-block">
@@ -333,26 +338,57 @@ function paceDeltaText(value?: number) {
 function NearbyStandings({ mergedCars, paceHistory, telemetry }: { mergedCars: CompetitorState[]; paceHistory: OpponentPaceHistory; telemetry: TelemetrySnapshot | null }) {
   const t = useT();
   const sessionId = telemetry?.session_id;
-  const [gridMode, setGridMode] = useState<"nearby" | "full">(() => readStoredHistory(sessionId)?.gridMode || "nearby");
-  useEffect(() => setGridMode(readStoredHistory(sessionId)?.gridMode || "nearby"), [sessionId]);
-  const changeGridMode = (mode: "nearby" | "full") => {
+  const playerCar = mergedCars.find((car) => car.is_player);
+  const playerClass = playerCar?.vehicle_class?.trim();
+  const initialGridMode = readStoredHistory(sessionId)?.gridMode || "nearby";
+  const [gridMode, setGridMode] = useState<"nearby" | "full">(initialGridMode);
+  const [classFilter, setClassFilter] = useState(initialGridMode === "nearby" && playerClass ? playerClass : "all");
+  const classFilterManuallyChanged = useRef(false);
+  useEffect(() => {
+    const mode = readStoredHistory(sessionId)?.gridMode || "nearby";
+    classFilterManuallyChanged.current = false;
     setGridMode(mode);
+    setClassFilter(mode === "nearby" && playerClass ? playerClass : "all");
+  }, [sessionId]);
+  useEffect(() => {
+    if (!classFilterManuallyChanged.current) setClassFilter(gridMode === "nearby" && playerClass ? playerClass : "all");
+  }, [gridMode, playerClass]);
+  const changeGridMode = (mode: "nearby" | "full") => {
+    classFilterManuallyChanged.current = false;
+    setGridMode(mode);
+    setClassFilter(mode === "nearby" && playerClass ? playerClass : "all");
     updateStoredHistory(sessionId, { gridMode: mode });
   };
-  const playerCar = mergedCars.find((car) => car.is_player);
   const playerPace3 = rollingPace(paceHistory, playerCar, 3);
   const playerPace7 = rollingPace(paceHistory, playerCar, 7);
+  const classes = useMemo(() => [...new Set(mergedCars.map((car) => car.vehicle_class?.trim()).filter((value): value is string => Boolean(value)))].sort(), [mergedCars]);
+  const calculatedClassPositions = useMemo(() => {
+    const positions = new Map<number, number>();
+    const grouped = new Map<string, CompetitorState[]>();
+    mergedCars.forEach((car) => {
+      const className = car.vehicle_class?.trim().toLocaleLowerCase();
+      if (!className || !finite(car.position) || car.position < 1) return;
+      grouped.set(className, [...(grouped.get(className) || []), car]);
+    });
+    grouped.forEach((cars) => {
+      cars.sort((a, b) => (a.position as number) - (b.position as number)).forEach((car, index) => positions.set(car.vehicle_id, index + 1));
+    });
+    return positions;
+  }, [mergedCars]);
+  useEffect(() => {
+    if (classFilter !== "all" && !classes.includes(classFilter)) setClassFilter("all");
+  }, [classFilter, classes]);
   const rows = useMemo(() => {
-    const sorted = [...mergedCars].sort((a, b) => (a.position ?? 999) - (b.position ?? 999));
+    const sorted = mergedCars.filter((car) => classFilter === "all" || car.vehicle_class?.trim() === classFilter).sort((a, b) => (a.position ?? 999) - (b.position ?? 999));
     const playerIndex = sorted.findIndex((car) => car.is_player);
     if (gridMode === "full") return sorted;
     return playerIndex < 0 ? sorted.slice(0, 13) : sorted.slice(Math.max(0, playerIndex - 6), playerIndex + 7);
-  }, [gridMode, mergedCars]);
+  }, [classFilter, gridMode, mergedCars]);
   const currentLap = telemetry?.player?.lap_number ?? telemetry?.session?.current_lap;
   return (
     <section className="live-section nearby-card">
-      <div className="live-section-heading"><div><span>{t("liveDashboard.raceOrder")}</span><h2>{gridMode === "full" ? t("liveDashboard.fullGrid") : t("liveDashboard.nearbyDrivers")}</h2></div><div className="control-row"><button type="button" className={gridMode === "nearby" ? "active-control" : ""} onClick={() => changeGridMode("nearby")}>{t("liveDashboard.nearby")}</button><button type="button" className={gridMode === "full" ? "active-control" : ""} onClick={() => changeGridMode("full")}>{t("liveDashboard.fullGrid")}</button><small>{gridMode === "full" ? t("common.drivers", { count: rows.length }) : t("liveDashboard.upToSix")}</small></div></div>
-      {rows.length ? <div className="table-wrap"><table className="nearby-table"><thead><tr><th>{t("liveDashboard.pos")}</th><th>{t("liveDashboard.driverCar")}</th><th>{t("liveDashboard.laps")}</th><th>{t("liveDashboard.lastLap")}</th><th>{t("liveDashboard.fastestLap")}</th><th>{t("liveDashboard.threeLapPace")}</th><th>{t("liveDashboard.sevenLapPace")}</th><th>{t("liveDashboard.deltaThreeVsYou")}</th><th>{t("liveDashboard.deltaSevenVsYou")}</th><th>{t("liveDashboard.pit")}</th></tr></thead><tbody>{rows.map((car) => {
+      <div className="live-section-heading"><div><span>{t("liveDashboard.raceOrder")}</span><h2>{gridMode === "full" ? t("liveDashboard.fullGrid") : t("liveDashboard.nearbyDrivers")}</h2></div><div className="control-row">{classes.length > 0 && <label className="live-class-filter"><span>{t("liveDashboard.classFilter")}</span><select value={classFilter} onChange={(event) => { classFilterManuallyChanged.current = true; setClassFilter(event.target.value); }}><option value="all">{t("standings.allClasses")}</option>{classes.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>}<button type="button" className={gridMode === "nearby" ? "active-control" : ""} onClick={() => changeGridMode("nearby")}>{t("liveDashboard.nearby")}</button><button type="button" className={gridMode === "full" ? "active-control" : ""} onClick={() => changeGridMode("full")}>{t("liveDashboard.fullGrid")}</button><small>{gridMode === "full" ? t("common.drivers", { count: rows.length }) : t("liveDashboard.upToSix")}</small></div></div>
+      {rows.length ? <div className="table-wrap"><table className="nearby-table"><thead><tr><th>{t("liveDashboard.pos")}</th><th>{t("liveDashboard.classPos")}</th><th>{t("liveDashboard.driverCar")}</th>{classes.length > 0 && <th>{t("standings.class")}</th>}<th>{t("liveDashboard.laps")}</th><th>{t("liveDashboard.lastLap")}</th><th>{t("liveDashboard.fastestLap")}</th><th>{t("liveDashboard.threeLapPace")}</th><th>{t("liveDashboard.sevenLapPace")}</th><th>{t("liveDashboard.deltaThreeVsYou")}</th><th>{t("liveDashboard.deltaSevenVsYou")}</th><th>{t("liveDashboard.pit")}</th></tr></thead><tbody>{rows.map((car) => {
         const pace3 = rollingPace(paceHistory, car, 3);
         const pace7 = rollingPace(paceHistory, car, 7);
         const delta3 = !car.is_player && finite(pace3) && finite(playerPace3) ? pace3 - playerPace3 : undefined;
@@ -361,7 +397,9 @@ function NearbyStandings({ mergedCars, paceHistory, telemetry }: { mergedCars: C
         const recentlyPitted = finite(currentLap) && finite(car.last_pit_lap) && currentLap - car.last_pit_lap <= 2;
         return <tr key={car.vehicle_id} className={car.is_player ? "is-player" : ""}>
           <td><strong>P{car.position ?? "--"}</strong></td>
+          <td><strong>{calculatedClassPositions.has(car.vehicle_id) ? `P${calculatedClassPositions.get(car.vehicle_id)}` : "--"}</strong></td>
           <td className={driverPaceClass} title={finite(delta3) ? delta3 > 0 ? t("liveDashboard.gainingThree") : t("liveDashboard.losingThree") : t("liveDashboard.threeUnavailable")}><div className="driver-cell"><strong>{car.is_player ? t("common.you") : car.driver_name || `${t("standings.car")} ${car.vehicle_id}`}</strong><small>{carName(car, t("liveDashboard.carUnavailable"))}</small></div></td>
+          {classes.length > 0 && <td><span className="car-class-label">{car.vehicle_class?.trim() || "--"}</span></td>}
           <td>{car.total_laps ?? car.current_lap ?? "--"}</td>
           <td>{lapTime(car.last_lap_time)}</td>
           <td className="best-lap-column">{lapTime(car.best_lap_time)}</td>
@@ -391,17 +429,20 @@ function heatColour(value?: number) {
   return `hsl(${hue} 72% 48%)`;
 }
 
-function TyreCard({ tyres }: { tyres?: TyreState }) {
+function TyreCard({ player }: { player?: PlayerState }) {
   const t = useT();
-  const hasData = tyreKeys.some((key) => representativeTemp(tyres?.[`temp_${key}`]));
+  const tyres = player?.tyre_state;
+  const hasTyreData = tyreKeys.some((key) => finite(representativeTemp(tyres?.[`temp_${key}`])));
+  const hasBrakeData = tyreKeys.some((key) => finite(player?.[brakeTempKeys[key]]));
   return <section className="status-card tyre-card"><CardTitle icon={Thermometer} eyebrow={t("liveDashboard.condition")} title={t("liveDashboard.tyres")} />
-    {hasData ? <div className="vehicle-tyres">{tyreKeys.map((key) => {
+    {hasTyreData || hasBrakeData ? <div className="vehicle-tyres">{tyreKeys.map((key) => {
       const temp = tyres?.[`temp_${key}`] as TyreTemps | undefined;
       const zones = [temp?.left_c, temp?.center_c ?? temp?.carcass_c, temp?.right_c];
       const wear = tyres?.[`wear_${key}`] as number | undefined;
-      return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong>{finite(wear) && <span>{percent(wear)} {t("liveDashboard.life")}</span>}</header><div>{zones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div></div>;
+      const brakeTemp = player?.[brakeTempKeys[key]];
+      return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong>{finite(wear) && <span>{percent(wear)} {t("liveDashboard.life")}</span>}</header><div>{zones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div><footer><span>{t("telemetry.brake")}</span><strong>{finite(brakeTemp) ? `${Math.round(brakeTemp)}°C` : "--"}</strong></footer></div>;
     })}<div className="car-spine"><i /><span>{t("liveDashboard.front")}</span></div></div> : <EmptyState label={t("liveDashboard.tyreTempsUnavailable")} compact />}
-    <div className="heat-key"><span>{t("liveDashboard.cool")}</span><i /><span>{t("liveDashboard.hot")}</span></div>
+    {hasTyreData && <div className="heat-key"><span>{t("liveDashboard.cool")}</span><i /><span>{t("liveDashboard.hot")}</span></div>}
   </section>;
 }
 
@@ -460,7 +501,7 @@ function EmptyState({ label, compact = false }: { label: string; compact?: boole
 
 const TrendChart = memo(function TrendChart({ title, eyebrow, data, lines, averageLine, invert = false, formatter }: { title: string; eyebrow: string; data: Record<string, unknown>[]; lines: { key: string; label: string; colour: string }[]; averageLine?: number; invert?: boolean; formatter?: (value: number) => string }) {
   const t = useT();
-  return <section className="trend-card"><div className="live-section-heading"><div><span>{eyebrow}</span><h3>{title}</h3></div></div>{data.length > 0 ? <ResponsiveContainer width="100%" height={230}><LineChart data={data} margin={{ top: 6, right: 10, left: -12, bottom: 0 }}><CartesianGrid strokeDasharray="3 4" vertical={false} /><XAxis dataKey="lap" tickLine={false} /><YAxis reversed={invert} tickLine={false} tickFormatter={formatter} domain={["auto", "auto"]} /><Tooltip formatter={(value: number, name: string) => [formatter ? formatter(value) : fmt(value, 2), name]} /><Legend />{finite(averageLine) && <ReferenceLine y={averageLine} stroke="#edf4f8" strokeDasharray="5 5" label={t("liveDashboard.average")} />}{lines.map((line) => <Line key={line.key} type="monotone" dataKey={line.key} name={line.label} stroke={line.colour} strokeWidth={2.3} dot={{ r: 2 }} connectNulls />)}</LineChart></ResponsiveContainer> : <EmptyState label={t("common.waitingLiveTelemetry")} />}</section>;
+  return <section className="trend-card"><div className="live-section-heading"><div><span>{eyebrow}</span><h3>{title}</h3></div></div>{data.length > 0 ? <ResponsiveContainer width="100%" height={230}><LineChart data={data} margin={{ top: 6, right: 10, left: 4, bottom: 0 }}><CartesianGrid strokeDasharray="3 4" vertical={false} /><XAxis dataKey="lap" tickLine={false} /><YAxis width={72} tickMargin={8} reversed={invert} tickLine={false} tickFormatter={formatter} domain={["auto", "auto"]} /><Tooltip formatter={(value: number, name: string) => [formatter ? formatter(value) : fmt(value, 2), name]} /><Legend />{finite(averageLine) && <ReferenceLine y={averageLine} stroke="#edf4f8" strokeDasharray="5 5" label={t("liveDashboard.average")} />}{lines.map((line) => <Line key={line.key} type="monotone" dataKey={line.key} name={line.label} stroke={line.colour} strokeWidth={2.3} dot={{ r: 2 }} connectNulls />)}</LineChart></ResponsiveContainer> : <EmptyState label={t("common.waitingLiveTelemetry")} />}</section>;
 });
 
 function RacePositionChart({ positions, competitors }: { positions: PositionRow[]; competitors: CompetitorState[] }) {
@@ -473,7 +514,7 @@ function RacePositionChart({ positions, competitors }: { positions: PositionRow[
   const player = competitors.find((car) => car.is_player);
   const playerKey = drivers.find((key) => key.endsWith(`#${player?.vehicle_id}`));
   return <section className="trend-card position-chart"><div className="live-section-heading"><div><span>{t("liveDashboard.raceEvolution")}</span><h3>{t("liveDashboard.positionHistory")}</h3></div>{drivers.length > 1 && <select value={focus} onChange={(event) => setFocus(event.target.value)}><option value="player">{t("liveDashboard.focusCurrentDriver")}</option><option value="all">{t("liveDashboard.showAllDrivers")}</option>{drivers.map((driver) => <option value={driver} key={driver}>{driver.split("#")[0]}</option>)}</select>}</div>
-    {positions.length > 0 ? <ResponsiveContainer width="100%" height={310}><LineChart data={positions} margin={{ top: 8, right: 12, left: -12, bottom: 0 }}><CartesianGrid strokeDasharray="3 4" vertical={false} /><XAxis dataKey="lap" tickLine={false} /><YAxis reversed domain={[1, "dataMax"]} allowDecimals={false} tickLine={false} /><Tooltip /><Legend formatter={(value) => String(value).split("#")[0]} />{drivers.map((driver, index) => {
+    {positions.length > 0 ? <ResponsiveContainer width="100%" height={310}><LineChart data={positions} margin={{ top: 8, right: 12, left: 4, bottom: 0 }}><CartesianGrid strokeDasharray="3 4" vertical={false} /><XAxis dataKey="lap" tickLine={false} /><YAxis width={44} tickMargin={8} reversed domain={[1, "dataMax"]} allowDecimals={false} tickLine={false} /><Tooltip /><Legend formatter={(value) => String(value).split("#")[0]} />{drivers.map((driver, index) => {
       const selected = focus === "all" || focus === driver || (focus === "player" && driver === playerKey);
       return <Line key={driver} type="linear" dataKey={driver} name={driver.split("#")[0]} stroke={driver === playerKey ? "#f3b642" : `hsl(${(index * 47) % 360} 62% 62%)`} strokeWidth={driver === playerKey ? 3.5 : selected ? 2 : 1} strokeOpacity={selected ? 1 : .18} dot={false} connectNulls />;
     })}</LineChart></ResponsiveContainer> : <EmptyState label={t("liveDashboard.positionHistoryBuilds")} />}
@@ -489,6 +530,7 @@ function LiveGraphs({ laps, positions, competitors }: { laps: LapSample[]; posit
     <TrendChart eyebrow={t("liveDashboard.degradation")} title={t("liveDashboard.tyreCondition")} data={laps} lines={tyreKeys.map((key) => ({ key: `${key}Wear`, label: tyreLabels[key], colour: tyreColours[key] }))} formatter={(value) => `${Math.round(value * 100)}%`} />
     <TrendChart eyebrow={t("liveDashboard.pace")} title={t("liveDashboard.lapTimeTrend")} data={laps} lines={[{ key: "lapTime", label: t("telemetry.lap"), colour: "#f3b642" }]} formatter={(value) => formatRaceTime(value)} />
     <TrendChart eyebrow={t("liveDashboard.thermalState")} title={t("liveDashboard.tyreTemperatures")} data={laps} lines={tyreKeys.map((key) => ({ key: `${key}Temp`, label: tyreLabels[key], colour: tyreColours[key] }))} formatter={(value) => `${Math.round(value)}°`} />
+    <TrendChart eyebrow={t("liveDashboard.thermalState")} title={t("liveDashboard.engineTemperatures")} data={laps} lines={[{ key: "oilTemp", label: t("liveDashboard.oilTemperature"), colour: "#f3b642" }, { key: "waterTemp", label: t("liveDashboard.waterTemperature"), colour: "#55c7f7" }]} formatter={(value) => `${Math.round(value)}°C`} />
     <RacePositionChart positions={positions} competitors={competitors} />
   </div></section>;
 }
@@ -511,7 +553,7 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected, 
     <NearbyStandings mergedCars={mergedCompetitors} paceHistory={paceHistory} telemetry={telemetry} />
     <div className="live-status-row">
       <InputsCard player={telemetry?.player} />
-      <TyreCard tyres={telemetry?.player?.tyre_state} />
+      <TyreCard player={telemetry?.player} />
       <FuelCard telemetry={telemetry} strategy={strategy} />
       <AlertsCard telemetry={telemetry} recommendation={recommendation} />
     </div>

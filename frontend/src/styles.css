@@ -809,6 +809,10 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .nearby-table td.driver-pace-gain { background: rgba(45, 125, 83, .62); color: #e0ffed; box-shadow: inset 3px 0 0 var(--green); }
 .nearby-table td.driver-pace-loss { background: rgba(132, 48, 48, .62); color: #ffe2df; box-shadow: inset 3px 0 0 var(--red); }
 .nearby-table td.driver-pace-gain small, .nearby-table td.driver-pace-loss small { color: currentColor; opacity: .72; }
+.live-class-filter { display: grid; gap: 3px; min-width: 150px; }
+.live-class-filter span { color: var(--muted); font-size: 9px; font-weight: 950; text-transform: uppercase; letter-spacing: .08em; }
+.live-class-filter select { min-height: 32px; padding-block: 5px; }
+.car-class-label { display: inline-flex; padding: 3px 7px; border: 1px solid rgba(85,199,247,.3); border-radius: 5px; color: var(--cyan); background: rgba(85,199,247,.07); font-size: 10px; font-weight: 900; white-space: nowrap; }
 .gap-cell { color: var(--amber-2); font-weight: 900; font-variant-numeric: tabular-nums; }
 .pace-delta-cell { color: var(--text-soft); font-weight: 900; font-variant-numeric: tabular-nums; }
 .trend-pill, .pit-pill { display: inline-flex; align-items: center; gap: 4px; width: fit-content; padding: 3px 6px; border-radius: 5px; font-size: 10px; font-weight: 950; text-transform: uppercase; }
@@ -838,6 +842,9 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .visual-tyre header span { color: var(--muted); }
 .visual-tyre > div { display: grid; grid-template-columns: repeat(3,1fr); gap: 3px; min-height: 38px; padding: 4px; border-radius: 7px; background: #070b0e; }
 .visual-tyre > div span { display: grid; place-items: center; border-radius: 4px; color: white; font-size: 10px; font-weight: 950; text-shadow: 0 1px 3px #000; }
+.visual-tyre footer { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; padding: 4px 6px; border-left: 2px solid var(--red); border-radius: 4px; background: rgba(255,111,104,.07); }
+.visual-tyre footer span { color: var(--muted); font-size: 8px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
+.visual-tyre footer strong { color: #ffaaa5; font-size: 11px; font-variant-numeric: tabular-nums; }
 .car-spine { position: absolute; inset: 8px calc(50% - 18px); display: grid; place-items: center; border: 1px solid var(--border); border-radius: 50% 50% 28% 28%; background: #0a1015; }
 .car-spine i { width: 2px; height: 60%; background: var(--border-strong); }
 .car-spine span { position: absolute; top: 8px; color: var(--faint); font-size: 7px; writing-mode: vertical-rl; }
@@ -886,6 +893,10 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .live-session-strip .session-car b { color: var(--text); margin: 0; }
 .session-car small { color: var(--cyan); font-size: 9px; font-weight: 950; text-transform: uppercase; }
 .session-driver { color: var(--text-soft); }
+.live-time-remaining { display: grid; grid-template-columns: auto auto; align-items: center; gap: 0 8px; min-width: 150px; margin-left: auto; padding: 6px 12px; border: 1px solid rgba(243,182,66,.55); border-radius: 7px; background: linear-gradient(135deg, rgba(243,182,66,.16), rgba(243,182,66,.05)); box-shadow: inset 3px 0 0 var(--amber), 0 0 18px rgba(243,182,66,.08); }
+.live-time-remaining svg { grid-row: 1 / 3; color: var(--amber-2); }
+.live-time-remaining small { color: var(--muted); font-size: 8px; font-weight: 950; line-height: 1; text-transform: uppercase; letter-spacing: .11em; }
+.live-time-remaining strong { color: #fff; font-size: 19px; line-height: 1.05; font-variant-numeric: tabular-nums; }
 .race-core-grid { display: grid; grid-template-columns: minmax(250px,.95fr) minmax(350px,1.7fr) minmax(200px,1fr) minmax(130px,.62fr); min-height: 138px; }
 .race-core-grid > * { min-width: 0; border-right: 1px solid var(--border); }
 .race-core-grid > *:last-child { border-right: 0; }
@@ -956,11 +967,12 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
   .position-chart .live-section-heading { align-items: stretch; flex-direction: column; }
   .position-chart select { width: 100%; max-width: none; }
   .live-session-strip > strong { width: 100%; margin-right: 0; }
+  .live-time-remaining { width: 100%; margin-left: 0; }
   .session-car { padding-left: 0; border-left: 0; }
   .race-core-grid { grid-template-columns: 1fr 1fr; }
   .race-position-block, .race-flag-block, .compact-car-state { padding: 13px; }
   .compact-lap-now { grid-column: 1 / -1; grid-row: 1; }
-  .race-position-block { grid-row: 2; }
-  .race-flag-block { grid-row: 2; border-right: 0; }
-  .compact-car-state { grid-column: 1 / -1; grid-row: 3; }
+  .race-position-block { grid-column: 1 / -1; grid-row: 2; }
+  .race-flag-block { grid-column: 1 / -1; grid-row: 3; border-right: 0; }
+  .compact-car-state { grid-column: 1 / -1; grid-row: 4; }
 }

@@ -306,6 +306,7 @@ function CompetitorRows({ competitors, limit = 10, filter = "all", showGap = tru
 
 function BasicLineChart({ data, lines, xKey = "lap_number", height = 220 }: { data: Field[]; lines: Array<[string, string]>; xKey?: string; height?: number }) {
   const timeAxis = lines.some(([key]) => isRaceTimeField(key));
+  const singleSeriesKey = lines.length === 1 ? lines[0][0] : null;
   const xTimeAxis = isRaceTimeField(xKey);
   if (!data.length) return <EmptyState />;
   return (
@@ -313,7 +314,7 @@ function BasicLineChart({ data, lines, xKey = "lap_number", height = 220 }: { da
       <LineChart data={data}>
         <CartesianGrid stroke="#27313a" />
         <XAxis dataKey={xKey} stroke="#8896a3" tickFormatter={(value) => xTimeAxis ? chartLabelFormatter(value, xKey) : String(value)} />
-        <YAxis stroke="#8896a3" tickFormatter={(value) => timeAxis ? formatRaceTime(Number(value)) : String(value)} />
+        <YAxis stroke="#8896a3" tickFormatter={(value) => singleSeriesKey ? formatTelemetryValue(value, singleSeriesKey) : timeAxis ? formatRaceTime(Number(value)) : String(value)} />
         <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => xTimeAxis ? chartLabelFormatter(value, xKey) : String(value)} formatter={chartValueFormatter} />
         <Legend />
         {lines.map(([key, color]) => <Line key={key} dataKey={key} stroke={color} dot={false} connectNulls />)}
@@ -350,6 +351,28 @@ function averageLapDelta(rows: Field[], key: string) {
   const first = avgField(rows.slice(0, middle), key);
   const second = avgField(rows.slice(middle), key);
   return first != null && second != null ? second - first : null;
+}
+
+export function bestConsecutivePace(rows: Field[], windowSize: number) {
+  if (!Number.isInteger(windowSize) || windowSize < 1) return null;
+  const ordered = validPaceRows(rows)
+    .map((row) => ({ lap: Number(row.lap_number), time: Number(row.lap_time) }))
+    .filter((row) => Number.isInteger(row.lap) && row.lap > 0 && Number.isFinite(row.time))
+    .sort((a, b) => a.lap - b.lap);
+  let best: { average: number; startLap: number; endLap: number } | null = null;
+  for (let index = 0; index <= ordered.length - windowSize; index += 1) {
+    const window = ordered.slice(index, index + windowSize);
+    if (!window.every((row, offset) => row.lap === window[0].lap + offset)) continue;
+    const windowAverage = window.reduce((sum, row) => sum + row.time, 0) / windowSize;
+    if (!best || windowAverage < best.average) best = { average: windowAverage, startLap: window[0].lap, endLap: window[window.length - 1].lap };
+  }
+  return best;
+}
+
+function signedPaceDelta(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "--";
+  const sign = value > 0 ? "+" : value < 0 ? "−" : "±";
+  return `${sign}${Math.abs(value).toFixed(3)} s`;
 }
 
 function numericSampleFields(samples: Field[]) {
@@ -653,6 +676,8 @@ export function LapCompare({ telemetry }: EngineeringProps) {
   const fastestLapTime = minField(laps, "lap_time");
   const slowestLapTime = maxField(laps, "lap_time");
   const averageLapTime = avgField(laps, "lap_time");
+  const bestFiveLapPace = bestConsecutivePace(laps, 5);
+  const bestTenLapPace = bestConsecutivePace(laps, 10);
   const fastestLap = laps.find((lap) => Number(lap.lap_time) === fastestLapTime);
   const trend = averageLapDelta(laps, "lap_time");
   const fuelTrend = averageLapDelta(laps, "fuel_used");
@@ -683,6 +708,8 @@ export function LapCompare({ telemetry }: EngineeringProps) {
           <Metric label="Valid laps" value={laps.length || "--"} />
           <Metric label="Fastest" value={lapTime(fastestLapTime)} sub={fastestLap ? `Lap ${text(fastestLap.lap_number)}` : undefined} />
           <Metric label="Average" value={lapTime(averageLapTime)} />
+          <Metric label="Best 5-lap pace" value={lapTime(bestFiveLapPace?.average)} sub={bestFiveLapPace && averageLapTime != null ? `Laps ${bestFiveLapPace.startLap}–${bestFiveLapPace.endLap} · Δ ${signedPaceDelta(bestFiveLapPace.average - averageLapTime)} vs average` : "Needs 5 consecutive valid laps"} />
+          <Metric label="Best 10-lap pace" value={lapTime(bestTenLapPace?.average)} sub={bestTenLapPace && averageLapTime != null ? `Laps ${bestTenLapPace.startLap}–${bestTenLapPace.endLap} · Δ ${signedPaceDelta(bestTenLapPace.average - averageLapTime)} vs average` : "Needs 10 consecutive valid laps"} />
           <Metric label="Spread" value={fastestLapTime != null && slowestLapTime != null ? formatRaceTime(slowestLapTime - fastestLapTime) : "--"} />
           <Metric label="Avg fuel" value={fmt(avgField(laps, "fuel_used"), 2, " L")} />
           <Metric label="Top speed" value={fmt(maxField(laps, "top_speed"), 0, " km/h")} />
@@ -774,7 +801,9 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
       <section className="card span-12"><SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits come from telemetry pit entries, and returning to the main menu starts a new session." /><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<span className="muted">Stints split only on pit entry or a new session.</span></div></section>
       <section className="card span-3"><SectionTitle title="Summary" help="Condenses clean-lap stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Valid / detected laps" value={`${text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} / ${text(summary.detected_lap_count ?? summary.lap_count)}`} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Clean-lap fuel used" value={fmt(summary.fuel_used as number, 2, " L")} /></section>
       <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes eligible lap-to-lap wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Avg wear / valid lap" value={pct(summary.tyre_wear_delta as number)} /><Metric label="Model wear rate" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
-      <section className="card span-6"><SectionTitle title="Stint Comparison" help="Compares lap time, fuel use, and tyre change across the stint. Look for degradation trends after fuel load falls." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
+      <section className="card span-4"><SectionTitle title="Lap time" help="Shows lap-time evolution across the selected stint, isolated from fuel and tyre scales so pace changes are easier to read." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"]]} height={240} /></section>
+      <section className="card span-4"><SectionTitle title="Fuel used" help="Shows fuel consumed on each lap of the selected stint. Compare consistent laps to identify consumption changes or anomalous readings." /><BasicLineChart data={rows} lines={[["fuel_used", "#6dd6ff"]]} height={240} /></section>
+      <section className="card span-4"><SectionTitle title="Tyre wear delta" help="Shows the lap-to-lap tyre wear change for the selected stint, independently scaled to make degradation trends visible." /><BasicLineChart data={rows} lines={[["tyre_wear_delta", "#ff8c69"]]} height={240} /></section>
       <section className="card span-12"><SectionTitle title="Stint Lap Table" help="Shows every lap in the selected stint. Sort the story by lap time, fuel used, and events before changing setup assumptions." /><LapTable rows={rows} /></section>
     </div>
   );

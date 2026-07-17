@@ -220,6 +220,8 @@ const italianLegacyText: Record<string, string> = {
   "Layout": "Layout",
   "Class": "Classe",
   "Lap time": "Tempo giro",
+  "Best 5-lap pace": "Miglior passo su 5 giri",
+  "Best 10-lap pace": "Miglior passo su 10 giri",
   "Valid": "Valido",
   "Fuel": "Carburante",
   "Fuel used": "Carburante usato",

@@ -20,4 +20,22 @@ describe("stint summary arithmetic", () => {
     expect(stint.summary.average_lap).toBe(100.5);
     expect(stint.summary.tyre_wear_delta).toBeCloseTo(0.0175);
   });
+
+  it("finds the fastest pace window only across consecutive valid laps", async () => {
+    const { bestConsecutivePace } = await import("./RaceEngineeringPages");
+    const rows = [
+      { lap_number: 1, lap_time: 101, valid_lap: true },
+      { lap_number: 2, lap_time: 100, valid_lap: true },
+      { lap_number: 3, lap_time: 99, valid_lap: true },
+      { lap_number: 4, lap_time: 98, valid_lap: false },
+      { lap_number: 5, lap_time: 97, valid_lap: true },
+      { lap_number: 6, lap_time: 96, valid_lap: true },
+      { lap_number: 7, lap_time: 95, valid_lap: true },
+      { lap_number: 8, lap_time: 94, valid_lap: true },
+      { lap_number: 9, lap_time: 93, valid_lap: true },
+    ];
+
+    expect(bestConsecutivePace(rows, 5)).toEqual({ average: 95, startLap: 5, endLap: 9 });
+    expect(bestConsecutivePace(rows, 10)).toBeNull();
+  });
 });
