@@ -1,6 +1,6 @@
 import type { CompetitorState, TelemetrySnapshot } from "../types/telemetry";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
-import type { SavedSession, SessionDashboard, SessionReview } from "../types/session";
+import type { PerformanceReportConfiguration, PerformanceReportRecord, SavedSession, SessionDashboard, SessionReview } from "../types/session";
 import type { DuckdbJobStatus, LmuDuckdbScanResponse, LmuDuckdbSettings, LmuDuckdbSyncStatus } from "../types/lmuDuckdb";
 import type { LiveLapAnalysis } from "../types/liveLapAnalysis";
 import type { ProfileLap, ProfileLapResponse, ProfileOverview, ProfileSummary } from "../types/profile";
@@ -86,6 +86,13 @@ export const api = {
   startDuckdbReviewJob: (id: string, limit = REVIEW_SAMPLE_LIMIT) => postJson<DuckdbJobStatus>(`/api/lmu-duckdb/sessions/${encodeURIComponent(id)}/review-jobs?limit=${limit}`, {}),
   startDuckdbHistoryJob: (sessionIds: string[]) => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/history", { session_ids: sessionIds }),
   startProfileOverviewJob: () => postJson<DuckdbJobStatus>("/api/lmu-duckdb/jobs/profile-overview", {}),
+  startPerformanceReportJob: (sessionId: string, body: PerformanceReportConfiguration) => postJson<DuckdbJobStatus>(`/api/performance-reports/sessions/${encodeURIComponent(sessionId)}/jobs`, body as unknown as Record<string, unknown>),
+  performanceReports: (sessionId: string) => getJson<PerformanceReportRecord[]>(`/api/performance-reports/sessions/${encodeURIComponent(sessionId)}`),
+  performanceReportDownloadUrl: (reportId: string) => `${API_BASE}/api/performance-reports/${encodeURIComponent(reportId)}/download`,
+  deletePerformanceReport: async (reportId: string) => {
+    const response = await fetch(`${API_BASE}/api/performance-reports/${encodeURIComponent(reportId)}`, { method: "DELETE" });
+    if (!response.ok) throw new Error((await response.text()) || "Could not delete report");
+  },
   startRaceSimulationJob: (body: Record<string, unknown>) => postJson<DuckdbJobStatus>("/api/race-simulation/jobs", body),
   importRaceEvent: (sessionId: string) => getJson<Record<string, unknown>>(`/api/race-simulation/events/${encodeURIComponent(sessionId)}/import`),
   startFullFieldRaceJob: (body: Record<string, unknown>) => postJson<DuckdbJobStatus>("/api/race-simulation/full-field/jobs", body),

@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import lmu_duckdb_routes, profile_routes, race_simulation_routes, session_routes, strategy_routes, telemetry_routes, websocket_routes
+from app.api import lmu_duckdb_routes, performance_report_routes, profile_routes, race_simulation_routes, session_routes, strategy_routes, telemetry_routes, websocket_routes
 from app.core.config import get_settings
 from app.core.paths import frontend_dist_dir, log_dir
 from app.db.database import init_db
@@ -92,6 +92,7 @@ app.include_router(websocket_routes.router)
 app.include_router(lmu_duckdb_routes.router)
 app.include_router(profile_routes.router)
 app.include_router(race_simulation_routes.router)
+app.include_router(performance_report_routes.router)
 
 
 def _mount_packaged_frontend() -> None:

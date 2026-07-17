@@ -419,6 +419,35 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .report-toolbar { align-items: end; margin-bottom: 0; }
 .report-toolbar label { min-width: min(520px, 100%); flex: 1 1 360px; }
 .report-toolbar .badge { align-self: end; min-height: 38px; justify-content: center; text-transform: none; }
+.report-primary-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.report-modal-backdrop { position: fixed; inset: 0; z-index: 1200; background: rgba(3, 8, 13, .82); padding: 24px; overflow: auto; backdrop-filter: blur(6px); }
+.report-modal { width: min(1180px, 100%); margin: 0 auto; background: #111820; border: 1px solid #34414d; border-radius: 14px; box-shadow: 0 24px 80px rgba(0,0,0,.5); padding: 22px; }
+.report-modal > header { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px solid #27313a; padding-bottom: 14px; }
+.report-modal h2, .report-modal h3 { margin: 4px 0; }
+.report-modal header p { margin: 4px 0 0; color: #9dacb9; }
+.report-modal-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(250px, .8fr); gap: 20px; padding: 18px 0; }
+.report-options { display: grid; gap: 14px; }
+.report-detected { display: grid; gap: 3px; padding: 12px 14px; background: #17222c; border-left: 3px solid #6dd6ff; }
+.report-detected span, .report-detected small { color: #9dacb9; }
+.form-grid.two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.form-grid.two label, .report-options > label { display: grid; gap: 6px; }
+.report-options textarea { resize: vertical; min-height: 72px; }
+.toggle-row { display: flex; gap: 18px; flex-wrap: wrap; }
+.toggle-row label { display: flex; align-items: center; gap: 8px; }
+.report-preview { background: #0d141a; border: 1px solid #27313a; border-radius: 10px; padding: 16px; }
+.report-preview ol { margin: 14px 0; padding-left: 22px; display: grid; gap: 9px; }
+.report-preview p { color: #9dacb9; font-size: .86rem; }
+.report-progress { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(160px, 320px) auto; align-items: center; gap: 12px; padding: 12px 14px; background: #17222c; border-radius: 8px; }
+.report-progress > div { display: grid; gap: 3px; }
+.report-progress span { color: #9dacb9; font-size: .85rem; }
+.report-progress progress { width: 100%; }
+.report-progress.error { border: 1px solid #a64646; background: #2b1719; }
+.report-modal-actions { display: flex; justify-content: flex-end; gap: 10px; padding: 14px 0; border-bottom: 1px solid #27313a; }
+.report-history { padding-top: 14px; }
+.compact-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.compact-actions button, .button-link { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: .78rem; padding: 6px 8px; }
+.button-link { border: 1px solid #34414d; border-radius: 6px; color: #d7e4ed; text-decoration: none; }
+@media (max-width: 800px) { .report-modal-backdrop { padding: 8px; } .report-modal-grid, .form-grid.two { grid-template-columns: 1fr; } .report-progress { grid-template-columns: 1fr auto; } .report-progress > div { grid-column: 1 / -1; } }
 .engineering-finding-list { display: grid; gap: 8px; margin-bottom: 12px; }
 .engineering-finding-list p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; margin: 0; padding: 9px; border: 1px solid var(--border); border-radius: 6px; background: #0b1117; color: var(--text); line-height: 1.35; }
 .engineering-finding-list .badge { flex: 0 0 auto; }
@@ -769,7 +798,7 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .live-section-heading h3 { font-size: 16px; }
 .live-section-heading small { color: var(--muted); }
 .nearby-card { border-color: rgba(85,199,247,.3); }
-.nearby-table { min-width: 1080px; font-size: 12px; }
+.nearby-table { min-width: 1280px; font-size: 12px; }
 .nearby-table th, .nearby-table td { padding: 7px 9px; }
 .nearby-table tbody tr { transition: background .15s ease; }
 .nearby-table tbody tr:hover td { background: rgba(85,199,247,.05); }
