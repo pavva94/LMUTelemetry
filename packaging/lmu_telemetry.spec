@@ -36,6 +36,7 @@ hiddenimports = [
     "pyLMUSharedMemory",
     "pyLMUSharedMemory.lmu_data",
     "pyLMUSharedMemory.lmu_mmap",
+    *collect_submodules("numpy._core"),
     *collect_submodules("webview"),
 ]
 

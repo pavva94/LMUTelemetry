@@ -212,8 +212,10 @@ try {
             try {
                 $env:LMU_TELEMETRY_DATA_DIR = $SmokeData
                 $env:LMU_TELEMETRY_LOG_DIR = Join-Path $SmokeData "logs"
-                & $AppExe --smoke-test
-                Assert-NativeSuccess "Packaged application smoke test"
+                $smokeProcess = Start-Process -FilePath $AppExe -ArgumentList "--smoke-test" -Wait -PassThru -WindowStyle Hidden
+                if ($smokeProcess.ExitCode -ne 0) {
+                    throw "Packaged application smoke test failed with exit code $($smokeProcess.ExitCode)."
+                }
             }
             finally {
                 $env:LMU_TELEMETRY_DATA_DIR = $PreviousDataDir
