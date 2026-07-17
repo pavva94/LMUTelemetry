@@ -233,7 +233,7 @@ For a faster rebuild when dependencies are already installed:
 .\packaging\build_windows_installer.ps1 -SkipDependencyInstall
 ```
 
-The script runs the frontend tests and build by default, packages `LMUTelemetry.exe` with PyInstaller, smoke-tests the packaged app, builds the Inno Setup installer, creates the portable zip, and writes SHA-256 checksums.
+The script runs the frontend tests and build by default, embeds the requested version in `LMUTelemetry.exe`, packages it with PyInstaller, smoke-tests the packaged app in an isolated temporary data directory, builds the Inno Setup installer, creates the portable zip, and writes SHA-256 checksums.
 
 ## Data Storage
 

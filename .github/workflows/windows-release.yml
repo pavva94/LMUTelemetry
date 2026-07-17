@@ -35,6 +35,8 @@ jobs:
   build-windows-release:
     name: Build Windows release
     runs-on: windows-latest
+    env:
+      PY_LMU_SHARED_MEMORY_REF: fe089343ff6bdce3531c48bf2c24dbdcbc0ceed3
 
     steps:
       - name: Check out repository
@@ -102,8 +104,12 @@ jobs:
         shell: powershell
         run: |
           if (-not (Test-Path "backend\pyLMUSharedMemory")) {
-            git clone --depth 1 https://github.com/TinyPedal/pyLMUSharedMemory.git backend\pyLMUSharedMemory
+            New-Item -ItemType Directory -Path "backend\pyLMUSharedMemory" | Out-Null
+            git -C backend\pyLMUSharedMemory init
+            git -C backend\pyLMUSharedMemory remote add origin https://github.com/TinyPedal/pyLMUSharedMemory.git
           }
+          git -C backend\pyLMUSharedMemory fetch --depth 1 origin $env:PY_LMU_SHARED_MEMORY_REF
+          git -C backend\pyLMUSharedMemory checkout --detach $env:PY_LMU_SHARED_MEMORY_REF
 
       - name: Build Windows artifacts
         shell: powershell
