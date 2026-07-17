@@ -31,7 +31,7 @@ SetupIconFile=assets\app-icon.ico
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} Installer
 VersionInfoProductName={#MyAppName}
-VersionInfoProductVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppFileVersion}
 VersionInfoVersion={#MyAppFileVersion}
 
 [Languages]
