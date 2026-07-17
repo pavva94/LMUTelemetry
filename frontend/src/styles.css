@@ -420,6 +420,11 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .report-toolbar label { min-width: min(520px, 100%); flex: 1 1 360px; }
 .report-toolbar .badge { align-self: end; min-height: 38px; justify-content: center; text-transform: none; }
 .report-primary-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.report-section { display: grid; gap: 14px; margin-top: 8px; padding-top: 8px; }
+.report-section-heading { position: relative; display: grid; grid-template-columns: 46px minmax(0,1fr); gap: 14px; align-items: center; min-height: 76px; padding: 14px 18px; border: 1px solid var(--border-strong); border-left: 3px solid var(--amber); border-radius: var(--radius); background: linear-gradient(90deg, rgba(243,182,66,.09), rgba(15,23,30,.78) 42%, rgba(15,23,30,.52)); overflow: hidden; }
+.report-section-heading::after { content: ""; position: absolute; right: -45px; top: 50%; width: 210px; height: 1px; background: linear-gradient(90deg, transparent, rgba(243,182,66,.38), transparent); transform: rotate(-18deg); }
+.report-section-heading > span { color: var(--amber); font-size: 12px; font-weight: 950; letter-spacing: .14em; }.report-section-heading > div { min-width: 0; }.report-section-heading h2 { margin: 0; color: var(--text); font-size: clamp(20px,2.2vw,30px); line-height: 1; letter-spacing: -.025em; }.report-section-heading p { max-width: 760px; margin: 7px 0 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+.report-section-grid { display: grid; grid-template-columns: repeat(12,minmax(0,1fr)); gap: 14px; align-items: start; }
 .report-modal-backdrop { position: fixed; inset: 0; z-index: 1200; background: rgba(3, 8, 13, .82); padding: 24px; overflow: auto; backdrop-filter: blur(6px); }
 .report-modal { width: min(1180px, 100%); margin: 0 auto; background: #111820; border: 1px solid #34414d; border-radius: 14px; box-shadow: 0 24px 80px rgba(0,0,0,.5); padding: 22px; }
 .report-modal > header { display: flex; justify-content: space-between; gap: 20px; border-bottom: 1px solid #27313a; padding-bottom: 14px; }
@@ -447,7 +452,7 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .compact-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .compact-actions button, .button-link { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; font-size: .78rem; padding: 6px 8px; }
 .button-link { border: 1px solid #34414d; border-radius: 6px; color: #d7e4ed; text-decoration: none; }
-@media (max-width: 800px) { .report-modal-backdrop { padding: 8px; } .report-modal-grid, .form-grid.two { grid-template-columns: 1fr; } .report-progress { grid-template-columns: 1fr auto; } .report-progress > div { grid-column: 1 / -1; } }
+@media (max-width: 800px) { .report-section { gap: 10px; }.report-section-grid { gap: 10px; }.report-section-heading { grid-template-columns: 34px minmax(0,1fr); padding: 12px; }.report-modal-backdrop { padding: 8px; } .report-modal-grid, .form-grid.two { grid-template-columns: 1fr; } .report-progress { grid-template-columns: 1fr auto; } .report-progress > div { grid-column: 1 / -1; } }
 .engineering-finding-list { display: grid; gap: 8px; margin-bottom: 12px; }
 .engineering-finding-list p { display: flex; flex-wrap: wrap; align-items: baseline; gap: 7px; margin: 0; padding: 9px; border: 1px solid var(--border); border-radius: 6px; background: #0b1117; color: var(--text); line-height: 1.35; }
 .engineering-finding-list .badge { flex: 0 0 auto; }

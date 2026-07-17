@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
@@ -59,6 +59,19 @@ function SessionChart({ data, xKey, lines, height = 260 }: { data: Array<Record<
 
 function ChannelBadges({ labels }: { labels: string[] }) {
   return labels.length ? <div className="control-row">{labels.map((label) => <span className="badge blue" key={label}>{label}</span>)}</div> : <span className="muted">No channel groups detected.</span>;
+}
+
+function ReportSection({ number, title, description, children }: { number: string; title: string; description: string; children: ReactNode }) {
+  const id = `report-section-${number}`;
+  return (
+    <section className="report-section span-12" aria-labelledby={id}>
+      <header className="report-section-heading">
+        <span>{number}</span>
+        <div><h2 id={id}>{title}</h2><p>{description}</p></div>
+      </header>
+      <div className="report-section-grid">{children}</div>
+    </section>
+  );
 }
 
 export function RacePrepReport({ strategy }: Props) {
@@ -150,17 +163,14 @@ export function RacePrepReport({ strategy }: Props) {
         <section className="card span-12"><EmptyState detail="Report appears once a live or synced saved session can be loaded." /></section>
       ) : (
         <>
-          <SessionOverview report={report} />
-          <LapAnalysis report={report} />
-          <FuelAnalysis report={report} />
-          <DriverInputs report={report} />
-          <PowertrainAndSurface report={report} />
-          <TyreWear report={report} />
-          <TyreTempPressure report={report} />
-          <BrakePlatform report={report} />
-          <EnvironmentEvents report={report} />
-          <BestAndSector report={report} />
-          <EngineeringSummary report={report} />
+          <ReportSection number="01" title="Overview" description="Session identity, coverage, headline pace, distance, and conditions."><SessionOverview report={report} /></ReportSection>
+          <ReportSection number="02" title="Laps & Sectors" description="Lap progression, consistency, top speed, markers, sectors, and theoretical potential."><LapAnalysis report={report} /><BestAndSector report={report} /></ReportSection>
+          <ReportSection number="03" title="Fuel & Stints" description="Fuel consumption, stint structure, race range, and observed stop requirements."><FuelAnalysis report={report} /></ReportSection>
+          <ReportSection number="04" title="Driver & Vehicle" description="Driver inputs, acceleration loads, powertrain temperatures, speed, and surface contact."><DriverInputs report={report} /><PowertrainAndSurface report={report} /></ReportSection>
+          <ReportSection number="05" title="Tyres" description="Wear, temperature, pressure, balance, and degradation evidence for all four tyres."><TyreWear report={report} /><TyreTempPressure report={report} /></ReportSection>
+          <ReportSection number="06" title="Brakes & Platform" description="Brake temperatures and ride-height behavior across the session."><BrakePlatform report={report} /></ReportSection>
+          <ReportSection number="07" title="Conditions & Events" description="Ambient and track conditions alongside pits and recommendation events."><EnvironmentEvents report={report} /></ReportSection>
+          <ReportSection number="08" title="Engineering Summary" description="Evidence-backed findings and the recommended direction for the next session."><EngineeringSummary report={report} /></ReportSection>
         </>
       )}
     </div>
