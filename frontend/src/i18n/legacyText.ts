@@ -1,6 +1,8 @@
 import type { Language } from "./resources";
 
 const italianLegacyText: Record<string, string> = {
+  "Pace Records": "Giri veloci",
+  "Validated personal records for every session type, circuit, layout, and exact car combination.": "Record personali convalidati per ogni tipo di sessione, circuito, configurazione e specifica combinazione di auto.",
   "Peak combined G": "Picco G combinato",
   "Sector": "Settore",
   "Selected": "Selezionato",
@@ -398,6 +400,64 @@ const italianLegacyText: Record<string, string> = {
   "No pit or recommendation events are stored for this session.": "Nessun evento box o raccomandazione salvato per questa sessione.",
   "Engineering Summary": "Riepilogo Ingegneristico",
   "Turns the session evidence into next-session strategy and setup recommendations.": "Trasforma l'evidenza della sessione in raccomandazioni strategiche e setup per la prossima sessione.",
+  "Race strategy review": "Revisione strategia gara",
+  "Session purpose": "Obiettivo sessione",
+  "Pace profile": "Profilo del passo",
+  "Fuel variability": "Variabilita carburante",
+  "Tyre wear balance": "Bilanciamento usura gomme",
+  "Setup change candidates": "Possibili modifiche al setup",
+  "Tyre temperature split": "Differenza temperature gomme",
+  "Brake temperature spread": "Differenza temperature freni",
+  "Brake data coverage": "Copertura dati freni",
+  "Platform data coverage": "Copertura dati piattaforma",
+  "Stint degradation": "Degrado tra stint",
+  "Tyre strategy": "Strategia gomme",
+  "Missing channel groups": "Gruppi di canali mancanti",
+  "info": "info",
+  "warning": "attenzione",
+  "critical": "critico",
+  "high": "alta",
+  "medium": "media",
+  "low": "bassa",
+  "unknown": "sconosciuta",
+  "improving": "in miglioramento",
+  "degrading": "in calo",
+  "stable": "stabile",
+  "unavailable": "non disponibile",
+  "Front-left": "Anteriore sinistra",
+  "Front-right": "Anteriore destra",
+  "Rear-left": "Posteriore sinistra",
+  "Rear-right": "Posteriore destra",
+  "Fuel per lap unavailable": "Carburante per giro non disponibile",
+  "Fuel strategy cannot be audited until tank capacity and fuel consumption are both available.": "La strategia carburante non puo essere verificata finche non sono disponibili capacita serbatoio e consumo.",
+  "The race used more stops than the fuel model suggests. Review whether traffic, tyre loss, damage, or safety-car timing justified the extra stop.": "La gara ha usato piu soste di quelle suggerite dal modello carburante. Verifica se traffico, usura gomme, danni o safety car hanno giustificato la sosta aggiuntiva.",
+  "The race used fewer stops than the model suggests. Keep this strategy only if the fuel margin and tyre degradation graphs support the longer stint.": "La gara ha usato meno soste di quelle suggerite dal modello. Mantieni questa strategia solo se margine carburante e grafici degrado gomme supportano lo stint piu lungo.",
+  "Observed stop count matches the fuel model; strategy changes should come from tyre degradation, traffic, or pace loss rather than fuel count.": "Il numero di soste osservato coincide con il modello carburante; le modifiche strategiche devono dipendere da degrado gomme, traffico o perdita di passo, non dal numero di soste.",
+  "Treat this as a setup and run-quality report. Race strategy suggestions are limited because no completed race context is present.": "Consideralo un report su setup e qualita del run. I suggerimenti strategici sono limitati perche manca il contesto di una gara completata.",
+  "Lap times got slower across the run, so compare late-stint tyres, fuel saving, and traffic before using the average pace as the target.": "I tempi sono peggiorati durante il run: confronta gomme a fine stint, risparmio carburante e traffico prima di usare il passo medio come obiettivo.",
+  "Lap times improved across the run, which suggests the best reference pace may be late-run rather than whole-session average.": "I tempi sono migliorati durante il run; il riferimento migliore potrebbe quindi essere il passo finale invece della media sessione.",
+  "Pace is stable enough to use the median and average as useful references.": "Il passo e abbastanza stabile da usare mediana e media come riferimenti utili.",
+  "Fuel use moved enough to affect stint planning. Check throttle time, traffic, lift-and-coast, and push laps.": "Il consumo e variato abbastanza da influire sulla pianificazione stint. Controlla tempo a pieno gas, traffico, lift-and-coast e giri push.",
+  "Fuel use is consistent enough for the current race estimate.": "Il consumo e abbastanza costante per la stima gara attuale.",
+  "Rear wear is leading front wear.": "L'usura posteriore e superiore a quella anteriore.",
+  "Front wear is leading rear wear.": "L'usura anteriore e superiore a quella posteriore.",
+  "Right-side wear is leading left-side wear.": "L'usura del lato destro e superiore a quella del lato sinistro.",
+  "Left-side wear is leading right-side wear.": "L'usura del lato sinistro e superiore a quella del lato destro.",
+  "Wear is broadly balanced across the car.": "L'usura e complessivamente bilanciata sulla vettura.",
+  "Prioritize the largest repeatable tyre/brake/platform imbalance before changing the baseline setup.": "Dai priorita allo sbilanciamento ripetibile maggiore tra gomme, freni e piattaforma prima di modificare il setup base.",
+  "Use the tyre temperature graph to see whether the split is persistent or only a short phase of the run.": "Usa il grafico temperature gomme per verificare se la differenza e persistente o limitata a una breve fase del run.",
+  "Brake temperatures are uneven enough to justify checking lockups, bias, ducting, and track-side loading.": "Le temperature freni sono abbastanza irregolari da richiedere un controllo di bloccaggi, bias, condotti e carico laterale della pista.",
+  "Brake temperatures are not showing a large corner-to-corner split.": "Le temperature freni non mostrano grandi differenze tra le ruote.",
+  "Brake temperature channels unavailable": "Canali temperatura freni non disponibili",
+  "Brake graphs stay hidden until the selected session includes brake temperature channels.": "I grafici freni restano nascosti finche la sessione selezionata non include i canali temperatura freni.",
+  "Ride-height channels available": "Canali altezza da terra disponibili",
+  "Ride-height channels unavailable": "Canali altezza da terra non disponibili",
+  "Ride-height graphs can be used to connect platform movement to speed, braking, and tyre behavior.": "I grafici altezza da terra possono collegare il movimento piattaforma a velocita, frenata e comportamento gomme.",
+  "Platform analysis needs ride-height channels in the selected recording.": "L'analisi piattaforma richiede i canali altezza da terra nella registrazione selezionata.",
+  "Later stints are slower on average. Compare fuel load, tyres, and traffic before changing the baseline pace.": "Gli stint successivi sono mediamente piu lenti. Confronta carico carburante, gomme e traffico prima di modificare il passo base.",
+  "Stint averages are close enough that there is no major stint-to-stint pace drop.": "Le medie stint sono abbastanza vicine e non mostrano un calo importante tra uno stint e l'altro.",
+  "Use the stint and tyre graphs to decide whether the next race should change tyres earlier, run partial changes, or extend the set.": "Usa i grafici stint e gomme per decidere se nella prossima gara cambiare prima, fare cambi parziali o prolungare il set.",
+  "Unavailable groups are intentionally shown as empty states so the report does not invent engineering conclusions.": "I gruppi non disponibili sono mostrati intenzionalmente vuoti, cosi il report non inventa conclusioni ingegneristiche.",
   "Representative pace": "Passo rappresentativo",
   "Fuel stops": "Stop carburante",
   "Model stint length": "Lunghezza stint modello",
@@ -427,6 +487,19 @@ const originalAttributes = new WeakMap<Element, Map<string, string>>();
 const translatedTexts = new Set(Object.values(italianLegacyText));
 
 const italianPatterns: Array<[RegExp, (match: RegExpMatchArray) => string]> = [
+  [/^(\d+) pit events; fuel model incomplete$/, (match) => `${match[1]} eventi pit; modello carburante incompleto`],
+  [/^(\d+) pit events; model suggests (\d+) fuel stops?$/, (match) => `${match[1]} eventi pit; il modello suggerisce ${match[2]} soste carburante`],
+  [/^Trend (.+); consistency (.+)$/, (match) => `Trend ${translateLiteral(match[1], "it")}; costanza ${translateLiteral(match[2], "it")}`],
+  [/^Spread (.+) L\/lap$/, (match) => `Dispersione ${match[1]} L/giro`],
+  [/^F\/R (.+); R\/L (.+)$/, (match) => `Post\/Ant ${match[1]}; Des\/Sin ${match[2]}`],
+  [/^Hottest (.+); coldest (.+)$/, (match) => `Piu calda ${translateLiteral(match[1], "it")}; piu fredda ${translateLiteral(match[2], "it")}`],
+  [/^Spread (.+) C$/, (match) => `Differenza ${match[1]} C`],
+  [/^Last stint average (.+) vs first stint$/, (match) => `Media ultimo stint ${match[1]} rispetto al primo`],
+  [/^(front-left|front-right|rear-left|rear-right) has the highest wear\. (.+)$/, (match) => `${translateLiteral(match[1], "it")} ha l'usura maggiore. ${translateLiteral(match[2], "it")}`],
+  [/^(\d+) set shortage$/, (match) => `mancano ${match[1]} set`],
+  [/^(\d+) stints$/, (match) => `${match[1]} stint`],
+  [/^(.+) telemetry$/, (match) => `Telemetria ${translateLiteral(match[1], "it")}`],
+  [/^The current model shows a fuel shortage\. Consider an extra stop, a longer fill, or at least (.+) lift-and-coast\.$/, (match) => `Il modello attuale mostra una carenza carburante. Considera una sosta aggiuntiva, un rifornimento piu lungo o almeno ${match[1]} di lift-and-coast.`],
   [/^Lap (\d+) - (.+) - (.+)$/, (match) => `Giro ${match[1]} - ${match[2]} - ${translateLiteral(match[3], "it")}`],
   [/^Lap (\d+) · (.+)$/, (match) => `Giro ${match[1]} - ${translateLiteral(match[2], "it")}`],
   [/^Lap (\d+)$/, (match) => `Giro ${match[1]}`],
@@ -465,12 +538,59 @@ function translateLiteral(text: string, language: Language) {
   return pattern ? trimmed.replace(pattern[0], (...parts) => pattern[1](parts as unknown as RegExpMatchArray)) : text;
 }
 
+export function translateLegacyText(text: string, language: Language) {
+  if (language !== "it") return text;
+  let translated = translateLiteral(text, language);
+  const replacements: Array<[RegExp, string]> = [
+    [/Run the race at controlled pace/g, "Gestisci la gara con un passo controllato"],
+    [/targeting/g, "puntando a"],
+    [/using a controlled representative pace/g, "usando un passo rappresentativo controllato"],
+    [/Fuel stop count cannot be confirmed yet\./g, "Il numero di soste carburante non puo ancora essere confermato."],
+    [/No pit stop is required on the current fuel model\./g, "Il modello carburante attuale non richiede pit stop."],
+    [/Base fuel plan is (\d+) stops?\./g, "Il piano carburante base prevede $1 soste."],
+    [/Fuel margin cannot be confirmed yet\./g, "Il margine carburante non puo ancora essere confermato."],
+    [/Fuel margin for that stop count is positive by ([\d.]+) L\./g, "Il margine carburante con questo numero di soste e positivo di $1 L."],
+    [/Fuel is short by ([\d.]+) L; target at least ([\d.]+)% saving\./g, "Mancano $1 L; punta ad almeno $2% di risparmio."],
+    [/Tyre plan needs race distance and fuel stop data\./g, "Il piano gomme richiede distanza gara e dati sulle soste carburante."],
+    [/Tyre allocation is tight: estimated (\d+) full sets needed, (\d+) available\. Plan tyre saving or partial changes\./g, "Allocazione gomme limitata: servono circa $1 set completi, $2 disponibili. Pianifica risparmio gomme o cambi parziali."],
+    [/Plan around (\d+) fuel stops and change 4 tyres at each stop if the set budget allows\./g, "Pianifica circa $1 soste carburante e cambia 4 gomme a ogni sosta se l'allocazione lo consente."],
+    [/Tyre wear supports extending sets; full tyre changes are optional unless balance or temperatures worsen\./g, "L'usura consente di prolungare i set; il cambio completo e facoltativo salvo peggioramenti di bilanciamento o temperature."],
+    [/Keep the starting tyres unless wear or pressure behavior changes\./g, "Mantieni le gomme di partenza salvo variazioni di usura o pressione."],
+    [/No major tyre wear warning is available yet\./g, "Non sono ancora disponibili avvisi importanti sull'usura gomme."],
+    [/Avoid pushing aggressively late in the stint because lap times are degrading\./g, "Evita di spingere troppo a fine stint perche i tempi stanno peggiorando."],
+    [/The run improved over time, so build pace progressively\./g, "Il run e migliorato nel tempo, quindi aumenta il passo progressivamente."],
+    [/Lap pace is stable enough for a predictable race plan\./g, "Il passo e abbastanza stabile per un piano gara prevedibile."],
+    [/front-left/g, "anteriore sinistra"], [/front-right/g, "anteriore destra"],
+    [/rear-left/g, "posteriore sinistra"], [/rear-right/g, "posteriore destra"],
+    [/Rear wear is higher than front wear\./g, "L'usura posteriore e superiore a quella anteriore."],
+    [/Front wear is higher than rear wear\./g, "L'usura anteriore e superiore a quella posteriore."],
+    [/Wear balance is broadly even\./g, "Il bilanciamento usura e complessivamente uniforme."],
+    [/rear wear is leading, so check rear traction, differential exit behavior, and rear pressures/g, "l'usura posteriore e maggiore: controlla trazione posteriore, differenziale in uscita e pressioni posteriori"],
+    [/front wear is leading, so check entry understeer, brake migration, and front pressures/g, "l'usura anteriore e maggiore: controlla sottosterzo in ingresso, migrazione freno e pressioni anteriori"],
+    [/right-side wear is leading, so verify track loading and right-side pressure growth/g, "l'usura del lato destro e maggiore: verifica carico pista e crescita pressione sul lato destro"],
+    [/left-side wear is leading, so verify track loading and left-side pressure growth/g, "l'usura del lato sinistro e maggiore: verifica carico pista e crescita pressione sul lato sinistro"],
+    [/brake temperature spread is high, so review bias, ducting, lockups, and track-side loading/g, "la differenza temperatura freni e elevata: controlla bias, condotti, bloccaggi e carico laterale della pista"],
+    [/use ride-height traces to confirm platform stability before changing springs, ARBs, or packers/g, "usa le tracce altezza da terra per confermare la stabilita piattaforma prima di modificare molle, barre antirollio o packer"],
+    [/Driver inputs/g, "Input pilota"],
+    [/Powertrain/g, "Powertrain"],
+    [/Surface/g, "Superficie"],
+    [/Environment/g, "Ambiente"],
+    [/Platform/g, "Piattaforma"],
+    [/Brakes/g, "Freni"],
+    [/Tyres/g, "Gomme"],
+    [/Fuel/g, "Carburante"],
+    [/Pace/g, "Passo"],
+  ];
+  for (const [pattern, replacement] of replacements) translated = translated.replace(pattern, replacement);
+  return translated;
+}
+
 function translateTextNode(node: Node, language: Language) {
   const original = originalText.get(node) ?? node.textContent ?? "";
   if (!originalText.has(node)) originalText.set(node, original);
   const leading = original.match(/^\s*/)?.[0] ?? "";
   const trailing = original.match(/\s*$/)?.[0] ?? "";
-  const translated = translateLiteral(original, language);
+  const translated = translateLegacyText(original, language);
   const next = translated === original ? original : `${leading}${translated.trim()}${trailing}`;
   if (node.textContent !== next) node.textContent = next;
 }
@@ -484,7 +604,7 @@ function translateAttribute(element: Element, attribute: string, language: Langu
   }
   if (!originals.has(attribute)) originals.set(attribute, element.getAttribute(attribute) || "");
   const original = originals.get(attribute) || "";
-  const next = translateLiteral(original, language);
+  const next = translateLegacyText(original, language);
   if (element.getAttribute(attribute) !== next) element.setAttribute(attribute, next);
 }
 
@@ -493,7 +613,9 @@ function walk(root: ParentNode, language: Language) {
     acceptNode(node) {
       const value = node.textContent?.trim();
       if (!value || translatedTexts.has(value)) return NodeFilter.FILTER_REJECT;
-      return italianLegacyText[value] || language !== "it" && originalText.has(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      return language === "it"
+        ? translateLegacyText(value, language) !== value ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT
+        : originalText.has(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     },
   });
   const nodes: Node[] = [];

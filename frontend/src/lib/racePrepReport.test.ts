@@ -139,6 +139,29 @@ describe("race prep report", () => {
     expect(report.tyres.pressure.fl.average).toBe(185);
   });
 
+  it("ignores terminal garage tyre placeholders when calculating wear endpoints", () => {
+    const review: SessionReview = {
+      session: null,
+      recommendations: [],
+      pit_events: [],
+      laps: [{ lap_number: 1, lap_time: 90, valid_lap: true, in_pit: false }],
+      telemetry_samples: [
+        { game_time: 1, tyre_wear_fl: 0, tyre_wear_fr: 0, tyre_wear_rl: 0, tyre_wear_rr: 0, tyre_pressure_fl: 122, tyre_temp_fl: 18 },
+        { game_time: 2, tyre_wear_fl: 0.02, tyre_wear_fr: 0.03, tyre_wear_rl: 0.04, tyre_wear_rr: 0.05, tyre_pressure_fl: 160, tyre_temp_fl: 70 },
+        { game_time: 3, tyre_wear_fl: 0.29, tyre_wear_fr: 0.35, tyre_wear_rl: 0.46, tyre_wear_rr: 0.45, tyre_pressure_fl: 174, tyre_temp_fl: 52 },
+        { game_time: 4, tyre_wear_fl: 0, tyre_wear_fr: 0, tyre_wear_rl: 0, tyre_wear_rr: 0, tyre_pressure_fl: 119, tyre_temp_fl: 14 },
+      ],
+    };
+
+    const report = buildRacePrepReport(review);
+
+    expect(report.tyres.wear.fl).toMatchObject({ start: 0.02, end: 0.29 });
+    expect(report.tyres.wear.fl.delta).toBeCloseTo(0.27);
+    expect(report.tyres.wear.fl.perLap).toBeCloseTo(0.27);
+    expect(report.tyres.wear.rr).toMatchObject({ start: 0.05, end: 0.45 });
+    expect(report.tyres.wear.rr.delta).toBeCloseTo(0.40);
+  });
+
   it("uses saved lap and aggregate summaries when finalized sessions have no raw samples", () => {
     const review: SessionReview = {
       session: { id: "saved", track_name: "Spa", session_type: "Race", vehicle_model: "Porsche" },
@@ -363,7 +386,7 @@ describe("race prep report", () => {
     const review: SessionReview = {
       session: { id: "race", track_name: "Spa", session_type: "Race", vehicle_model: "Hypercar" },
       recommendations: [],
-      pit_events: [{ lap_number: 3, timestamp: 270, type: "pit", message: "Box this lap" }],
+      pit_events: [{ lap_number: 3, timestamp: 270, type: "pit", message: "Box this lap", total_pit_loss: 42.5 }],
       telemetry_samples: [],
       laps: [
         { lap_number: 1, lap_time: 90, fuel_start: 80, fuel_end: 76, fuel_used: 4, valid_lap: true, in_pit: false, tyre_wear_end_fl: 0.10, tyre_wear_end_fr: 0.10, tyre_wear_end_rl: 0.12, tyre_wear_end_rr: 0.12 },
@@ -378,6 +401,7 @@ describe("race prep report", () => {
     expect(report.charts.pitStops).toHaveLength(1);
     expect(report.charts.pitStops[0].lap).toBe(3);
     expect(report.charts.pitStops[0].fuel_added).toBe(30);
+    expect(report.charts.pitStops[0].pit_time).toBe(42.5);
     expect(report.charts.pitStops[0].tyres_changed).toBe("FL, FR, RL, RR");
   });
 });

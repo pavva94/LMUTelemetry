@@ -429,6 +429,7 @@ function buildPitStopReport(review: SessionReview, laps: Row[]): ChartRow[] {
       timestamp: source.timestamp,
       type: String(event?.type ?? "Pit stop"),
       message: String(event?.message ?? event?.phase ?? (pitLap ? "Pit lap detected" : "Pit event")),
+      pit_time: chartNumber(event?.total_pit_loss ?? event?.total_duration ?? event?.duration),
       fuel_before: fuelBefore,
       fuel_after: fuelAfter,
       fuel_added: fuelAdded,
@@ -683,12 +684,12 @@ function validTyreChannelValue(key: string, value: number | null): value is numb
 function isUsableTyreSample(sample: Row, key: string): boolean {
   if (!key.includes("wear")) return true;
   const wearValues = wheels.map((wheel) => num(sample[`tyre_wear_${wheel}`]));
-  const hasNonZeroWear = wearValues.some((value) => value != null && value > 0);
-  if (hasNonZeroWear) return true;
+  const hasMeaningfulWear = wearValues.some((value) => value != null && value > 0.0001);
+  if (hasMeaningfulWear) return true;
   const hasSupportingTyreData = wheels.some((wheel) => {
     const pressure = num(sample[`tyre_pressure_${wheel}`]);
     const temp = num(sample[`tyre_temp_${wheel}`]);
-    return (pressure != null && pressure > 0) || (temp != null && temp > 0);
+    return (pressure != null && pressure >= 130) || (temp != null && temp >= 20);
   });
   return hasSupportingTyreData;
 }
@@ -790,8 +791,8 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
     const lapDeltas = cleanLaps
       .map((lap) => num(lap[`tyre_wear_delta_${wheel}`]) ?? num(lap.tyre_wear_delta))
       .filter((value): value is number => value != null && value > 0 && value < 0.2);
-    const perLap = avg(lapDeltas);
     const delta = lapDeltas.length ? lapDeltas.reduce((sum, value) => sum + value, 0) : start != null && end != null && end >= start ? end - start : null;
+    const perLap = avg(lapDeltas) ?? (delta != null && cleanLaps.length ? delta / cleanLaps.length : null);
     wear[wheel] = { start, end, delta, perLap };
   }
   const wearDeltas = Object.fromEntries(wheels.map((wheel) => [wheel, wear[wheel].delta])) as Record<Wheel, number | null>;
