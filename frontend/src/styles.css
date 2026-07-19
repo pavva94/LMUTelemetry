@@ -510,7 +510,7 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 /* Decision-first live pit strategy */
 .pit-window-page { align-items: stretch; }
 .pit-strategy-visualization { border-top: 2px solid var(--amber); background: linear-gradient(180deg, rgba(243,182,66,.055), rgba(16,24,32,.96) 28%); }
-.strategy-visual-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.strategy-visual-summary { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .strategy-visual-summary > div { display: grid; gap: 3px; padding: 12px 14px; border-right: 1px solid var(--border); }
 .strategy-visual-summary > div:last-child { border-right: 0; }
 .strategy-visual-summary strong { color: #fff; font-size: 20px; font-variant-numeric: tabular-nums; }
@@ -549,6 +549,7 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .service-fuel { align-content: center; display: grid; gap: 5px; padding-left: 14px; border-left: 1px solid var(--border); }
 .service-fuel strong { color: var(--text); font-size: 16px; }
 .service-fuel b { color: var(--amber-2); font-size: 13px; }
+.service-fuel small { color: var(--cyan); font-size: 11px; font-weight: 800; }
 .live-options-section { overflow: hidden; }
 .live-option-rail { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(220px, 1fr); gap: 9px; overflow-x: auto; padding: 1px 1px 6px; scrollbar-width: thin; }
 .live-plan-option { min-width: 220px; display: grid; gap: 4px; padding: 11px 12px; border: 1px solid var(--border); border-radius: 6px; background: #0b1117; color: var(--text-soft); text-align: left; cursor: pointer; transition: border-color .16s ease, background .16s ease, transform .16s ease; }
@@ -857,7 +858,6 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .energy-card { overflow: hidden; }
 .energy-metrics { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
 .energy-metric { display: grid; align-content: center; gap: 2px; min-height: 47px; padding: 7px; border: 1px solid var(--border); border-radius: 6px; background: rgba(8,13,18,.46); }
-.energy-metric:last-child { grid-column: 1 / -1; }
 .energy-metric span { overflow-wrap: anywhere; color: var(--muted); font-size: 8px; font-weight: 900; line-height: 1.2; text-transform: uppercase; }
 .energy-metric strong { color: #fff; font-size: 15px; line-height: 1.1; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .vehicle-tyres { position: relative; display: grid; grid-template-columns: repeat(2, minmax(100px, 1fr)); gap: 14px 54px; }
@@ -893,10 +893,12 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .fuel-primary { display: flex; align-items: baseline; gap: 7px; }
 .fuel-primary strong { color: #fff; font-size: 38px; line-height: 1; }
 .fuel-primary span { color: var(--muted); font-size: 11px; text-transform: uppercase; }
-.strategy-live-values { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: end; margin-bottom: 10px; }
-.strategy-live-values > div:last-child { display: grid; gap: 3px; justify-items: end; text-align: right; }
-.strategy-live-values > div:last-child span { color: var(--muted); font-size: 9px; font-weight: 900; text-transform: uppercase; }
-.strategy-live-values > div:last-child strong { color: var(--text); font-size: 14px; }
+.strategy-live-values { display: grid; grid-template-columns: 1.1fr .9fr .75fr; gap: 8px; align-items: end; margin-bottom: 8px; }
+.strategy-live-values > div:not(:first-child) { display: grid; gap: 3px; justify-items: end; text-align: right; }
+.strategy-live-values > div:not(:first-child) span { color: var(--muted); font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.strategy-live-values > div:not(:first-child) strong { color: var(--text); font-size: 14px; }
+.resource-rates { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 9px; color: var(--muted); font-size: 9px; }
+.resource-rates b { color: var(--text-soft); }
 .fuel-range { display: flex; justify-content: space-between; gap: 10px; margin: 13px 0; padding-bottom: 10px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 11px; }
 .fuel-range strong { color: var(--text); text-align: right; }
 .pit-call { display: grid; gap: 2px; padding: 9px; border: 1px solid var(--border); border-left-width: 3px; border-radius: 6px; }
@@ -908,7 +910,7 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 .projection-axis { display: grid; grid-template-columns: auto 1fr auto; gap: 7px; align-items: center; color: var(--muted); font-size: 9px; font-weight: 900; text-transform: uppercase; }
 .projection-axis i { height: 4px; overflow: hidden; border-radius: 99px; background: #27323c; }
 .projection-axis b { display: block; height: 100%; background: linear-gradient(90deg,var(--cyan),var(--amber)); }
-.projection-values { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.projection-values { display: grid; grid-template-columns: repeat(3,1fr); gap: 8px; }
 .projection-values > div { display: grid; gap: 2px; padding: 7px; border: 1px solid var(--border); border-radius: 6px; background: rgba(8,13,18,.46); }
 .projection-values span { color: var(--muted); font-size: 9px; font-weight: 900; text-transform: uppercase; }
 .projection-values strong { color: #fff; font-size: 16px; }

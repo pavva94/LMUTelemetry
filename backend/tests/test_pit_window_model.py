@@ -53,6 +53,22 @@ def test_tyre_limit_can_trigger_the_stop() -> None:
     assert "tyres limit the stint" in state.explanation[0]
 
 
+def test_virtual_energy_limit_drives_pit_window() -> None:
+    snapshot = MockTelemetryCollector().poll_once()
+    snapshot.player.lap_number = 10
+    snapshot.session.yellow_flag_state = "0"
+    snapshot.session.game_phase = "5"
+    state = PitWindowModel(StrategyAssumptions()).update(
+        snapshot,
+        FuelState(fuel_laps_remaining=15),
+        TyreStrategyState(estimated_remaining_tyre_life_laps=12),
+        StintState(fuel_limited_stint_end_lap=25, virtual_energy_limited_stint_end_lap=16, tyre_limited_stint_end_lap=22),
+    )
+    assert state.latest_safe_pit_lap == 15
+    assert state.optimal_pit_lap == 15
+    assert "virtual energy limit the stint" in state.explanation[0]
+
+
 def test_numeric_fcy_state_moves_recommendation_to_current_lap() -> None:
     snapshot = MockTelemetryCollector().poll_once()
     snapshot.player.lap_number = 10

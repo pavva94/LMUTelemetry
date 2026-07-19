@@ -49,6 +49,17 @@ Confidence:
 - Less than 3 valid laps: low, and finish calculations are not trusted.
 - 3 or more valid laps: high in the live model.
 
+## Virtual-Energy Model
+
+WEC virtual energy is modelled independently from physical fuel whenever LMU supplies the channel. Eligible laps use the same green, valid, non-pit rules as fuel laps.
+
+- `virtual_energy_per_lap = average(last 5 valid virtual-energy reductions)`.
+- `virtual_energy_laps_remaining = current_virtual_energy / virtual_energy_per_lap`.
+- `full_virtual_energy_stint_laps = 1 / virtual_energy_per_lap`.
+- `fuel_to_virtual_energy_ratio = median((current_fuel / tank_capacity) / current_virtual_energy)` from valid live samples.
+
+The ratio expresses the physical tank fraction associated with a full virtual-energy allocation. A ratio of `0.85` caps a normal full-energy load near `85%` of the physical tank. Fuel and virtual energy remain separate projections. The same model handles GT3 regulatory virtual energy and Hypercar energy allocation; battery state of charge remains a separate powertrain signal.
+
 ## Tyre Model
 
 Tyre wear uses player average tyre wear. A stint reset happens when the car leaves pit lane.
@@ -119,14 +130,15 @@ The stint model tracks pit transitions:
 Projected stint limits:
 
 - `fuel_limited_stint_end_lap = floor(current_lap + fuel_laps_remaining)`.
+- `virtual_energy_limited_stint_end_lap = floor(current_lap + virtual_energy_laps_remaining)`.
 - `tyre_limited_stint_end_lap = floor(current_lap + remaining_tyre_life_laps)`.
-- `recommended_stint_end_lap = min(available fuel/tyre end laps)`.
+- `recommended_stint_end_lap = min(available virtual-energy/fuel/tyre end laps)`.
 
 ## Pit Window Model
 
 Pit window formulas:
 
-- `latest_safe_pit_lap = min(fuel_limited_end, tyre_limited_end) - 1`.
+- `latest_safe_pit_lap = min(virtual_energy_limited_end, fuel_limited_end, tyre_limited_end) - 1`.
 - `earliest_viable_pit_lap = current_lap` only if fuel range is greater than `fuel_safety_margin_laps`.
 - `optimal_pit_lap = max(earliest, min(latest, current_lap + 2))` when both earliest and latest exist.
 - `projected_rejoin_position = current_position + max(1, floor(pit_loss_seconds / 8))`.

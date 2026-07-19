@@ -14,6 +14,22 @@ export type FuelState = {
   reason_codes?: string[];
 };
 
+export type EnergyState = {
+  current_virtual_energy_fraction?: number;
+  last_lap_virtual_energy_used?: number;
+  virtual_energy_per_lap?: number;
+  virtual_energy_use_stddev?: number;
+  virtual_energy_laps_remaining?: number;
+  full_virtual_energy_stint_laps?: number;
+  required_virtual_energy_to_finish?: number;
+  virtual_energy_delta_to_finish?: number;
+  fuel_to_virtual_energy_ratio?: number;
+  valid_laps_observed?: number;
+  valid_laps_required?: number;
+  confidence: string;
+  reason_codes?: string[];
+};
+
 export type TyreStrategyState = {
   average_wear?: number;
   wear_rate_per_lap?: number;
@@ -40,12 +56,14 @@ export type PaceState = {
 
 export type StrategyState = {
   fuel: FuelState;
+  energy?: EnergyState;
   tyres: TyreStrategyState;
   pace?: PaceState;
   stint: {
     current_stint_lap?: number;
     last_pit_lap?: number;
     fuel_limited_stint_end_lap?: number;
+    virtual_energy_limited_stint_end_lap?: number;
     tyre_limited_stint_end_lap?: number;
     recommended_stint_end_lap?: number;
   };

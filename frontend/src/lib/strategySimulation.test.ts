@@ -55,6 +55,28 @@ describe("strategy simulation", () => {
     }
   });
 
+  it("uses current virtual energy for the first stop and ratio-limits future fuel loads", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 90,
+      tankCapacityLiters: 100,
+      currentFuelLiters: 42,
+      currentVirtualEnergyFraction: 0.5,
+      virtualEnergyPerLap: 0.03,
+      fuelToVirtualEnergyRatio: 0.85,
+    });
+    expect(plans.length).toBeGreaterThan(0);
+    plans.forEach((plan) => {
+      expect(plan.stopsDetail[0].lap).toBeLessThanOrEqual(16);
+      plan.stopsDetail.forEach((stop) => {
+        expect(stop.fuelOnExitLiters).toBeLessThanOrEqual(85);
+        expect(stop.virtualEnergyOnExit).toBe(1);
+        expect(stop.virtualEnergyRemaining).toBeGreaterThanOrEqual(0);
+      });
+      expect(plan.finishVirtualEnergy).toBeGreaterThanOrEqual(0);
+    });
+  });
+
   it("evaluates latest-feasible pit layouts alongside balanced stints", () => {
     const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: 180 });
     const late = plans.find((plan) => plan.reasons.some((reason) => reason.includes("latest fuel-feasible")));

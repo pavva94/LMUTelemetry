@@ -584,7 +584,6 @@ function HypercarEnergyCard({ player }: { player?: PlayerState }) {
   const metrics = [
     { label: t("liveDashboard.batteryChargeFraction"), value: finite(batteryFraction) ? `${Math.round(batteryFraction * 100)}%` : "--" },
     { label: t("liveDashboard.stateOfCharge"), value: fmt(hybrid?.state_of_charge_percent ?? hybrid?.battery_percent, 1, "%") },
-    { label: t("liveDashboard.virtualEnergy"), value: finite(hybrid?.virtual_energy_fraction) ? `${Math.round(hybrid.virtual_energy_fraction * 100)}%` : "--" },
     { label: t("liveDashboard.regenerationPower"), value: fmt(hybrid?.regen_kw, 1, " kW") },
     { label: t("liveDashboard.boostMotorTorque"), value: fmt(hybrid?.motor_torque_nm, 1, " Nm") },
   ];
@@ -597,16 +596,20 @@ function FuelCard({ telemetry, strategy }: { telemetry: TelemetrySnapshot | null
   const t = useT();
   const player = telemetry?.player;
   const fuel = strategy?.fuel;
+  const energy = strategy?.energy;
   const tyres = strategy?.tyres;
   const pitLap = strategy?.pit_window?.optimal_pit_lap ?? strategy?.stint?.recommended_stint_end_lap;
   const confidence = fuel?.confidence?.toLowerCase();
   const currentLap = player?.lap_number ?? telemetry?.session?.current_lap;
   const lapsToPit = finite(pitLap) && finite(currentLap) ? Math.max(0, pitLap - currentLap) : undefined;
   const fuelAtPit = finite(player?.fuel_liters) && finite(fuel?.fuel_per_lap_liters) && finite(lapsToPit) ? Math.max(0, player.fuel_liters - fuel.fuel_per_lap_liters * lapsToPit) : undefined;
+  const energyAtPit = finite(energy?.current_virtual_energy_fraction) && finite(energy?.virtual_energy_per_lap) && finite(lapsToPit) ? Math.max(0, energy.current_virtual_energy_fraction - energy.virtual_energy_per_lap * lapsToPit) : undefined;
   const wearAtPit = finite(tyres?.average_wear) && finite(tyres?.wear_rate_per_lap) && finite(lapsToPit) ? Math.min(1, tyres.average_wear + tyres.wear_rate_per_lap * lapsToPit) : undefined;
   const fuelLimit = strategy?.stint?.fuel_limited_stint_end_lap;
+  const energyLimit = strategy?.stint?.virtual_energy_limited_stint_end_lap;
   const tyreLimit = strategy?.stint?.tyre_limited_stint_end_lap;
-  const trigger = finite(fuelLimit) && finite(tyreLimit) && Math.abs(fuelLimit - tyreLimit) <= 1 ? t("liveDashboard.fuelTyres") : finite(tyreLimit) && (!finite(fuelLimit) || tyreLimit < fuelLimit) ? t("liveDashboard.tyreLimited") : finite(fuelLimit) ? t("liveDashboard.fuelLimited") : t("liveDashboard.buildingEstimate");
+  const limits = [{ value: energyLimit, label: t("liveDashboard.energyLimited") }, { value: fuelLimit, label: t("liveDashboard.fuelLimited") }, { value: tyreLimit, label: t("liveDashboard.tyreLimited") }].filter((item) => finite(item.value)).sort((a, b) => Number(a.value) - Number(b.value));
+  const trigger = limits.length > 1 && Math.abs(Number(limits[0].value) - Number(limits[1].value)) <= 1 ? `${limits[0].label} + ${limits[1].label}` : limits[0]?.label ?? t("liveDashboard.buildingEstimate");
   const maximumLaps = telemetry?.session?.max_laps;
   const validFinishLap = finite(maximumLaps) && maximumLaps > 0 && maximumLaps < 10_000 ? maximumLaps : finite(currentLap) && finite(fuel?.estimated_laps_remaining) ? currentLap + Math.ceil(fuel.estimated_laps_remaining) : undefined;
   const noStopNeeded = finite(pitLap) && finite(validFinishLap) ? pitLap >= validFinishLap : !finite(pitLap) && finite(fuel?.fuel_delta_to_finish) && fuel.fuel_delta_to_finish >= 0;
@@ -615,9 +618,10 @@ function FuelCard({ telemetry, strategy }: { telemetry: TelemetrySnapshot | null
     return finite(current) && finite(tyres?.wear_rate_per_lap) && finite(lapsToPit) ? Math.min(1, current + tyres.wear_rate_per_lap * lapsToPit) : undefined;
   };
   return <section className="status-card fuel-card"><CardTitle icon={Fuel} eyebrow={t("liveDashboard.strategy")} title={t("liveDashboard.fuelPit")} />
-    <div className="strategy-live-values"><div className="fuel-primary"><strong>{fmt(player?.fuel_liters, 1)}</strong><span>{t("liveDashboard.litresNow")}</span></div><div><span>{t("liveDashboard.measuredAverage")}</span><strong>{fmt(fuel?.fuel_per_lap_liters, 2, " L/lap")}</strong></div></div>
+    <div className="strategy-live-values"><div className="fuel-primary"><strong>{fmt(player?.fuel_liters, 1)}</strong><span>{t("liveDashboard.litresNow")}</span></div><div><span>{t("liveDashboard.virtualEnergy")}</span><strong>{finite(energy?.current_virtual_energy_fraction) ? percent(energy.current_virtual_energy_fraction) : "--"}</strong></div><div><span>{t("liveDashboard.fuelEnergyRatio")}</span><strong>{finite(energy?.fuel_to_virtual_energy_ratio) ? energy.fuel_to_virtual_energy_ratio.toFixed(2) : "--"}</strong></div></div>
+    <div className="resource-rates"><span>{t("liveDashboard.fuelUseShort")} <b>{fmt(fuel?.fuel_per_lap_liters, 2, " L/lap")}</b></span><span>{t("liveDashboard.energyUseShort")} <b>{finite(energy?.virtual_energy_per_lap) ? percent(energy.virtual_energy_per_lap) : "--"} / {t("telemetry.lap").toLowerCase()}</b></span></div>
     <div className={`pit-call ${noStopNeeded ? "safe" : finite(pitLap) ? "action" : "unknown"}`}><span>{noStopNeeded ? t("liveDashboard.noStopRequired") : finite(pitLap) ? t("liveDashboard.estimatedPitLap") : t("liveDashboard.pitEstimate")}</span><strong>{noStopNeeded ? t("liveDashboard.runToFinish") : finite(pitLap) ? t("liveDashboard.lapWithTrigger", { lap: Math.round(pitLap), trigger }) : t("liveDashboard.needMoreCleanLaps")}</strong></div>
-    {finite(lapsToPit) && !noStopNeeded && <div className="stint-projection"><div className="projection-axis"><span>{t("liveDashboard.nowLap", { lap: currentLap ?? "--" })}</span><i><b style={{ width: "100%" }} /></i><span>{t("liveDashboard.pitLapShort", { lap: pitLap ?? "--" })}</span></div><div className="projection-values"><div><span>{t("liveDashboard.fuelAtStop")}</span><strong>{fmt(fuelAtPit, 1, " L")}</strong><small>{t("liveDashboard.fromRate", { rate: fmt(fuel?.fuel_per_lap_liters, 2, " L/lap") })}</small></div><div><span>{t("liveDashboard.tyreWearAtStop")}</span><strong>{finite(wearAtPit) ? percent(wearAtPit) : "--"}</strong><small>+{finite(tyres?.wear_rate_per_lap) ? percent(tyres.wear_rate_per_lap) : "--"} / {t("telemetry.lap").toLowerCase()}</small></div></div></div>}
+    {finite(lapsToPit) && !noStopNeeded && <div className="stint-projection"><div className="projection-axis"><span>{t("liveDashboard.nowLap", { lap: currentLap ?? "--" })}</span><i><b style={{ width: "100%" }} /></i><span>{t("liveDashboard.pitLapShort", { lap: pitLap ?? "--" })}</span></div><div className="projection-values"><div><span>{t("liveDashboard.fuelAtStop")}</span><strong>{fmt(fuelAtPit, 1, " L")}</strong><small>{t("liveDashboard.fromRate", { rate: fmt(fuel?.fuel_per_lap_liters, 2, " L/lap") })}</small></div><div><span>{t("liveDashboard.energyAtStop")}</span><strong>{finite(energyAtPit) ? percent(energyAtPit) : "--"}</strong><small>{t("liveDashboard.refillToFull")}</small></div><div><span>{t("liveDashboard.tyreWearAtStop")}</span><strong>{finite(wearAtPit) ? percent(wearAtPit) : "--"}</strong><small>+{finite(tyres?.wear_rate_per_lap) ? percent(tyres.wear_rate_per_lap) : "--"} / {t("telemetry.lap").toLowerCase()}</small></div></div></div>}
     {finite(lapsToPit) && !noStopNeeded && <div className="projected-corner-wear">{tyreKeys.map((key) => <span key={key}><b>{tyreLabels[key]}</b>{percent(projectedCornerWear(key))}</span>)}</div>}
     <small className={`confidence ${confidence || "low"}`}>{t("liveDashboard.confidenceSummary", { fuelConfidence: t(`common.${confidence || "low"}`), tyreConfidence: t(`common.${tyres?.confidence || "low"}`), range: finite(fuel?.fuel_laps_remaining) ? t("liveDashboard.fuelRange", { laps: fuel.fuel_laps_remaining.toFixed(1) }) : t("liveDashboard.rangeUnavailable") })}</small>
   </section>;

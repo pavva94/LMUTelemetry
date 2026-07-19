@@ -64,6 +64,10 @@ export type StrategySimulationInput = {
   fuelUseStdDevLiters?: number | null;
   fuelConfidence?: string;
   tankCapacityLiters: number | null;
+  currentFuelLiters?: number | null;
+  currentVirtualEnergyFraction?: number | null;
+  virtualEnergyPerLap?: number | null;
+  fuelToVirtualEnergyRatio?: number | null;
   /** @deprecated Start fuel is calculated by the engine. */
   raceStartFuelLiters?: number | null;
   raceStartNewTyres?: boolean;
@@ -97,6 +101,9 @@ export type StrategyStop = {
   fuelRemainingLiters: number;
   fuelAddedLiters: number;
   fuelOnExitLiters: number;
+  virtualEnergyRemaining: number | null;
+  virtualEnergyAdded: number | null;
+  virtualEnergyOnExit: number | null;
   tyresChanged: number;
   tyresToChange: Wheel[];
   pitLaneTimeSeconds: number;
@@ -129,6 +136,7 @@ export type StrategyCandidate = {
   liftCoastSaveLitersPerLap: number;
   fuelMarginLiters: number;
   finishFuelRemainingLiters: number;
+  finishVirtualEnergy: number | null;
   firstStintFuelNeedLiters: number;
   recommendedStartFuelLiters: number;
   startFuelIsFullTank: boolean;
@@ -177,6 +185,29 @@ function fuelRateFor(input: StrategySimulationInput) {
   return base + (input.safetyPolicy === "conservative" ? deviation : input.safetyPolicy === "balanced" ? deviation * 0.5 : 0);
 }
 
+function futureFuelCapacity(input: StrategySimulationInput) {
+  const tank = input.tankCapacityLiters ?? 0;
+  const ratio = input.fuelToVirtualEnergyRatio;
+  const ratioCapacity = ratio != null && Number.isFinite(ratio) && ratio > 0 ? tank * ratio : tank;
+  const energyRate = input.virtualEnergyPerLap;
+  const energyCapacity = energyRate != null && energyRate > 0
+    ? Math.floor(1 / energyRate) * fuelRateFor(input) + reserveFor(input)
+    : tank;
+  return Math.min(tank, ratioCapacity, energyCapacity);
+}
+
+function stintResourceLimits(input: StrategySimulationInput, stints: number) {
+  const rate = fuelRateFor(input);
+  const future = Math.max(1, Math.floor((futureFuelCapacity(input) - reserveFor(input)) / rate));
+  const currentFuel = input.currentFuelLiters;
+  const currentEnergy = input.currentVirtualEnergyFraction;
+  const fuelLaps = currentFuel != null && currentFuel >= 0 ? Math.floor(currentFuel / rate) : future;
+  const energyLaps = currentEnergy != null && input.virtualEnergyPerLap != null && input.virtualEnergyPerLap > 0
+    ? Math.floor(currentEnergy / input.virtualEnergyPerLap)
+    : future;
+  return [Math.max(1, Math.min(future, fuelLaps, energyLaps)), ...Array(Math.max(0, stints - 1)).fill(future)];
+}
+
 function paceFor(input: StrategySimulationInput) {
   for (const value of [input.paceEvidence?.weightedRecentPace, input.paceEvidence?.last7LapAverage, input.paceEvidence?.last10LapAverage, input.paceEvidence?.lastLapTime, input.normalLapTime]) {
     if (value != null && Number.isFinite(value) && value > 0) return value;
@@ -217,15 +248,16 @@ function splitLaps(total: number, stints: number) {
 type StintLayout = "balanced" | "late";
 
 function stintLayout(input: StrategySimulationInput, total: number, stints: number, layout: StintLayout) {
-  if (layout === "balanced") return splitLaps(total, stints);
-  const rate = fuelRateFor(input);
-  const tank = input.tankCapacityLiters ?? 0;
-  const maximum = Math.floor((tank - reserveFor(input)) / rate);
-  if (maximum < 1) return splitLaps(total, stints);
+  const limits = stintResourceLimits(input, stints);
+  if (limits.reduce((sum, value) => sum + value, 0) < total) return splitLaps(total, stints);
   let remaining = total;
   return Array.from({ length: stints }, (_, index) => {
     const laterStints = stints - index - 1;
-    const laps = Math.min(maximum, Math.max(1, remaining - laterStints));
+    const laterCapacity = limits.slice(index + 1).reduce((sum, value) => sum + value, 0);
+    const minimumHere = Math.max(1, remaining - laterCapacity);
+    const balancedTarget = Math.ceil(remaining / (laterStints + 1));
+    const requested = layout === "late" ? remaining - laterStints : balancedTarget;
+    const laps = Math.min(limits[index], Math.max(minimumHere, requested));
     remaining -= laps;
     return laps;
   });
@@ -272,10 +304,10 @@ function calculateTyres(input: StrategySimulationInput, stintLaps: number[]) {
 function buildFuel(input: StrategySimulationInput, stintLaps: number[], savePerLap: number) {
   const rate = fuelRateFor(input) - savePerLap;
   const reserve = reserveFor(input);
-  const tank = input.tankCapacityLiters ?? 0;
+  const tank = futureFuelCapacity(input);
   const required = stintLaps.map((laps) => laps * rate);
-  const start = required[0] + reserve;
-  if (rate <= 0 || start > tank + 1e-6) return null;
+  const start = input.currentFuelLiters != null ? input.currentFuelLiters : required[0] + reserve;
+  if (rate <= 0 || start > (input.tankCapacityLiters ?? tank) + 1e-6 || required[0] > start + 1e-6) return null;
   let fuel = start;
   const stops: Array<{ entry: number; add: number; exit: number }> = [];
   for (let index = 0; index < stintLaps.length; index += 1) {
@@ -290,7 +322,20 @@ function buildFuel(input: StrategySimulationInput, stintLaps: number[], savePerL
     }
   }
   if (fuel + 1e-6 < reserve) return null;
-  return { rate, reserve, start, finish: fuel, stops, required };
+  const energyRate = input.virtualEnergyPerLap;
+  let virtualEnergy = energyRate != null && energyRate > 0 ? (input.currentVirtualEnergyFraction ?? 1) : null;
+  const energyStops: Array<{ entry: number; add: number; exit: number }> = [];
+  if (virtualEnergy != null && energyRate != null && energyRate > 0) {
+    for (let index = 0; index < stintLaps.length; index += 1) {
+      virtualEnergy -= stintLaps[index] * energyRate;
+      if (virtualEnergy < -1e-6) return null;
+      if (index < stintLaps.length - 1) {
+        energyStops.push({ entry: virtualEnergy, add: Math.max(0, 1 - virtualEnergy), exit: 1 });
+        virtualEnergy = 1;
+      }
+    }
+  }
+  return { rate, reserve, start, finish: fuel, stops, required, energyStops, finishEnergy: virtualEnergy };
 }
 
 function elapsedFor(input: StrategySimulationInput, laps: number, stintLaps: number[], tyreCalls: Wheel[][], fuelPlan: { start: number; rate: number; stops: Array<{ add: number }> }, savePercent: number) {
@@ -380,6 +425,9 @@ function candidate(input: StrategySimulationInput, stopCount: number, initialLap
     return {
       lap: stints.slice(0, index + 1).reduce((sum, value) => sum + value, 0),
       fuelRemainingLiters: round(stop.entry, 2), fuelAddedLiters: round(stop.add, 2), fuelOnExitLiters: round(stop.exit, 2),
+      virtualEnergyRemaining: fuel.energyStops[index] ? round(fuel.energyStops[index].entry, 4) : null,
+      virtualEnergyAdded: fuel.energyStops[index] ? round(fuel.energyStops[index].add, 4) : null,
+      virtualEnergyOnExit: fuel.energyStops[index] ? round(fuel.energyStops[index].exit, 4) : null,
       tyresChanged: tyres.length, tyresToChange: tyres,
       pitLaneTimeSeconds: round(result!.stops[index]?.lane ?? input.pitLaneLossSeconds, 2),
       stationaryTimeSeconds: round(result!.stops[index]?.stationary ?? 0, 2),
@@ -428,6 +476,7 @@ function candidate(input: StrategySimulationInput, stopCount: number, initialLap
     baseRaceTimeSeconds: round(result.base, 2), projectedPaceLossSeconds: round(result.trendLoss, 2), tyreDegradationLossSeconds: breakdown.tyreDegradationLossSeconds,
     liftCoastLossSeconds: breakdown.liftCoastLossSeconds, trafficLossSeconds: round(traffic, 2), confidence, calculationBreakdown: breakdown, pitTimeSeconds: breakdown.pitTimeSeconds,
     liftCoastSavePercent: round(savePercent, 2), liftCoastSaveLitersPerLap: round(savePerLap, 3), fuelMarginLiters: round(margin, 2), finishFuelRemainingLiters: round(fuel.finish, 2),
+    finishVirtualEnergy: fuel.finishEnergy == null ? null : round(fuel.finishEnergy, 4),
     firstStintFuelNeedLiters: round(fuel.required[0], 2), recommendedStartFuelLiters: round(fuel.start, 2), startFuelIsFullTank: fuel.start >= (input.tankCapacityLiters ?? 0) - 0.01,
     projectedTyreWear: tyre.maxWear == null ? null : round(tyre.maxWear, 3), projectedTyreWearByWheel: tyre.final, lowestRemainingTyreWear: tyre.final ? round(Math.min(...wheels.map(wheel => wearLimits(input)[wheel] - tyre.final![wheel])), 3) : null,
     risk, reasons, warnings, stopsDetail, stintWear: tyre.stints,
@@ -437,7 +486,7 @@ function candidate(input: StrategySimulationInput, stopCount: number, initialLap
 export function simulateStrategies(input: StrategySimulationInput): StrategyCandidate[] {
   if (!input.fuelPerLap || !input.tankCapacityLiters || paceFor(input) <= 0 || input.raceDurationMinutes <= 0) return [];
   const roughLaps = Math.max(1, Math.ceil(input.raceDurationMinutes * 60 / paceFor(input)));
-  const fuelStint = Math.max(1, Math.floor((input.tankCapacityLiters - reserveFor(input)) / fuelRateFor(input)));
+  const fuelStint = Math.max(1, Math.floor((futureFuelCapacity(input) - reserveFor(input)) / fuelRateFor(input)));
   const minimumStops = Math.max(0, Math.ceil(roughLaps / fuelStint) - 1);
   const maxStops = input.maxStops ?? Math.min(40, Math.max(minimumStops + 3, 4));
   const all: StrategyCandidate[] = [];

@@ -34,6 +34,22 @@ class FuelState(BaseModel):
     reason_codes: list[str] = Field(default_factory=list)
 
 
+class EnergyState(BaseModel):
+    current_virtual_energy_fraction: float | None = None
+    last_lap_virtual_energy_used: float | None = None
+    virtual_energy_per_lap: float | None = None
+    virtual_energy_use_stddev: float | None = None
+    virtual_energy_laps_remaining: float | None = None
+    full_virtual_energy_stint_laps: float | None = None
+    required_virtual_energy_to_finish: float | None = None
+    virtual_energy_delta_to_finish: float | None = None
+    fuel_to_virtual_energy_ratio: float | None = None
+    valid_laps_observed: int = 0
+    valid_laps_required: int = 3
+    confidence: str = "low"
+    reason_codes: list[str] = Field(default_factory=list)
+
+
 class TyreStrategyState(BaseModel):
     average_wear: float | None = None
     wear_rate_per_lap: float | None = None
@@ -62,6 +78,7 @@ class StintState(BaseModel):
     current_stint_lap: int | None = None
     last_pit_lap: int | None = None
     fuel_limited_stint_end_lap: int | None = None
+    virtual_energy_limited_stint_end_lap: int | None = None
     tyre_limited_stint_end_lap: int | None = None
     recommended_stint_end_lap: int | None = None
 
@@ -80,6 +97,7 @@ class PitWindowState(BaseModel):
 
 class StrategyState(BaseModel):
     fuel: FuelState = Field(default_factory=FuelState)
+    energy: EnergyState = Field(default_factory=EnergyState)
     tyres: TyreStrategyState = Field(default_factory=TyreStrategyState)
     pace: PaceState = Field(default_factory=PaceState)
     stint: StintState = Field(default_factory=StintState)
