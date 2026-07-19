@@ -152,7 +152,7 @@ export function RacePrepReport({ strategy }: Props) {
       ) : (
         <>
           <PageSection number="01" title="Overview" description="Session identity, coverage, headline pace, distance, and conditions."><SessionOverview report={report} /></PageSection>
-          <PageSection number="02" title="Laps & Sectors" description="Lap progression, consistency, top speed, markers, sectors, and theoretical potential."><LapAnalysis report={report} /><BestAndSector report={report} /><LapDetailTable report={report} /></PageSection>
+          <PageSection number="02" title="Laps & Sectors" description="Lap progression, consistency, top speed, markers, sectors, and theoretical potential."><LapAnalysis report={report} /><BestAndSector report={report} /><LapDetailTable report={report} /><ThrottleBrakeComparison report={report} sessionId={selected === "current" ? review?.session?.id || null : selected} nativeSession={selected === "current"} /></PageSection>
           <PageSection number="03" title="Fuel & Stints" description="Fuel consumption, stint structure, race range, and observed stop requirements."><FuelAnalysis report={report} /></PageSection>
           <PageSection number="04" title="Driver & Vehicle" description="Driver inputs, acceleration loads, powertrain temperatures, speed, and surface contact."><DriverInputs report={report} /><PowertrainAndSurface report={report} /></PageSection>
           <PageSection number="05" title="Tyres" description="Wear, temperature, pressure, balance, and degradation evidence for all four tyres."><TyreWear report={report} /><TyreTempPressure report={report} /></PageSection>
@@ -228,6 +228,126 @@ function LapAnalysis({ report }: { report: RacePrepReportModel }) {
         </div>
       </section>
     </>
+  );
+}
+
+type TracePayload = {
+  session_id: string;
+  laps: Array<string | number>;
+  points: Array<Record<string, number | string | boolean | null>>;
+  warnings: string[];
+};
+
+function inputPercent(value: unknown): number | null {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.min(100, Math.abs(number) <= 1.0001 ? number * 100 : number));
+}
+
+function ThrottleBrakeComparison({ report, sessionId, nativeSession }: { report: RacePrepReportModel; sessionId: string | null; nativeSession: boolean }) {
+  const lapOptions = useMemo(() => report.charts.laps
+    .filter((lap) => Number.isFinite(Number(lap.lap)))
+    .sort((a, b) => Number(a.lap) - Number(b.lap)), [report.charts.laps]);
+  const fastestPair = useMemo(() => [...lapOptions]
+    .filter((lap) => lap.valid_lap === true && Number.isFinite(Number(lap.lap_time)))
+    .sort((a, b) => Number(a.lap_time) - Number(b.lap_time))
+    .slice(0, 2)
+    .map((lap) => String(lap.lap)), [lapOptions]);
+  const [lapA, setLapA] = useState("");
+  const [lapB, setLapB] = useState("");
+  const [payload, setPayload] = useState<TracePayload | null>(null);
+  const [status, setStatus] = useState("");
+
+  useEffect(() => {
+    setLapA(fastestPair[0] || String(lapOptions[0]?.lap || ""));
+    setLapB(fastestPair[1] || fastestPair[0] || String(lapOptions[1]?.lap || lapOptions[0]?.lap || ""));
+  }, [fastestPair.join("|"), lapOptions.map((lap) => lap.lap).join("|")]);
+
+  useEffect(() => {
+    if (!lapA) {
+      setPayload(null);
+      setStatus("Select a lap to load its input trace.");
+      return;
+    }
+    if (!sessionId) {
+      setPayload(null);
+      setStatus("The selected session is unavailable.");
+      return;
+    }
+    let active = true;
+    setStatus("Loading lap input traces");
+    const request = nativeSession
+      ? api.sessionLapInputs(sessionId, lapA, lapB, 2400)
+      : api.lmuDuckdbTrajectory(sessionId, lapA, lapB, 2400);
+    request
+      .then((data) => {
+        if (!active) return;
+        setPayload(data);
+        setStatus(data.warnings?.[0] || "");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setPayload(null);
+        setStatus(error instanceof Error ? error.message : "Could not load lap input traces.");
+      });
+    return () => { active = false; };
+  }, [sessionId, nativeSession, lapA, lapB]);
+
+  const chartData = useMemo(() => {
+    const points = (payload?.points || []).filter((point) => [lapA, lapB].includes(String(point.lap_number ?? "")));
+    const lapStarts = points.reduce<Record<string, number>>((starts, point) => {
+      const lap = String(point.lap_number ?? "");
+      const gameTime = Number(point.game_time);
+      if (Number.isFinite(gameTime)) starts[lap] = starts[lap] == null ? gameTime : Math.min(starts[lap], gameTime);
+      return starts;
+    }, {});
+    return points.map((point, index) => {
+      const lap = String(point.lap_number ?? "");
+      const gameTime = Number(point.game_time);
+      const progress = Number(point.progress);
+      const lapTime = Number(report.charts.laps.find((row) => String(row.lap) === lap)?.lap_time);
+      return {
+        elapsed: Number.isFinite(gameTime) && lapStarts[lap] != null
+          ? Math.max(0, gameTime - lapStarts[lap])
+          : Number.isFinite(progress) && Number.isFinite(lapTime)
+            ? progress * lapTime
+            : index,
+        [`throttle_${lap}`]: inputPercent(point.throttle),
+        [`brake_${lap}`]: inputPercent(point.brake),
+      };
+    })
+      .sort((a, b) => Number(a.elapsed) - Number(b.elapsed));
+  }, [payload, lapA, lapB, report.charts.laps]);
+  const colors: Record<string, string> = { [lapA]: "#6dd6ff", [lapB]: "#e6b450" };
+  const selectedLaps = Array.from(new Set([lapA, lapB].filter(Boolean)));
+  const hasInputs = hasLineData(chartData, selectedLaps.flatMap((lap) => [`throttle_${lap}`, `brake_${lap}`]));
+
+  return (
+    <section className="card span-12">
+      <div className="section-toolbar">
+        <SectionTitle title="Throttle And Brake Over Lap Time" help="Overlays throttle and brake against elapsed time within each lap. The two fastest valid laps load automatically; choose either selector to inspect specific laps." />
+        <div className="control-row">
+          <label><span className="label">Lap A</span><select value={lapA} onChange={(event) => setLapA(event.target.value)}>{lapOptions.map((lap) => <option key={`a-${String(lap.lap)}`} value={String(lap.lap)}>Lap {String(lap.lap)} · {formatRaceTime(lap.lap_time as number)}</option>)}</select></label>
+          <label><span className="label">Lap B</span><select value={lapB} onChange={(event) => setLapB(event.target.value)}>{lapOptions.map((lap) => <option key={`b-${String(lap.lap)}`} value={String(lap.lap)}>Lap {String(lap.lap)} · {formatRaceTime(lap.lap_time as number)}</option>)}</select></label>
+        </div>
+      </div>
+      {hasInputs ? (
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={chartData}>
+            <CartesianGrid stroke="#27313a" />
+            <XAxis dataKey="elapsed" type="number" domain={[0, "dataMax"]} stroke="#8896a3" tickFormatter={(value) => `${Math.round(Number(value))}s`} label={{ value: "Elapsed lap time", position: "insideBottom", offset: -2 }} />
+            <YAxis domain={[0, 100]} stroke="#8896a3" tickFormatter={(value) => `${value}%`} />
+            <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => `Lap time ${formatRaceTime(Number(value))}`} formatter={(value, name) => [`${Number(value).toFixed(1)}%`, String(name)]} />
+            <Legend />
+            {selectedLaps.flatMap((lap) => [
+              <Line key={`throttle-${lap}`} dataKey={`throttle_${lap}`} name={`Lap ${lap} throttle`} stroke={colors[lap]} strokeWidth={2.2} dot={false} connectNulls isAnimationActive={false} />,
+              <Line key={`brake-${lap}`} dataKey={`brake_${lap}`} name={`Lap ${lap} brake`} stroke={colors[lap]} strokeWidth={1.8} strokeDasharray="6 4" dot={false} connectNulls isAnimationActive={false} />,
+            ])}
+          </LineChart>
+        </ResponsiveContainer>
+      ) : <EmptyState detail={status || "Throttle and brake samples are not available for the selected laps."} />}
+      {status && hasInputs && <p className="muted">{status}</p>}
+    </section>
   );
 }
 

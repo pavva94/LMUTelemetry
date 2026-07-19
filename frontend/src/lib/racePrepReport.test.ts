@@ -38,6 +38,18 @@ describe("race prep report", () => {
     });
   });
 
+  it("preserves lap alignment fields in report telemetry samples", () => {
+    const report = buildRacePrepReport({
+      session: null,
+      recommendations: [],
+      pit_events: [],
+      laps: [{ lap_number: 4, lap_time: 90, valid_lap: true, in_pit: false }],
+      telemetry_samples: [{ game_time: 12, lap_number: 4, lap_distance: 1234, progress: 0.25, throttle: 0.8, brake: 0.1 }],
+    });
+
+    expect(report.charts.samples[0]).toMatchObject({ lap_number: 4, lap_distance: 1234, progress: 0.25, throttle: 0.8, brake: 0.1 });
+  });
+
   it("reports radiator temperatures and per-wheel grass contact when channels exist", () => {
     const report = buildRacePrepReport({
       session: null,

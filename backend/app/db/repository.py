@@ -870,6 +870,43 @@ class Repository:
             self._review_cache = {cache_key: result}
             return result
 
+    def lap_input_trace(self, session_id: str, lap_numbers: list[int], max_points: int = 2400) -> dict:
+        selected = list(dict.fromkeys(number for number in lap_numbers if number >= 0))[:2]
+        if not selected:
+            return {"session_id": session_id, "laps": [], "points": [], "warnings": ["No laps were selected."]}
+        with SessionLocal() as db:
+            session = db.get(SessionModel, session_id)
+            if not session or not session.is_saved:
+                return {"session_id": session_id, "laps": selected, "points": [], "warnings": ["Session is unavailable."]}
+            rows = db.scalars(
+                select(TelemetrySampleModel)
+                .where(TelemetrySampleModel.session_id == session_id, TelemetrySampleModel.lap_number.in_(selected))
+                .order_by(TelemetrySampleModel.id.asc())
+            ).all()
+        per_lap_limit = max(40, max_points // max(1, len(selected)))
+        points: list[dict] = []
+        for lap_number in selected:
+            lap_rows = [row for row in rows if row.lap_number == lap_number]
+            if len(lap_rows) > per_lap_limit:
+                step = (len(lap_rows) - 1) / max(1, per_lap_limit - 1)
+                indexes = {round(index * step) for index in range(per_lap_limit)}
+                lap_rows = [row for index, row in enumerate(lap_rows) if index in indexes]
+            times = [row.game_time for row in lap_rows if row.game_time is not None]
+            start = min(times) if times else None
+            span = (max(times) - start) if times and start is not None else 0.0
+            for index, row in enumerate(lap_rows):
+                elapsed = row.game_time - start if row.game_time is not None and start is not None else None
+                points.append({
+                    "lap_number": lap_number,
+                    "game_time": row.game_time,
+                    "progress": elapsed / span if elapsed is not None and span > 0 else index / max(1, len(lap_rows) - 1),
+                    "throttle": row.throttle,
+                    "brake": row.brake,
+                    "speed_kph": row.speed_kph,
+                })
+        warnings = [] if points else ["No input samples were stored for the selected laps."]
+        return {"session_id": session_id, "laps": selected, "points": points, "warnings": warnings}
+
     def remove_session(self, session_id: str) -> dict | None:
         with SessionLocal() as db:
             session = db.get(SessionModel, session_id)

@@ -94,6 +94,8 @@ class PdfReportRenderer:
             lambda pdf, page, total: self._session_specific(pdf, page, total, analysis, narrative),
             lambda pdf, page, total: self._recommendations(pdf, page, total, analysis, config, narrative),
         ]
+        if config.include_charts:
+            pages.insert(4, lambda pdf, page, total: self._best_lap_inputs(pdf, page, total, analysis))
         lap_chunk_size = 23 if config.detail_level == "detailed" else 34
         lap_pages = [
             (lambda rows: (lambda pdf, page, total: self._lap_table(pdf, page, total, analysis, rows, config)))(analysis.lap_table[index:index + lap_chunk_size])
@@ -260,6 +262,39 @@ class PdfReportRenderer:
             ax.axis("off"); ax2.axis("off"); ax.text(.5,.5,a.comparison.get("note"),ha="center",va="center")
         fig.text(.06,.25,"Corner analysis",fontsize=10,weight="bold",color=NAVY); fig.text(.06,.215,_wrap(a.corners.get("note"),145),fontsize=7.5,color=NAVY)
         fig.text(.06,.12,_wrap("The theoretical best is not presented as automatically achievable. A realistic composite is only produced when compatible sector evidence exists.",145),fontsize=7,color=GREY)
+        pdf.savefig(fig); plt.close(fig)
+
+    def _best_lap_inputs(self, pdf, page, total, a):
+        fig = self._figure(pdf, page, total, "Best-lap throttle and brake", landscape=True)
+        trace = a.comparison.get("best_lap_trace") or {}
+        lap_number = trace.get("lap") or a.lap.get("best_lap_number")
+        fig.text(.06, .88, f"Best Lap Throttle & Brake - Lap {lap_number or '-'}", fontsize=20, weight="bold", color=NAVY)
+        fig.text(.06, .825, f"Best valid lap: {format_seconds(a.lap.get('best_lap'))}. Inputs are aligned by elapsed lap time.", fontsize=9, color=GREY)
+        points = trace.get("points") or []
+        game_times = [point.get("game_time") for point in points if point.get("game_time") is not None]
+        start_time = min(game_times) if game_times else None
+        best_lap_time = a.lap.get("best_lap")
+        def elapsed(point):
+            if start_time is not None and point.get("game_time") is not None:
+                return max(0.0, point["game_time"] - start_time)
+            if best_lap_time is not None and point.get("progress") is not None:
+                return point["progress"] * best_lap_time
+            return None
+        throttle = [(elapsed(point), point.get("throttle")) for point in points if elapsed(point) is not None and point.get("throttle") is not None]
+        brake = [(elapsed(point), point.get("brake")) for point in points if elapsed(point) is not None and point.get("brake") is not None]
+        ax = fig.add_axes([.08, .17, .84, .55])
+        def percent(value):
+            return max(0.0, min(100.0, value * 100.0 if abs(value) <= 1.0001 else value))
+        if throttle:
+            ax.plot([x for x, _ in throttle], [percent(y) for _, y in throttle], color="#16a34a", linewidth=1.25, label="Throttle")
+        if brake:
+            ax.plot([x for x, _ in brake], [percent(y) for _, y in brake], color=RED, linewidth=1.1, label="Brake")
+        if throttle or brake:
+            ax.set_xlim(left=0); ax.set_ylim(0, 100)
+            ax.set_xlabel("Elapsed lap time (s)"); ax.set_ylabel("Pedal input (%)")
+            ax.grid(True, color=LIGHT, linewidth=.5); ax.legend(fontsize=8, loc="upper right")
+        else:
+            ax.axis("off"); ax.text(.5, .5, "Best-lap throttle/brake trace unavailable", ha="center", va="center")
         pdf.savefig(fig); plt.close(fig)
 
     def _pits_traffic_corners(self, pdf, page, total, a):

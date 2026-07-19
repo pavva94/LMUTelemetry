@@ -30,6 +30,16 @@ def saved_session_review(session_id: str, request: Request, limit: int = 5000):
     return service.repository.review(session_id, sample_limit=limit)
 
 
+@router.get("/session/review/{session_id}/lap-inputs")
+def session_lap_inputs(session_id: str, request: Request, lap_a: int, lap_b: int | None = None, max_points: int = 2400):
+    service = request.app.state.telemetry_service
+    return service.repository.lap_input_trace(
+        session_id,
+        [lap_a, *([lap_b] if lap_b is not None else [])],
+        max_points=max(80, min(5000, max_points)),
+    )
+
+
 @router.get("/session/review/{session_id}/dashboard")
 def saved_session_dashboard(session_id: str, request: Request):
     service = request.app.state.telemetry_service

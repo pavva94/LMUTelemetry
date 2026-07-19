@@ -287,6 +287,9 @@ function buildSampleSeries(samples: Row[]): ChartRow[] {
   return decimateRows(samples).map((sample) => {
     const row: ChartRow = {
       game_time: rowTime(sample),
+      lap_number: chartNumber(sample.lap_number),
+      lap_distance: chartNumber(sample.lap_distance),
+      progress: chartNumber(sample.progress),
       speed_kph: chartNumber(sample.speed_kph),
       rpm: chartNumber(sample.rpm),
       throttle: chartNumber(sample.throttle),

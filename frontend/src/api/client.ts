@@ -35,6 +35,11 @@ export const api = {
   sessions: () => getJson<SavedSession[]>("/api/sessions"),
   review: (limit = REVIEW_SAMPLE_LIMIT) => getJson<SessionReview>(`/api/session/review?limit=${limit}`),
   reviewSession: (id: string, limit = REVIEW_SAMPLE_LIMIT) => getJson<SessionReview>(`/api/session/review/${encodeURIComponent(id)}?limit=${limit}`),
+  sessionLapInputs: (id: string, lapA: string, lapB?: string, maxPoints = 2400) => {
+    const params = new URLSearchParams({ lap_a: lapA, max_points: String(maxPoints) });
+    if (lapB) params.set("lap_b", lapB);
+    return getJson<{ session_id: string; laps: Array<string | number>; points: Array<Record<string, number | string | boolean | null>>; warnings: string[] }>(`/api/session/review/${encodeURIComponent(id)}/lap-inputs?${params}`);
+  },
   sessionDashboard: (id: string) => getJson<SessionDashboard>(`/api/session/review/${encodeURIComponent(id)}/dashboard`),
   liveLapAnalysis: (selectedLap?: number | null, referenceLap?: number | null, analysisLaps?: number[] | null) => {
     const params = new URLSearchParams();
