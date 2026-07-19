@@ -511,10 +511,11 @@ function TyreCard({ player }: { player?: PlayerState }) {
   return <section className="status-card tyre-card"><CardTitle icon={Thermometer} eyebrow={t("liveDashboard.condition")} title={t("liveDashboard.tyres")} />
     {hasTyreData || hasBrakeData ? <div className="vehicle-tyres">{tyreKeys.map((key) => {
       const temp = tyres?.[`temp_${key}`] as TyreTemps | undefined;
-      const zones = [temp?.left_c, temp?.center_c ?? temp?.carcass_c, temp?.right_c];
+      const surfaceZones = [temp?.left_c, temp?.center_c, temp?.right_c];
+      const carcassTemp = temp?.carcass_c;
       const wear = tyres?.[`wear_${key}`] as number | undefined;
       const brakeTemp = player?.[brakeTempKeys[key]];
-      return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong>{finite(wear) && <span>{percent(wear)} {t("liveDashboard.life")}</span>}</header><div>{zones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div><footer style={{ background: brakeHeatColour(brakeTemp) }}><span>{t("telemetry.brake")}</span><strong>{finite(brakeTemp) ? `${Math.round(brakeTemp)}°C` : "--"}</strong></footer></div>;
+      return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong>{finite(wear) && <span>{percent(wear)} {t("liveDashboard.life")}</span>}</header><div className="surface-temperature">{surfaceZones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div><div className="carcass-temperature" style={{ background: heatColour(carcassTemp) }}><span>{t("liveDashboard.carcass")}</span><strong>{finite(carcassTemp) ? `${Math.round(carcassTemp)}°C` : "--"}</strong></div><footer style={{ background: brakeHeatColour(brakeTemp) }}><span>{t("telemetry.brake")}</span><strong>{finite(brakeTemp) ? `${Math.round(brakeTemp)}°C` : "--"}</strong></footer></div>;
     })}<div className="car-spine"><i /><span>{t("liveDashboard.front")}</span></div></div> : <EmptyState label={t("liveDashboard.tyreTempsUnavailable")} compact />}
     {hasTyreData && <div className="heat-key"><span>{t("liveDashboard.cool")}</span><i /><span>{t("liveDashboard.hot")}</span></div>}
   </section>;

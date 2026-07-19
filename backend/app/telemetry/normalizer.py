@@ -22,6 +22,19 @@ def kelvin_to_celsius(value: float | None) -> float | None:
     return value - 273.15 if value > 170 else value
 
 
+def lmu_brake_temperature_c(value: Any) -> float | None:
+    """Normalize LMU's brake-temperature channel to Celsius.
+
+    The bundled interface header labels mBrakeTemp as Celsius, but current LMU
+    builds expose an absolute/Kelvin value (for example, about 738 for 465 C in
+    the in-game tyre panel).
+    """
+    raw = safe_float(value)
+    if raw is None or raw <= 273.15:
+        return None
+    return raw - 273.15
+
+
 def vector_speed_kph(vector: Any) -> float | None:
     try:
         x = float(getattr(vector, "x") if hasattr(vector, "x") else vector[0])
@@ -251,10 +264,10 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         tc_max=attr(telemetry, "mTCMax", default=None),
         tc_slip_setting=attr(telemetry, "mTCSlip", default=None),
         tc_cut_setting=attr(telemetry, "mTCCut", default=None),
-        brake_temp_fl=wheel_value(0, "mBrakeTemp"),
-        brake_temp_fr=wheel_value(1, "mBrakeTemp"),
-        brake_temp_rl=wheel_value(2, "mBrakeTemp"),
-        brake_temp_rr=wheel_value(3, "mBrakeTemp"),
+        brake_temp_fl=lmu_brake_temperature_c(wheel_value(0, "mBrakeTemp")),
+        brake_temp_fr=lmu_brake_temperature_c(wheel_value(1, "mBrakeTemp")),
+        brake_temp_rl=lmu_brake_temperature_c(wheel_value(2, "mBrakeTemp")),
+        brake_temp_rr=lmu_brake_temperature_c(wheel_value(3, "mBrakeTemp")),
         brake_pressure_fl=wheel_value(0, "mBrakePressure"),
         brake_pressure_fr=wheel_value(1, "mBrakePressure"),
         brake_pressure_rl=wheel_value(2, "mBrakePressure"),
