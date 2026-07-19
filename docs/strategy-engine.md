@@ -18,9 +18,13 @@ Live data comes from `StrategyState` and `TelemetrySnapshot`. Stored data comes 
 
 Stored-session pace uses the selected robust basis: median, 10% trimmed mean (when the sample is large enough), or the 60th percentile. Manual pace replaces only the active pace and leaves the measured source visible. Spread is the population standard deviation; trend is calculated separately from recent windows.
 
-Stored fuel uses the robust median of positive `fuel_used` values from valid laps. Live fuel is supplied by the backend fuel model, which rejects pit/refuel boundaries, missing transitions, and outliers. Standard deviation is retained for uncertainty and the safety policy adjusts the planning rate and reserve transparently.
+Stored fuel uses the robust median of positive `fuel_used` values from valid laps. Live fuel is supplied by the backend fuel model, which rejects pit/refuel boundaries, missing transitions, and outliers. Standard deviation is retained for cumulative uncertainty, and the safety policy selects its confidence multiplier and adjusts the explicit reserve transparently.
+
+When a saved session contains at least 12 valid laps with fuel level and four-corner tyre wear, the planner fits a robust Huber stint regression. Pit laps, fuel resets, and lap-number restarts delimit observed stints. The regression separates fuel-load effect, average tyre-wear effect, and the short warm-up/out-lap effect; extreme laps are down-weighted rather than allowed to determine the curve. The robust residual standard deviation is reported as pace variability and propagated to a P90 race-time range with `sigma * sqrt(laps)`. Short or incomplete sessions continue to use the transparent fallback heuristic.
 
 Tyre wear is derived independently for each corner from positive consecutive wear deltas below 0.20 per lap. The scalar median is a fallback only. Tyre degradation time is unavailable unless a measured pace-versus-wear slope is supplied; wear rate is never converted into an invented time penalty.
+
+The tyre allocation is entered as a count of individual tyres and includes the four fitted at race start. Automatic corner-by-corner calls consume one tyre per changed corner; full-set calls consume four. Any candidate whose starting tyres plus planned replacements exceed the allocation is rejected. The plan card reports used and remaining tyres so the constraint is auditable.
 
 ## Simulation
 
@@ -28,10 +32,13 @@ For each candidate stop count, the engine:
 
 1. Estimates the timed-race lap count, then divides integer laps into balanced stints.
 2. Calculates per-corner wear through every stint and applies the selected tyre policy.
-3. Uses `planning fuel rate × stint laps + reserve` to calculate start fuel and each stop load. Every load must fit the tank and fuel may never become negative.
+3. Uses expected stint fuel plus a cumulative uncertainty allowance and the configured reserve to calculate start fuel and each stop load. Uncertainty scales with the square root of stint length instead of being charged as a full penalty on every lap. Every load must fit the tank and fuel may never become negative.
 4. Calculates stationary service as base overhead plus tyre and fuel work. Sequential service sums both jobs; parallel service takes the slower job. Pit-lane driving loss is separate.
 5. Simulates laps and pit events in chronological elapsed time. A lap that starts before the duration target is completed; pit, trend, measured degradation, calibrated lift-and-coast, and traffic costs advance the same clock.
 6. Repeats until the completed-lap count stabilizes.
+7. Rejects a final fuel-only stop when the preceding stint can absorb the remaining laps within its fuel and virtual-energy limits. This prevents dominated plans such as `46 / 46 / 46 / 46 / 34 / 1` when `46 / 46 / 46 / 46 / 35` is feasible.
+
+The planner ranks feasible non-saving candidates by completed timed-race laps and then elapsed time. Its default selection is the actual highest-ranked candidate. A lift-and-coast candidate is always presented separately: it preferentially shows a lower-stop solution when saving can remove a stop, otherwise it shows how saving extends the planned stints. When no measured lift-and-coast pace-cost model exists, that option remains a clearly warned contingency and is not promoted over the normal fastest plan.
 
 Fuel saving is searched only when a lower-stop plan is otherwise infeasible, up to 8% of normal consumption. If no calibrated seconds-per-percent cost exists, feasibility is shown but pace cost is explicitly unavailable.
 

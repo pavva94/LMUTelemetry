@@ -41,6 +41,7 @@ class RaceSimulationRequest(BaseModel):
     service_model: Literal["sequential", "parallel"] = "parallel"
     race_start_new_tyres: bool = True
     tyre_wear_limit: float = Field(default=0.85, gt=0, le=1)
+    max_tyres_available: int = Field(default=24, ge=4, le=200)
     used_tyre_wear: float = Field(default=0.35, ge=0, le=0.95)
     tyre_wear_variability: float = Field(default=0.12, ge=0, le=0.75)
     pace_variability_multiplier: float = Field(default=1, ge=0, le=5)

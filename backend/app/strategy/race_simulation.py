@@ -123,11 +123,23 @@ def generate_strategies(model: dict[str, Any], request: RaceSimulationRequest, t
         return lengths
 
     def make_strategy(name: str, lengths: list[int]) -> SimulationStrategy:
+        tyre_age_laps = 0
+        stints: list[SimulationStint] = []
+        for index, length in enumerate(lengths):
+            change_tyres = index > 0 and tyre_age_laps + length > tyre_laps
+            if change_tyres:
+                tyre_age_laps = 0
+            stints.append(SimulationStint(
+                laps=length,
+                fuel_added_liters=min(tank, length * model["fuel_per_lap"] + request.finish_reserve_liters),
+                change_tyres=change_tyres,
+            ))
+            tyre_age_laps += length
         return SimulationStrategy(
             name=name,
             # Each stint carries only the fuel it needs plus reserve. The
             # first value is also the calculated short-fill start target.
-            stints=[SimulationStint(laps=length, fuel_added_liters=min(tank, length * model["fuel_per_lap"] + request.finish_reserve_liters)) for length in lengths],
+            stints=stints,
         )
     # Endurance races frequently require more than four stints. Generate the
     # minimum feasible plan plus nearby alternatives, bounded only to protect
@@ -137,11 +149,15 @@ def generate_strategies(model: dict[str, Any], request: RaceSimulationRequest, t
         lengths = [base + (1 if index < remainder else 0) for index in range(stint_count)]
         if any(length > max_stint for length in lengths):
             continue
-        candidates.append(make_strategy(f"{stint_count - 1}-stop late pit", late_stints(stint_count)))
+        late = make_strategy(f"{stint_count - 1}-stop late pit", late_stints(stint_count))
+        if 4 + 4 * sum(stint.change_tyres for stint in late.stints[1:]) <= request.max_tyres_available:
+            candidates.append(late)
         if lengths != late_stints(stint_count):
-            candidates.append(make_strategy(f"{stint_count - 1}-stop balanced", lengths))
+            balanced = make_strategy(f"{stint_count - 1}-stop balanced", lengths)
+            if 4 + 4 * sum(stint.change_tyres for stint in balanced.stints[1:]) <= request.max_tyres_available:
+                candidates.append(balanced)
     if not candidates:
-        raise ValueError("The duration cannot be covered within derived fuel and tyre constraints; configure a larger tank or tyre-wear limit.")
+        raise ValueError("The duration cannot be covered within the fuel, tyre-wear, and tyre-allocation constraints.")
     return race_laps, candidates
 
 
@@ -203,7 +219,8 @@ def _strategy_plan(strategy: SimulationStrategy, request: RaceSimulationRequest,
         fuel_to_add = max(0.0, target_fuel - fuel)
         pits.append({"pit_lap": completed_laps, "next_stint_laps": next_stint.laps, "change_tyres": next_stint.change_tyres, "fuel_to_add_liters": round(fuel_to_add, 2), "target_fuel_liters": round(target_fuel, 2), "pace_mode": next_stint.pace_mode})
         fuel = min(tank, fuel + fuel_to_add)
-    return {"initial_fuel_liters": round(start_fuel, 2), "start_new_tyres": request.race_start_new_tyres, "stints": len(strategy.stints), "pits": pits}
+    tyres_used = 4 + 4 * sum(stint.change_tyres for stint in strategy.stints[1:])
+    return {"initial_fuel_liters": round(start_fuel, 2), "start_new_tyres": request.race_start_new_tyres, "stints": len(strategy.stints), "tyres_used": tyres_used, "tyres_available": request.max_tyres_available, "tyres_remaining": request.max_tyres_available - tyres_used, "pits": pits}
 
 
 def run_simulation(review: dict[str, Any], request: RaceSimulationRequest, progress: Progress | None = None) -> dict[str, Any]:

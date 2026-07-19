@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, BadgeCheck, CalendarDays, Car, CircleGauge, Clock3, Database, Flag, Gauge, MapPinned, Medal, Route, Search, Timer, Trophy, type LucideIcon } from "lucide-react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
+import { PageSection } from "../components/PageSection";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSettings, LmuDuckdbSyncStatus } from "../types/lmuDuckdb";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
@@ -251,10 +252,13 @@ export function UserProfile() {
         </div>
       </section>
 
+      <PageSection number="02" title="Driving History" description="Compare the classes, cars, and circuits that make up your saved telemetry history.">
       <section className="card span-4 profile-ranking-card"><ProfileRankingTitle icon={Medal} title="Distance By Class" /><SimpleTable rows={summary?.distance_by_class || []} columns={["car_class", "distance_km", "sessions", "laps", "distance_percent"]} /></section>
       <section className="card span-4 profile-ranking-card"><ProfileRankingTitle icon={Car} title="Most Used Cars" /><SimpleTable rows={summary?.top_cars || []} columns={["car", "car_class", "distance_km", "sessions", "laps", "tracks"]} /></section>
       <section className="card span-4 profile-ranking-card"><ProfileRankingTitle icon={MapPinned} title="Most Driven Tracks" /><SimpleTable rows={summary?.top_tracks || []} columns={["track", "layout", "distance_km", "sessions", "laps", "best_lap", "most_used_car"]} /></section>
+      </PageSection>
 
+      <PageSection number="03" title="Pace Records" description="Validated personal records for every session type, circuit, layout, and exact car combination.">
       <section className="card span-12">
         <h2>Best Laps</h2>
         <p className="section-copy">One fastest validated lap for every session type, circuit, layout, and exact car combination. Every record links back to its source session and lap.</p>
@@ -273,6 +277,7 @@ export function UserProfile() {
           ? (excludedLaps.length ? <LapTable rows={excludedLaps} sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="No excluded or suspicious laps were found." />)
           : (bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU session folder is synced." />)}
       </section>
+      </PageSection>
     </div>
   );
 }

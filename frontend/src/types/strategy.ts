@@ -90,6 +90,7 @@ export type StrategyState = {
     fuel_safety_margin_liters?: number;
     fuel_safety_margin_laps?: number;
     max_tyre_wear?: number;
+    max_tyres_available?: number;
     normal_lap_time?: number;
     [key: string]: number | string | boolean | undefined;
   };

@@ -19,6 +19,9 @@ export type RaceSimulationSummary = {
     initial_fuel_liters: number;
     start_new_tyres: boolean;
     stints: number;
+    tyres_used: number;
+    tyres_available: number;
+    tyres_remaining: number;
     pits: Array<{
       pit_lap: number;
       next_stint_laps: number;
