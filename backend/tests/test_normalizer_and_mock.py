@@ -10,6 +10,12 @@ def test_mock_collector_emits_valid_snapshot() -> None:
     snapshot = MockTelemetryCollector().poll_once()
     assert snapshot.connected
     assert snapshot.player is not None
+    assert snapshot.player.vehicle_class == "Hypercar"
+    assert snapshot.player.hybrid_state is not None
+    assert snapshot.player.hybrid_state.battery_charge_fraction is not None
+    assert snapshot.player.hybrid_state.motor_torque_nm is not None
+    assert snapshot.session.track_length_m == MockTelemetryCollector.TRACK_LENGTH_M
+    assert next(car for car in snapshot.competitors if car.is_player).lap_distance is not None
     assert snapshot.competitors
 
 
@@ -37,6 +43,22 @@ def test_yellow_flag_state_name_decodes_null_byte_as_clear() -> None:
     assert yellow_flag_state_name(b"\x00") == "0"
     assert yellow_flag_state_name(None) == "0"
     assert yellow_flag_state_name("fcy") == "fcy"
+
+
+def test_player_normalizer_exposes_primary_flag_and_scoring_finish_status() -> None:
+    raw = SimpleNamespace(
+        scoring=SimpleNamespace(
+            scoringInfo=SimpleNamespace(mNumVehicles=1, mPlayerVehScoringId=0, mTrackName=b"Track", mSession=10, mGamePhase=8, mCurrentET=100.0, mEndET=100.0),
+            vehScoringInfo=[SimpleNamespace(mID=1, mFlag=6, mFinishStatus=1, mVehicleName=b"Team", mVehicleClass=b"Hypercar")],
+        ),
+        telemetry=SimpleNamespace(playerVehicleIdx=0, telemInfo=[SimpleNamespace(mVehicleModel=b"Car")]),
+    )
+
+    snapshot = normalize_lmu_snapshot(raw)
+
+    assert snapshot.player is not None
+    assert snapshot.player.primary_flag == 6
+    assert snapshot.player.finish_status == "finished"
 
 
 def test_tyre_normalizer_ignores_zero_channels_and_reads_temperature_fallback() -> None:
@@ -143,6 +165,53 @@ def test_normalizer_computes_signed_gap_to_player_from_leader_gaps() -> None:
     assert snapshot.player is not None
     assert snapshot.player.gap_car_ahead == 2.0
     assert snapshot.player.gap_car_behind == 3.0
+
+
+def test_normalizer_exposes_live_environment_and_track_grip() -> None:
+    vehicle = SimpleNamespace(mID=1, mPlace=1, mDriverName=b"Player", mVehicleName=b"Car", mVehicleClass=b"Hypercar")
+    raw = SimpleNamespace(
+        scoring=SimpleNamespace(
+            scoringInfo=SimpleNamespace(
+                mNumVehicles=1,
+                mPlayerVehScoringId=0,
+                mTrackName=b"Le Mans",
+                mLapDist=13626.0,
+                mSession=10,
+                mCurrentET=100.0,
+                mEndET=200.0,
+                mRaining=0.35,
+                mAmbientTemp=22.5,
+                mTrackTemp=31.5,
+                mTrackGripLevel=3,
+            ),
+            vehScoringInfo=[vehicle],
+        ),
+        telemetry=SimpleNamespace(
+            playerVehicleIdx=0,
+            telemInfo=[SimpleNamespace(
+                mBatteryChargeFraction=0.64,
+                mStateOfCharge=64.0,
+                mVirtualEnergy=0.81,
+                mRegen=38.5,
+                mElectricBoostMotorTorque=-72.0,
+            )],
+        ),
+    )
+
+    snapshot = normalize_lmu_snapshot(raw)
+
+    assert snapshot.environment.raining == 0.35
+    assert snapshot.session.track_length_m == 13626.0
+    assert snapshot.environment.ambient_temp_c == 22.5
+    assert snapshot.environment.track_temp_c == 31.5
+    assert snapshot.environment.track_grip == 3
+    assert snapshot.player is not None
+    assert snapshot.player.hybrid_state is not None
+    assert snapshot.player.hybrid_state.battery_charge_fraction == 0.64
+    assert snapshot.player.hybrid_state.state_of_charge_percent == 64.0
+    assert snapshot.player.hybrid_state.virtual_energy_fraction == 0.81
+    assert snapshot.player.hybrid_state.regen_kw == 38.5
+    assert snapshot.player.hybrid_state.motor_torque_nm == -72.0
 
 
 def test_normalizer_prefers_dedicated_player_gap_channels() -> None:

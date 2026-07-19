@@ -29,9 +29,12 @@ export type TyreState = {
 };
 
 export type HybridState = {
+  battery_charge_fraction?: number;
+  state_of_charge_percent?: number;
   battery_percent?: number;
   virtual_energy_fraction?: number;
   regen_kw?: number;
+  motor_torque_nm?: number;
   motor_state?: string;
   deploy_mode?: string;
   regen_active?: boolean;
@@ -109,6 +112,7 @@ export type PlayerState = {
   front_downforce?: number;
   rear_downforce?: number;
   drag?: number;
+  primary_flag?: number;
   finish_status?: string;
   track_limits_steps?: number;
   lap_invalidated?: boolean;
@@ -122,6 +126,7 @@ export type PlayerState = {
 
 export type SessionState = {
   track_name?: string;
+  track_length_m?: number;
   session_type?: string;
   game_phase?: string;
   current_time?: number;

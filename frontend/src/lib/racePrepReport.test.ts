@@ -3,6 +3,41 @@ import { buildRacePrepReport } from "./racePrepReport";
 import type { SessionReview } from "../types/session";
 
 describe("race prep report", () => {
+  it("finds the best 5- and 10-lap pace only across continuous valid laps", () => {
+    const laps = [
+      ...Array.from({ length: 5 }, (_, index) => ({ lap_number: index + 1, lap_time: 100, valid_lap: true, in_pit: false })),
+      { lap_number: 6, lap_time: 80, valid_lap: false, in_pit: true },
+      ...Array.from({ length: 5 }, (_, index) => ({ lap_number: index + 7, lap_time: 90, valid_lap: true, in_pit: false })),
+      ...Array.from({ length: 10 }, (_, index) => ({ lap_number: index + 20, lap_time: 92, valid_lap: true, in_pit: false })),
+    ];
+    const report = buildRacePrepReport({ session: null, recommendations: [], pit_events: [], telemetry_samples: [], laps });
+
+    expect(report.pace.bestFiveContinuous).toEqual({ average: 90, startLap: 7, endLap: 11, fastestLap: 90, slowestLap: 90 });
+    expect(report.pace.bestTenContinuous).toEqual({ average: 92, startLap: 20, endLap: 29, fastestLap: 92, slowestLap: 92 });
+  });
+
+  it("preserves detailed lap, sector, fuel, tyre, and condition fields for the report table", () => {
+    const report = buildRacePrepReport({
+      session: null,
+      recommendations: [],
+      pit_events: [],
+      telemetry_samples: [],
+      laps: [{
+        lap_number: 3, lap_time: 91, sector1: 30, sector2: 31, sector3: 30,
+        fuel_start: 60, fuel_end: 56, fuel_used: 4, fuel_added: 0,
+        tyre_compound: "Medium", tyre_wear_end_fl: 0.12, tyre_temp_fl: 88, tyre_pressure_fl: 186,
+        track_temp: 34, ambient_temp: 24, top_speed: 301, valid_lap: true, in_pit: false,
+      }],
+    });
+
+    expect(report.charts.laps[0]).toMatchObject({
+      lap: 3, sector1: 30, sector2: 31, sector3: 30,
+      fuel_start: 60, fuel_end: 56, fuel_used: 4, fuel_added: 0,
+      tyre_compound: "Medium", tyre_wear_fl: 0.12, tyre_temp_fl: 88, tyre_pressure_fl: 186,
+      track_temp: 34, ambient_temp: 24, top_speed: 301,
+    });
+  });
+
   it("reports radiator temperatures and per-wheel grass contact when channels exist", () => {
     const report = buildRacePrepReport({
       session: null,

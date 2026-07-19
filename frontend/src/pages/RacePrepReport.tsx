@@ -164,7 +164,7 @@ export function RacePrepReport({ strategy }: Props) {
       ) : (
         <>
           <ReportSection number="01" title="Overview" description="Session identity, coverage, headline pace, distance, and conditions."><SessionOverview report={report} /></ReportSection>
-          <ReportSection number="02" title="Laps & Sectors" description="Lap progression, consistency, top speed, markers, sectors, and theoretical potential."><LapAnalysis report={report} /><BestAndSector report={report} /></ReportSection>
+          <ReportSection number="02" title="Laps & Sectors" description="Lap progression, consistency, top speed, markers, sectors, and theoretical potential."><LapAnalysis report={report} /><BestAndSector report={report} /><LapDetailTable report={report} /></ReportSection>
           <ReportSection number="03" title="Fuel & Stints" description="Fuel consumption, stint structure, race range, and observed stop requirements."><FuelAnalysis report={report} /></ReportSection>
           <ReportSection number="04" title="Driver & Vehicle" description="Driver inputs, acceleration loads, powertrain temperatures, speed, and surface contact."><DriverInputs report={report} /><PowertrainAndSurface report={report} /></ReportSection>
           <ReportSection number="05" title="Tyres" description="Wear, temperature, pressure, balance, and degradation evidence for all four tyres."><TyreWear report={report} /><TyreTempPressure report={report} /></ReportSection>
@@ -205,6 +205,8 @@ function SessionOverview({ report }: { report: RacePrepReportModel }) {
 }
 
 function LapAnalysis({ report }: { report: RacePrepReportModel }) {
+  const five = report.pace.bestFiveContinuous;
+  const ten = report.pace.bestTenContinuous;
   return (
     <>
       <section className="card span-5">
@@ -228,6 +230,15 @@ function LapAnalysis({ report }: { report: RacePrepReportModel }) {
         <SectionTitle title="Fuel And Wear Per Lap" help="Shows lap-level fuel use and tyre wear delta together to connect pace, consumption, and degradation." />
         <SessionChart data={report.charts.laps} xKey="lap" lines={[["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} height={220} />
       </section>
+      <section className="card span-12">
+        <SectionTitle title="Continuous-Lap Pace" help="Finds the fastest average pace across uninterrupted valid laps. Invalid laps, pit laps, missing lap numbers, and timing outliers break the sequence." />
+        <div className="header-grid">
+          <Metric label="Best continuous 5" value={formatRaceTime(five?.average)} sub={five ? `Laps ${five.startLap}-${five.endLap}` : "Needs 5 consecutive valid laps"} />
+          <Metric label="5-lap range" value={five ? `${formatRaceTime(five.fastestLap)} - ${formatRaceTime(five.slowestLap)}` : "--"} sub="Fastest to slowest lap" />
+          <Metric label="Best continuous 10" value={formatRaceTime(ten?.average)} sub={ten ? `Laps ${ten.startLap}-${ten.endLap}` : "Needs 10 consecutive valid laps"} />
+          <Metric label="10-lap range" value={ten ? `${formatRaceTime(ten.fastestLap)} - ${formatRaceTime(ten.slowestLap)}` : "--"} sub="Fastest to slowest lap" />
+        </div>
+      </section>
     </>
   );
 }
@@ -250,6 +261,52 @@ function BestAndSector({ report }: { report: RacePrepReportModel }) {
         {!report.sectors.available && <p className="muted">Sector split channels are not stored for this session yet, so sector analysis cannot be calculated from this recording.</p>}
       </section>
     </>
+  );
+}
+
+function lapNumber(row: Record<string, unknown>, key: string): number | null {
+  const value = row[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function wheelReadings(row: Record<string, unknown>, prefix: string, formatter: (value: number | null) => string) {
+  return wheels.map((wheel) => formatter(lapNumber(row, `${prefix}_${wheel}`))).join(" / ");
+}
+
+function LapDetailTable({ report }: { report: RacePrepReportModel }) {
+  const rows = report.charts.laps;
+  return (
+    <section className="card span-12">
+      <SectionTitle title="Lap And Sector Detail" help="Lists every detected lap with timing, fuel, tyre condition, temperatures, pressures, track conditions, and speed. Per-wheel readings are ordered FL / FR / RL / RR." />
+      {rows.length ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Lap</th><th>Status</th><th>Lap time</th><th>Delta</th><th>S1</th><th>S2</th><th>S3</th><th>Fuel used</th><th>Fuel start / end</th><th>Compound</th><th>Tyre wear used FL / FR / RL / RR</th><th>Tyre temp FL / FR / RL / RR</th><th>Pressure FL / FR / RL / RR</th><th>Track / ambient</th><th>Top speed</th></tr>
+            </thead>
+            <tbody>{rows.map((row, index) => (
+              <tr key={`${String(row.lap)}-${index}`}>
+                <td>{text(row.lap as number)}</td>
+                <td>{row.in_pit === true ? "Pit" : row.valid_lap === true ? "Valid" : "Excluded"}</td>
+                <td>{formatRaceTime(row.lap_time as number)}</td>
+                <td>{fmt(row.delta as number, 3, " s")}</td>
+                <td>{formatRaceTime(row.sector1 as number)}</td>
+                <td>{formatRaceTime(row.sector2 as number)}</td>
+                <td>{formatRaceTime(row.sector3 as number)}</td>
+                <td>{fmt(row.fuel_used as number, 3, " L")}</td>
+                <td>{fmt(row.fuel_start as number, 2, " L")} / {fmt(row.fuel_end as number, 2, " L")}</td>
+                <td>{text(row.tyre_compound as string)}</td>
+                <td>{wheelReadings(row, "tyre_wear", (value) => fmt(value == null ? null : value * 100, 2, "%"))}</td>
+                <td>{wheelReadings(row, "tyre_temp", (value) => fmt(value, 1, " C"))}</td>
+                <td>{wheelReadings(row, "tyre_pressure", (value) => fmt(value, 1, " kPa"))}</td>
+                <td>{fmt(row.track_temp as number, 1, " C")} / {fmt(row.ambient_temp as number, 1, " C")}</td>
+                <td>{fmt(row.top_speed as number, 0, " km/h")}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      ) : <EmptyState detail="Lap details appear once completed laps are available in the selected session." />}
+    </section>
   );
 }
 

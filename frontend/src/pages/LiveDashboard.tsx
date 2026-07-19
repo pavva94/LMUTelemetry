@@ -1,5 +1,5 @@
 ﻿import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, CircleGauge, Flag, Fuel, Gauge, Timer, Thermometer } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowRight, ArrowUp, BatteryCharging, CircleGauge, CloudRain, Flag, Fuel, Gauge, Timer, Thermometer } from "lucide-react";
 import {
   CartesianGrid,
   Legend,
@@ -13,9 +13,13 @@ import {
 } from "recharts";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import { completedLapFuelUsed, currentLapFuelUsed } from "../lib/liveFuelHistory";
+import { environmentTrendDirection, trackWetnessState, type EnvironmentTrendDirection } from "../lib/environmentTrend";
+import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, type LapInputPoint, type LapInputTrace } from "../lib/lapInputTrace";
+import { isHypercarClass } from "../lib/vehicleClass";
+import { raceFlagState } from "../lib/raceFlagState";
 import { useT } from "../i18n/I18nProvider";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
-import type { CompetitorState, PlayerState, TelemetrySnapshot, TyreState, TyreTemps } from "../types/telemetry";
+import type { CompetitorState, EnvironmentState, PlayerState, TelemetrySnapshot, TyreState, TyreTemps } from "../types/telemetry";
 
 const tyreKeys = ["fl", "fr", "rl", "rr"] as const;
 const tyreLabels = { fl: "FL", fr: "FR", rl: "RL", rr: "RR" } as const;
@@ -78,6 +82,8 @@ type StoredLiveHistory = {
   positions: PositionRow[];
   previous: { lap?: number; lapStartFuel?: number; observedFromBoundary?: boolean; session?: string };
   paceHistory?: Record<string, { laps: number[]; dirtyLaps: number[]; lastObservedLap?: number; lastPitstops?: number; lastCountLapFlag?: number; lastInvalidated?: boolean; lastUnderYellow?: boolean; wasInPits?: boolean }>;
+  inputTraces?: LapInputTrace[];
+  activeInputTrace?: LapInputTrace;
   gridMode?: "nearby" | "full";
 };
 
@@ -206,6 +212,63 @@ function useLiveRaceHistory(telemetry: TelemetrySnapshot | null, strategy: Strat
   return { laps, positions, liveLap, livePosition };
 }
 
+type LapInputHistory = { sessionId?: string; completed: LapInputTrace[]; current?: LapInputTrace };
+
+function restoredLapInputHistory(sessionId?: string): LapInputHistory {
+  const stored = readStoredHistory(sessionId);
+  return { sessionId, completed: stored?.inputTraces || [], current: stored?.activeInputTrace };
+}
+
+function useLapInputHistory(telemetry: TelemetrySnapshot | null) {
+  const sessionId = telemetry?.session_id;
+  const [history, setHistory] = useState<LapInputHistory>(() => restoredLapInputHistory(sessionId));
+  const persist = useRef({ at: 0, completed: history.completed.length });
+
+  useEffect(() => {
+    const player = telemetry?.player;
+    const playerCar = telemetry?.competitors.find((car) => car.is_player);
+    const lap = player?.lap_number ?? telemetry?.session?.current_lap;
+    const distance = playerCar?.lap_distance;
+    if (!player || !finite(lap) || !finite(distance) || (!finite(player.throttle) && !finite(player.brake))) {
+      if (history.sessionId !== sessionId) setHistory(restoredLapInputHistory(sessionId));
+      return;
+    }
+    const point: LapInputPoint = { distance: Math.max(0, distance), throttle: player.throttle ?? 0, brake: player.brake ?? 0 };
+    setHistory((existing) => {
+      const base = existing.sessionId === sessionId ? existing : restoredLapInputHistory(sessionId);
+      if (!base.current) return { ...base, sessionId, current: { lap, invalidated: Boolean(player.lap_invalidated), points: [point] } };
+      if (base.current.lap !== lap) {
+        const completedTrace = { ...base.current, lapTime: player.last_lap_time };
+        const completed = completedTrace.points.length > 1 ? [...base.completed, completedTrace].slice(-8) : base.completed;
+        return { sessionId, completed, current: { lap, invalidated: Boolean(player.lap_invalidated), points: [point] } };
+      }
+      const lastPoint = base.current.points[base.current.points.length - 1];
+      if (lastPoint && point.distance + 50 < lastPoint.distance) {
+        return { ...base, current: { lap, invalidated: Boolean(player.lap_invalidated), points: [point] } };
+      }
+      return {
+        ...base,
+        current: {
+          ...base.current,
+          invalidated: base.current.invalidated || Boolean(player.lap_invalidated),
+          points: appendLapInputPoint(base.current.points, point),
+        },
+      };
+    });
+  }, [sessionId, telemetry]);
+
+  useEffect(() => {
+    if (!sessionId || history.sessionId !== sessionId) return;
+    const now = Date.now();
+    const completedChanged = persist.current.completed !== history.completed.length;
+    if (!completedChanged && now - persist.current.at < 5_000) return;
+    persist.current = { at: now, completed: history.completed.length };
+    updateStoredHistory(sessionId, { inputTraces: history.completed, activeInputTrace: history.current });
+  }, [history, sessionId]);
+
+  return history;
+}
+
 function RaceHeader({ telemetry, connected, averageLap }: { telemetry: TelemetrySnapshot | null; connected: boolean; averageLap?: number }) {
   const t = useT();
   const player = telemetry?.player;
@@ -213,7 +276,8 @@ function RaceHeader({ telemetry, connected, averageLap }: { telemetry: Telemetry
   const playerCar = telemetry?.competitors.find((car) => car.is_player);
   const rpm = finite(player?.rpm) ? Math.min(100, (player.rpm / Math.max(player.max_rpm || 9000, 1)) * 100) : 0;
   const caution = displayFlag(t, session?.yellow_flag_state);
-  const flag = caution || phaseLabel(t, session?.game_phase);
+  const activeFlag = raceFlagState(telemetry);
+  const flag = activeFlag.yellowProcedure ? displayFlag(t, activeFlag.yellowProcedure) || t("liveDashboard.fullCourseYellow") : activeFlag.labelKey ? t(activeFlag.labelKey) : caution || phaseLabel(t, session?.game_phase);
   const currentLap = player?.lap_number ?? session?.current_lap;
   const hasRealLapLimit = finite(session?.max_laps) && session.max_laps > 0 && session.max_laps < 10_000 && (!finite(currentLap) || session.max_laps >= currentLap);
   const estimatedTotalLaps = hasRealLapLimit ? session?.max_laps : finite(currentLap) && finite(session?.time_remaining) && session.time_remaining > 0 && finite(averageLap) ? currentLap + Math.ceil(session.time_remaining / averageLap) : undefined;
@@ -236,9 +300,9 @@ function RaceHeader({ telemetry, connected, averageLap }: { telemetry: Telemetry
           <div className="primary-race-number session-lap-number"><span>{t("liveDashboard.sessionLaps")}</span><strong><b>{finite(currentLap) ? currentLap : "--"}</b><i>/</i><b>{finite(estimatedTotalLaps) ? `${hasRealLapLimit ? "" : "~"}${estimatedTotalLaps}` : "--"}</b></strong><small>{hasRealLapLimit ? t("liveDashboard.scheduledDistance") : t("liveDashboard.estimatedFromCleanPace")}</small></div>
         </div>
         <LapTiming player={player} playerCar={playerCar} averageLap={averageLap} />
-        <div className={`race-flag-block ${caution ? "caution" : flag.toLowerCase().includes("green") ? "green" : "neutral"}`}>
+        <div className={`race-flag-block ${activeFlag.tone}`}>
           <span>{t("liveDashboard.raceStatus")}</span><strong><Flag size={24} />{flag}</strong>
-          <small>{caution ? t("liveDashboard.fullCourseProcedure") : session?.session_type || t("liveDashboard.liveSession")}</small>
+          <small>{activeFlag.detailKey ? t(activeFlag.detailKey) : session?.session_type || t("liveDashboard.liveSession")}</small>
         </div>
         <div className="compact-car-state" aria-label={t("telemetry.status")}>
           <div><span>{t("telemetry.speed")}</span><strong>{fmt(player?.speed_kph, 0)} <small>km/h</small></strong></div>
@@ -456,6 +520,79 @@ function TyreCard({ player }: { player?: PlayerState }) {
   </section>;
 }
 
+type EnvironmentSample = EnvironmentState & { sampledAt: number };
+
+function useEnvironmentHistory(environment?: EnvironmentState, timestamp?: string, sessionId?: string) {
+  const [samples, setSamples] = useState<EnvironmentSample[]>([]);
+  const activeSession = useRef(sessionId);
+  const lastSampleAt = useRef(0);
+
+  useEffect(() => {
+    if (activeSession.current !== sessionId) {
+      activeSession.current = sessionId;
+      lastSampleAt.current = 0;
+      setSamples([]);
+    }
+    if (!environment) return;
+    const sampleAt = Date.parse(timestamp || "") || Date.now();
+    if (sampleAt - lastSampleAt.current < 5_000) return;
+    lastSampleAt.current = sampleAt;
+    setSamples((current) => [...current.filter((sample) => sampleAt - sample.sampledAt <= 60_000), { ...environment, sampledAt: sampleAt }].slice(-13));
+  }, [environment, sessionId, timestamp]);
+
+  return samples;
+}
+
+function gripLabel(t: (key: string) => string, value?: number) {
+  if (!finite(value)) return "--";
+  const level = Math.round(value);
+  return level >= 0 && level <= 4 ? t(`liveDashboard.gripLevel${level}`) : fmt(value, 0);
+}
+
+function EnvironmentTrend({ direction }: { direction: EnvironmentTrendDirection }) {
+  const t = useT();
+  const Icon = direction === "up" ? ArrowUp : direction === "down" ? ArrowDown : ArrowRight;
+  const label = direction === "unavailable" ? t("liveDashboard.trendBuilding") : t(`liveDashboard.trend${direction[0].toUpperCase()}${direction.slice(1)}`);
+  return <small className={`environment-trend ${direction}`}><Icon size={13} />{label}</small>;
+}
+
+function EnvironmentCard({ telemetry }: { telemetry: TelemetrySnapshot | null }) {
+  const t = useT();
+  const environment = telemetry?.connected ? telemetry.environment : undefined;
+  const samples = useEnvironmentHistory(environment, telemetry?.timestamp, telemetry?.session_id);
+  const wetnessState = trackWetnessState(environment?.avg_wetness);
+  const metrics = [
+    { key: "track_temp_c", label: t("liveDashboard.trackTemperature"), value: environment?.track_temp_c, display: fmt(environment?.track_temp_c, 1, "°C"), deadband: 0.1 },
+    { key: "ambient_temp_c", label: t("liveDashboard.ambientTemperature"), value: environment?.ambient_temp_c, display: fmt(environment?.ambient_temp_c, 1, "°C"), deadband: 0.1 },
+    { key: "track_grip", label: t("liveDashboard.trackGrip"), value: environment?.track_grip, display: gripLabel(t, environment?.track_grip), deadband: 0.05 },
+    { key: "raining", label: t("liveDashboard.rainIntensity"), value: environment?.raining, display: finite(environment?.raining) ? `${Math.round(environment.raining * 100)}%` : "--", deadband: 0.01 },
+  ] as const;
+  const hasData = metrics.some((metric) => finite(metric.value));
+  return <section className="status-card environment-card"><CardTitle icon={CloudRain} eyebrow={t("liveDashboard.conditions")} title={t("liveDashboard.trackWeather")} />
+    {hasData ? <div className="environment-metrics">{metrics.map((metric) => {
+      const direction = environmentTrendDirection(samples.map((sample) => sample[metric.key]), metric.deadband);
+      return <div className="environment-metric" key={metric.key}><span>{metric.label}</span><strong>{metric.display}</strong><EnvironmentTrend direction={direction} /></div>;
+    })}</div> : <EmptyState label={t("liveDashboard.environmentUnavailable")} compact />}
+    {environment && <div className="wetness-summary"><div><span>{t("liveDashboard.averagePathWetness")}</span><strong>{wetnessState === "unavailable" ? "--" : t(`liveDashboard.wetness${wetnessState[0].toUpperCase()}${wetnessState.slice(1)}`)}</strong><small>{finite(environment.avg_wetness) ? `${Math.round(environment.avg_wetness * 100)}%` : "--"}</small></div><p><span><b>0.00–0.05</b>{t("liveDashboard.wetnessDry")}</span><span><b>0.05–0.20</b>{t("liveDashboard.wetnessSlightlyDamp")}</span><span><b>0.20–0.50</b>{t("liveDashboard.wetnessWet")}</span><span><b>0.50–0.80</b>{t("liveDashboard.wetnessVeryWet")}</span><span><b>0.80–1.00</b>{t("liveDashboard.wetnessSaturated")}</span></p></div>}
+  </section>;
+}
+
+function HypercarEnergyCard({ player }: { player?: PlayerState }) {
+  const t = useT();
+  const hybrid = player?.hybrid_state;
+  const batteryFraction = hybrid?.battery_charge_fraction ?? (finite(hybrid?.battery_percent) ? hybrid.battery_percent / 100 : undefined);
+  const metrics = [
+    { label: t("liveDashboard.batteryChargeFraction"), value: finite(batteryFraction) ? `${Math.round(batteryFraction * 100)}%` : "--" },
+    { label: t("liveDashboard.stateOfCharge"), value: fmt(hybrid?.state_of_charge_percent ?? hybrid?.battery_percent, 1, "%") },
+    { label: t("liveDashboard.virtualEnergy"), value: finite(hybrid?.virtual_energy_fraction) ? `${Math.round(hybrid.virtual_energy_fraction * 100)}%` : "--" },
+    { label: t("liveDashboard.regenerationPower"), value: fmt(hybrid?.regen_kw, 1, " kW") },
+    { label: t("liveDashboard.boostMotorTorque"), value: fmt(hybrid?.motor_torque_nm, 1, " Nm") },
+  ];
+  return <section className="status-card energy-card"><CardTitle icon={BatteryCharging} eyebrow={t("liveDashboard.hybridSystem")} title={t("liveDashboard.energy")} />
+    <div className="energy-metrics">{metrics.map((metric) => <div className="energy-metric" key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong></div>)}</div>
+  </section>;
+}
+
 function FuelCard({ telemetry, strategy }: { telemetry: TelemetrySnapshot | null; strategy: StrategyState | null }) {
   const t = useT();
   const player = telemetry?.player;
@@ -509,6 +646,32 @@ function EmptyState({ label, compact = false }: { label: string; compact?: boole
   return <div className={`live-empty ${compact ? "compact" : ""}`}><CircleGauge size={20} /><span>{label}</span></div>;
 }
 
+function LapInputComparison({ history, trackLength }: { history: LapInputHistory; trackLength?: number }) {
+  const t = useT();
+  const last = history.completed[history.completed.length - 1];
+  const best = bestLapInputTrace(history.completed);
+  const series = useMemo(() => [
+    { id: "best", label: t("liveDashboard.bestLap"), colour: "#6ee7a8", trace: best },
+    { id: "last", label: t("liveDashboard.lastLapTrace"), colour: "#55c7f7", trace: last },
+    { id: "current", label: t("liveDashboard.currentLapLive"), colour: "#f3b642", trace: history.current },
+  ], [best, history.current, last, t]);
+  const data = useMemo(() => buildLapInputChartData(series, trackLength), [series, trackLength]);
+  return <section className="trend-card input-comparison-card">
+    <div className="live-section-heading input-comparison-heading"><div><span>{t("liveDashboard.drivingInputs")}</span><h2>{t("liveDashboard.lapInputComparison")}</h2></div><div className="input-trace-legend">{series.map((item) => <span className={item.trace ? "available" : "unavailable"} key={item.id} style={{ "--trace-colour": item.colour } as React.CSSProperties}><i />{item.label}{item.trace && <small>L{item.trace.lap}</small>}</span>)}</div></div>
+    <div className="input-channel-key"><span className="solid"><i />{t("telemetry.throttle")}</span><span className="dashed"><i />{t("telemetry.brake")}</span><small>{t("liveDashboard.lapDistance")}</small></div>
+    {data.length > 1 ? <ResponsiveContainer width="100%" height={280}><LineChart data={data} margin={{ top: 8, right: 14, left: 0, bottom: 0 }}>
+      <CartesianGrid strokeDasharray="3 4" vertical={false} />
+      <XAxis type="number" dataKey="progress" domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} tickFormatter={(value) => `${value}%`} tickLine={false} />
+      <YAxis domain={[0, 1]} ticks={[0, .5, 1]} width={44} tickFormatter={(value) => `${Math.round(value * 100)}%`} tickLine={false} />
+      <Tooltip labelFormatter={(value) => `${t("liveDashboard.lapDistance")} ${Number(value).toFixed(1)}%`} formatter={(value: number, name: string) => [`${Math.round(value * 100)}%`, name]} />
+      {series.flatMap((item) => [
+        <Line key={`${item.id}-throttle`} type="linear" dataKey={`${item.id}Throttle`} name={`${item.label} · ${t("telemetry.throttle")}`} stroke={item.colour} strokeWidth={2.4} dot={false} connectNulls isAnimationActive={false} />,
+        <Line key={`${item.id}-brake`} type="linear" dataKey={`${item.id}Brake`} name={`${item.label} · ${t("telemetry.brake")}`} stroke={item.colour} strokeWidth={2} strokeDasharray="6 4" dot={false} connectNulls isAnimationActive={false} />,
+      ])}
+    </LineChart></ResponsiveContainer> : <EmptyState label={t("liveDashboard.inputTraceWaiting")} compact />}
+  </section>;
+}
+
 const TrendChart = memo(function TrendChart({ title, eyebrow, data, lines, averageLine, invert = false, formatter }: { title: string; eyebrow: string; data: Record<string, unknown>[]; lines: { key: string; label: string; colour: string }[]; averageLine?: number; invert?: boolean; formatter?: (value: number) => string }) {
   const t = useT();
   return <section className="trend-card"><div className="live-section-heading"><div><span>{eyebrow}</span><h3>{title}</h3></div></div>{data.length > 0 ? <ResponsiveContainer width="100%" height={230}><LineChart data={data} margin={{ top: 6, right: 10, left: 4, bottom: 0 }}><CartesianGrid strokeDasharray="3 4" vertical={false} /><XAxis dataKey="lap" tickLine={false} /><YAxis width={72} tickMargin={8} reversed={invert} tickLine={false} tickFormatter={formatter} domain={["auto", "auto"]} /><Tooltip formatter={(value: number, name: string) => [formatter ? formatter(value) : fmt(value, 2), name]} /><Legend />{finite(averageLine) && <ReferenceLine y={averageLine} stroke="#edf4f8" strokeDasharray="5 5" label={t("liveDashboard.average")} />}{lines.map((line) => <Line key={line.key} type="monotone" dataKey={line.key} name={line.label} stroke={line.colour} strokeWidth={2.3} dot={{ r: 2 }} connectNulls />)}</LineChart></ResponsiveContainer> : <EmptyState label={t("common.waitingLiveTelemetry")} />}</section>;
@@ -547,6 +710,7 @@ function LiveGraphs({ laps, positions, competitors }: { laps: LapSample[]; posit
 
 export function LiveDashboard({ telemetry, strategy, recommendation, connected, competitors = [] }: { telemetry: TelemetrySnapshot | null; strategy: StrategyState | null; recommendation: RecommendationPayload | null; connected: boolean; readOnlyLabel?: string; competitors?: CompetitorState[] }) {
   const { laps, positions, liveLap, livePosition } = useLiveRaceHistory(telemetry, strategy);
+  const lapInputHistory = useLapInputHistory(telemetry);
   const graphLaps = liveLap ? [...laps.filter((row) => row.lap !== liveLap.lap), liveLap].sort((a, b) => a.lap - b.lap) : laps;
   const graphPositions = livePosition ? [...positions.filter((row) => row.lap !== livePosition.lap), livePosition].sort((a, b) => a.lap - b.lap) : positions;
   const mergedCompetitors = useMemo(() => {
@@ -556,17 +720,22 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected, 
   }, [competitors, telemetry?.competitors]);
   const paceHistory = useOpponentPaceHistory(mergedCompetitors, Boolean(telemetry?.player?.lap_invalidated), isUnderYellow(telemetry), telemetry?.session_id);
   const playerCar = mergedCompetitors.find((car) => car.is_player);
+  const playerClass = telemetry?.player?.vehicle_class || playerCar?.vehicle_class || "";
+  const isHypercar = isHypercarClass(playerClass);
   const observedAverage = cleanAveragePace(paceHistory, playerCar);
   const averageLap = observedAverage ?? ((strategy?.pace?.sample_laps ?? 0) > 0 ? strategy?.pace?.weighted_recent_pace : undefined);
   return <div className="page live-dashboard">
     <RaceHeader telemetry={telemetry} connected={connected} averageLap={averageLap} />
     <NearbyStandings mergedCars={mergedCompetitors} paceHistory={paceHistory} telemetry={telemetry} />
-    <div className="live-status-row">
+    <div className={`live-status-row ${isHypercar ? "has-hybrid" : ""}`}>
       <InputsCard player={telemetry?.player} />
+      {isHypercar && <HypercarEnergyCard player={telemetry?.player} />}
       <TyreCard player={telemetry?.player} />
+      <EnvironmentCard telemetry={telemetry} />
       <FuelCard telemetry={telemetry} strategy={strategy} />
       <AlertsCard telemetry={telemetry} recommendation={recommendation} />
     </div>
+    <LapInputComparison history={lapInputHistory} trackLength={telemetry?.session?.track_length_m} />
     <LiveGraphs laps={graphLaps} positions={graphPositions} competitors={mergedCompetitors} />
   </div>;
 }

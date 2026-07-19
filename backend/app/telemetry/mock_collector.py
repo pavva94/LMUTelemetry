@@ -9,6 +9,7 @@ from app.core.utils import utc_now
 from app.schemas.telemetry import (
     CompetitorState,
     EnvironmentState,
+    HybridState,
     PlayerState,
     SessionState,
     TelemetrySnapshot,
@@ -18,6 +19,8 @@ from app.schemas.telemetry import (
 
 
 class MockTelemetryCollector:
+    TRACK_LENGTH_M = 13_626.0
+
     def __init__(self, poll_hz: int = 10):
         self.poll_hz = poll_hz
         self.started_at = time.monotonic()
@@ -61,6 +64,7 @@ class MockTelemetryCollector:
 
         session = SessionState(
             track_name="Circuit de la Sarthe",
+            track_length_m=self.TRACK_LENGTH_M,
             session_type="Race",
             game_phase="green" if int(elapsed / 480) % 5 else "full_course_yellow",
             current_time=elapsed,
@@ -91,6 +95,7 @@ class MockTelemetryCollector:
             average_wear=wear,
             average_temp_c=avg_temp,
         )
+        is_regenerating = speed < 115
         player = PlayerState(
             vehicle_id=0,
             vehicle_name="Porsche 963",
@@ -133,8 +138,18 @@ class MockTelemetryCollector:
             gap_place_ahead=5.4,
             gap_place_behind=4.1,
             tyre_state=tyres,
+            hybrid_state=HybridState(
+                battery_charge_fraction=0.72 + math.sin(elapsed / 90) * 0.08,
+                state_of_charge_percent=72.0 + math.sin(elapsed / 90) * 8.0,
+                battery_percent=72.0 + math.sin(elapsed / 90) * 8.0,
+                virtual_energy_fraction=max(0.0, 0.84 - lap_progress * 0.12),
+                regen_kw=42.0 if is_regenerating else 0.0,
+                motor_torque_nm=-86.0 if is_regenerating else 174.0,
+                motor_state="regeneration" if is_regenerating else "propulsion",
+                regen_active=is_regenerating,
+            ),
         )
-        competitors = self._competitors(elapsed, lap_number, in_pits)
+        competitors = self._competitors(elapsed, lap_number, lap_progress, in_pits)
         environment = EnvironmentState(
             raining=0.0,
             ambient_temp_c=21.0 + math.sin(elapsed / 900),
@@ -142,7 +157,7 @@ class MockTelemetryCollector:
             min_wetness=0.0,
             max_wetness=0.04,
             avg_wetness=0.01,
-            track_grip=0.96,
+            track_grip=2.0,
             cloud_coverage=0.35 + math.sin(elapsed / 700) * 0.1,
         )
         self.latest = TelemetrySnapshot(
@@ -155,7 +170,7 @@ class MockTelemetryCollector:
         )
         return self.latest
 
-    def _competitors(self, elapsed: float, lap_number: int, player_in_pits: bool) -> list[CompetitorState]:
+    def _competitors(self, elapsed: float, lap_number: int, lap_progress: float, player_in_pits: bool) -> list[CompetitorState]:
         names = ["Rossi", "Muller", "Kobayashi", "Taylor", "Martin", "Jensen", "Lopez", "Smith"]
         competitors: list[CompetitorState] = []
         for i, name in enumerate(names, start=1):
@@ -171,7 +186,7 @@ class MockTelemetryCollector:
                     position=i if i < 4 else i + 1,
                     class_position=i,
                     total_laps=lap_number - (1 if i > 6 else 0),
-                    lap_distance=(elapsed % 214.0) / 214.0,
+                    lap_distance=((elapsed % 214.0) / 214.0) * self.TRACK_LENGTH_M,
                     best_lap_time=211.0 + i * 0.55,
                     last_lap_time=213.0 + math.sin(elapsed / 18 + i) * 1.8,
                     estimated_lap_time=213.5 + i * 0.3,
@@ -194,6 +209,7 @@ class MockTelemetryCollector:
                 position=4,
                 class_position=4,
                 total_laps=lap_number,
+                lap_distance=lap_progress * self.TRACK_LENGTH_M,
                 count_lap_flag=2,
                 pitstops=self._pitstops,
                 in_pits=player_in_pits,

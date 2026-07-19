@@ -37,9 +37,12 @@ class TyreState(BaseModel):
 
 
 class HybridState(BaseModel):
+    battery_charge_fraction: float | None = None
+    state_of_charge_percent: float | None = None
     battery_percent: float | None = None
     virtual_energy_fraction: float | None = None
     regen_kw: float | None = None
+    motor_torque_nm: float | None = None
     motor_state: str | None = None
     deploy_mode: str | None = None
     regen_active: bool | None = None
@@ -118,6 +121,7 @@ class PlayerState(BaseModel):
     front_downforce: float | None = None
     rear_downforce: float | None = None
     drag: float | None = None
+    primary_flag: int | None = None
     finish_status: str | None = None
     track_limits_steps: int | None = None
     lap_invalidated: bool | None = None
@@ -131,6 +135,7 @@ class PlayerState(BaseModel):
 
 class SessionState(BaseModel):
     track_name: str | None = None
+    track_length_m: float | None = None
     session_type: str | None = None
     game_phase: str | None = None
     current_time: float | None = None
