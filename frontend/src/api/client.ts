@@ -54,7 +54,7 @@ export const api = {
     if (!response.ok) throw new Error("session remove failed");
     return response.json() as Promise<SavedSession>;
   },
-  updateAssumptions: async (body: Record<string, number | boolean>) => {
+  updateAssumptions: async (body: Record<string, number | boolean | string>) => {
     const response = await fetch(`${API_BASE}/api/strategy/assumptions`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

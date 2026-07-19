@@ -16,6 +16,8 @@ strategy:
   fuel_safety_margin_laps: 1.0
   max_tyre_wear: 0.75
   max_tyres_available: 24
+  lift_coast_mode: inferred
+  lift_coast_target_percent: 3.0
   minimum_stint_laps: null
   maximum_driver_time_minutes: null
 

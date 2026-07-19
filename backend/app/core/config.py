@@ -58,6 +58,8 @@ def get_settings() -> Settings:
         fuel_safety_margin_laps=float(strategy.get("fuel_safety_margin_laps") or 1.0),
         max_tyre_wear=float(strategy.get("max_tyre_wear") or 0.75),
         max_tyres_available=int(strategy.get("max_tyres_available") or 24),
+        lift_coast_mode=strategy.get("lift_coast_mode") or "inferred",
+        lift_coast_target_percent=float(strategy.get("lift_coast_target_percent") or 3.0),
     )
     return Settings(
         use_mock_telemetry=(use_mock.lower() == "true") if use_mock is not None else bool(dev.get("use_mock_telemetry", True)),

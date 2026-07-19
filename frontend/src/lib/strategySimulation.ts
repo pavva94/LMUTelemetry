@@ -35,6 +35,15 @@ export type EmpiricalStintPaceModel = {
   confidence: StrategyConfidence;
 };
 
+export type LiftCoastPaceModel = {
+  sampleLaps: number;
+  secondsPerPercentPerLap: number;
+  fuelSavingCoastCorrelation: number;
+  observedSavingRangePercent: number;
+  observedCoastRangePercent: number;
+  confidence: StrategyConfidence;
+};
+
 export type CalculationBreakdown = {
   raceLaps: number;
   simulationPaceSeconds: number;
@@ -122,6 +131,8 @@ export type StrategySimulationInput = {
   selectedTyres?: Wheel[];
   trafficPenaltySeconds?: number;
   liftCoastSecondsPerPercentPerLap?: number | null;
+  liftCoastMode?: "inferred" | "fixed";
+  liftCoastTargetPercent?: number;
   safetyCarActive?: boolean;
   safetyCarPitLossSeconds?: number | null;
   maxStops?: number;
@@ -593,7 +604,7 @@ function candidate(input: StrategySimulationInput, stopCount: number, initialLap
     `${round(fuel.start, 1)} L start fuel covers stint 1, ${round(fuel.uncertainty[0], 2)} L variance allowance, and ${round(fuel.reserve, 1)} L reserve`,
     tyresAvailable == null ? `${tyresUsed} individual tyres are used; no race allocation was configured` : `${tyresUsed} of ${tyresAvailable} available individual tyres are used, including the four starting tyres`,
     layout === "late" ? "Pit calls are held to the latest fuel-feasible lap; tyre limits can still require an earlier stop" : "Balanced stint lengths retained as a tyre-life comparison",
-    savePercent ? `${round(savePercent, 1)}% fuel saving is required` : "No lift-and-coast is required",
+    savePercent ? `${round(savePercent, 1)}% fuel saving ${input.liftCoastMode === "fixed" ? "is the selected fixed target" : "is the proposed inferred target"}` : "No lift-and-coast is required",
   ];
   return {
     id: `${stopCount}-${layout}-${input.safetyPolicy ?? "balanced"}-${round(savePercent, 1)}`, label: `${stopCount === 0 ? "No stop" : `${stopCount} stop${stopCount === 1 ? "" : "s"}`} · ${layout === "late" ? "late pit" : "balanced stints"}`,
@@ -618,15 +629,17 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
   const maxStops = input.maxStops ?? Math.min(40, Math.max(minimumStops + 3, 4));
   const candidates: StrategyCandidate[] = [];
   const fuelSaveCandidates: StrategyCandidate[] = [];
+  const liftCoastTarget = Math.min(12, Math.max(0.5, input.liftCoastTargetPercent ?? 3));
+  const fixedLiftCoast = input.liftCoastMode === "fixed";
   for (let stops = 0; stops <= maxStops; stops += 1) {
     for (const layout of ["late", "balanced"] as const) {
       const normal = candidate(input, stops, roughLaps, false, layout);
       if (normal) {
         candidates.push(normal);
-        const contingency = candidate(input, stops, roughLaps, false, layout, 2);
+        const contingency = candidate(input, stops, roughLaps, false, layout, liftCoastTarget);
         if (contingency) fuelSaveCandidates.push(contingency);
       } else {
-        const saved = candidate(input, stops, roughLaps, true, layout);
+        const saved = candidate(input, stops, roughLaps, !fixedLiftCoast, layout, fixedLiftCoast ? liftCoastTarget : 0);
         if (saved) fuelSaveCandidates.push(saved);
       }
     }
@@ -635,7 +648,8 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
     fuelSaveCandidates.sort((a, b) => b.raceLaps - a.raceLaps || a.stops - b.stops || a.liftCoastSavePercent - b.liftCoastSavePercent);
     return fuelSaveCandidates.slice(0, 5).map((item, index) => ({ ...item, category: "fuel-save", label: index === 0 ? "Lift-and-coast · minimum-stop plan" : `Lift-and-coast · ${item.stops} stops` }));
   }
-  const all = candidates;
+  const calibratedSaving = input.liftCoastSecondsPerPercentPerLap != null;
+  const all = [...candidates, ...(calibratedSaving ? fuelSaveCandidates : [])];
   all.sort((a, b) => b.raceLaps - a.raceLaps || a.totalTimeSeconds - b.totalTimeSeconds || riskRank(a.risk) - riskRank(b.risk));
   fuelSaveCandidates.sort((a, b) =>
     (a.stops < all[0].stops ? 0 : 1) - (b.stops < all[0].stops ? 0 : 1)
@@ -649,13 +663,13 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
     if (!item || selected.some(existing => existing.id === item.id)) return;
     selected.push({ ...item, category: category ?? item.category, label: label ?? item.label });
   };
-  add(all[0], "fastest", all[0].reasons.some((reason) => reason.includes("latest fuel-feasible")) ? "Full-stint endurance" : "Fastest projected");
-  add(all.find(item => item.label.includes("late pit")), "alternative", "Full-stint endurance");
-  add(all.filter(item => item.risk !== "high").sort((a, b) => riskRank(a.risk) - riskRank(b.risk) || a.totalTimeSeconds - b.totalTimeSeconds)[0], "balanced", "Balanced");
+  add(all[0], "fastest", all[0].liftCoastSavePercent > 0 ? "Fastest projected · lift-and-coast" : all[0].reasons.some((reason) => reason.includes("latest fuel-feasible")) ? "Full-stint endurance" : "Fastest projected");
+  add(candidates.find(item => item.label.includes("late pit")), "alternative", "Full-stint endurance");
+  add(candidates.filter(item => item.risk !== "high").sort((a, b) => riskRank(a.risk) - riskRank(b.risk) || a.totalTimeSeconds - b.totalTimeSeconds)[0], "balanced", "Balanced");
   const fuelSave = fuelSaveCandidates[0];
   add(fuelSave, "fuel-save", fuelSave && fuelSave.stops < all[0].stops ? `Lift-and-coast · skip ${all[0].stops - fuelSave.stops} stop${all[0].stops - fuelSave.stops === 1 ? "" : "s"}` : "Lift-and-coast · extend stints");
-  add(all.filter(item => item.confidence === "high" || item.risk === "low").sort((a, b) => riskRank(a.risk) - riskRank(b.risk) || b.finishFuelRemainingLiters - a.finishFuelRemainingLiters)[0], "conservative", "Conservative");
-  add(all.find(item => item.stops !== all[0].stops && item.liftCoastSavePercent === 0), "alternative", "Alternative stop count");
+  add(candidates.filter(item => item.confidence === "high" || item.risk === "low").sort((a, b) => riskRank(a.risk) - riskRank(b.risk) || b.finishFuelRemainingLiters - a.finishFuelRemainingLiters)[0], "conservative", "Conservative");
+  add(candidates.find(item => item.stops !== all[0].stops), "alternative", "Alternative stop count");
   all.forEach(item => { if (selected.length < 5) add(item, "alternative", `${item.stops}-stop alternative`); });
   return selected.slice(0, 5);
 }

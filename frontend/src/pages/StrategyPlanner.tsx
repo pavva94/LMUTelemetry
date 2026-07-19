@@ -7,8 +7,9 @@ import { SectionTitle } from "../components/SectionTitle";
 import { useT } from "../i18n/I18nProvider";
 import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { average, median, standardDeviation, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
+import { calibrateLiftCoast } from "../lib/liftCoastCalibration";
 import { calibrateStintPace } from "../lib/stintCalibration";
-import { simulateStrategies, type EmpiricalStintPaceModel, type PaceEvidence, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
+import { simulateStrategies, type EmpiricalStintPaceModel, type LiftCoastPaceModel, type PaceEvidence, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import { MonteCarloStrategyPanel } from "./RaceSimulation";
 import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
@@ -29,11 +30,13 @@ type FormState = {
   refuel_seconds_per_5_liters: number;
   max_tyre_wear: number;
   max_tyres_available: number;
+  lift_coast_mode: "inferred" | "fixed";
+  lift_coast_target_percent: number;
   safety_car_pit_loss_seconds: number;
   fuel_safety_margin_laps: number;
 };
 
-type NumericFormKey = Exclude<keyof FormState, "race_start_new_tyres">;
+type NumericFormKey = Exclude<keyof FormState, "race_start_new_tyres" | "lift_coast_mode">;
 type ModelSource = "live" | "session" | "history";
 type PaceBasis = "median" | "trimmed" | "percentile";
 
@@ -55,6 +58,7 @@ type PlannerModel = {
   fuelConfidence: string;
   paceEvidence: PaceEvidence;
   empiricalStintPace: EmpiricalStintPaceModel | null;
+  liftCoastPace: LiftCoastPaceModel | null;
 };
 
 const fmt = (value: number | null | undefined, digits = 1, suffix = "") =>
@@ -237,6 +241,8 @@ function seededForm(strategy: StrategyState | null, telemetry?: TelemetrySnapsho
     refuel_seconds_per_5_liters: numberFrom(assumptions.refuel_seconds_per_5_liters, current?.refuel_seconds_per_5_liters ?? 1.2),
     max_tyre_wear: numberFrom(assumptions.max_tyre_wear, current?.max_tyre_wear ?? 0.75),
     max_tyres_available: numberFrom(assumptions.max_tyres_available, current?.max_tyres_available ?? 24),
+    lift_coast_mode: assumptions.lift_coast_mode === "fixed" || assumptions.lift_coast_mode === "inferred" ? assumptions.lift_coast_mode : current?.lift_coast_mode ?? "inferred",
+    lift_coast_target_percent: numberFrom(assumptions.lift_coast_target_percent, current?.lift_coast_target_percent ?? 3),
     safety_car_pit_loss_seconds: numberFrom(assumptions.safety_car_pit_loss_seconds, current?.safety_car_pit_loss_seconds ?? 16),
     fuel_safety_margin_laps: numberFrom(assumptions.fuel_safety_margin_laps, current?.fuel_safety_margin_laps ?? 1),
   };
@@ -281,6 +287,7 @@ function modelFromLive(strategy: StrategyState | null, telemetry?: TelemetrySnap
     fuelConfidence: strategy?.fuel.confidence || "low",
     paceEvidence: livePaceEvidence(strategy, liveLap.value),
     empiricalStintPace: null,
+    liftCoastPace: null,
   };
 }
 
@@ -319,6 +326,7 @@ export function modelFromSession(review: SessionReview | null, sessionLabel: str
   const wearRate = average(wheelRates);
   const baselinePace = robustPace(lapTimes, paceBasis);
   const sessionEvidence = sessionPaceEvidence(lapTimes, current?.normal_lap_time);
+  const empiricalStintPace = calibrateStintPace(review);
   return {
     label: sessionLabel,
     source: "session",
@@ -336,7 +344,8 @@ export function modelFromSession(review: SessionReview | null, sessionLabel: str
     fuelUseStdDevLiters: standardDeviation(fuelValues),
     fuelConfidence: fuelValues.length >= 3 ? "high" : "low",
     paceEvidence: { ...sessionEvidence, weightedRecentPace: baselinePace, source: "Saved-session robust baseline", method: paceBasis === "trimmed" ? "10% trimmed mean" : paceBasis === "percentile" ? "60th percentile" : "median", spreadSeconds: standardDeviation(lapTimes), foundLaps: review.laps.length },
-    empiricalStintPace: calibrateStintPace(review),
+    empiricalStintPace,
+    liftCoastPace: calibrateLiftCoast(review, empiricalStintPace),
   };
 }
 
@@ -845,7 +854,10 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     tyreChangePolicy: tyrePolicy,
     safetyCarPitLossSeconds: form.safety_car_pit_loss_seconds,
     empiricalStintPace: activeModel.empiricalStintPace,
-  }), [activeModel.empiricalStintPace, activeModel.fuelConfidence, activeModel.fuelObservedLaps, activeModel.fuelRequiredLaps, activeModel.fuelUseStdDevLiters, activeModel.tyreConfidence, activeModel.tyrePaceDegradationPerLap, activeModel.tyreWearRateByWheel, currentWear, form, fuelPerLap, fuelSafetyMarginLiters, paceEvidence, raceStartWear.fl, raceStartWear.fr, raceStartWear.rl, raceStartWear.rr, safetyPolicy, serviceModel, tyrePolicy, wearRate]);
+    liftCoastSecondsPerPercentPerLap: activeModel.liftCoastPace?.secondsPerPercentPerLap ?? null,
+    liftCoastMode: form.lift_coast_mode,
+    liftCoastTargetPercent: Math.min(12, Math.max(0.5, form.lift_coast_target_percent)),
+  }), [activeModel.empiricalStintPace, activeModel.fuelConfidence, activeModel.fuelObservedLaps, activeModel.fuelRequiredLaps, activeModel.fuelUseStdDevLiters, activeModel.liftCoastPace, activeModel.tyreConfidence, activeModel.tyrePaceDegradationPerLap, activeModel.tyreWearRateByWheel, currentWear, form, fuelPerLap, fuelSafetyMarginLiters, paceEvidence, raceStartWear.fl, raceStartWear.fr, raceStartWear.rl, raceStartWear.rr, safetyPolicy, serviceModel, tyrePolicy, wearRate]);
   const missingPlanInputs = [
     fuelPerLap == null || !Number.isFinite(fuelPerLap) || fuelPerLap <= 0 ? "fuel per lap" : null,
     form.tank_capacity_liters <= 0 ? "tank capacity" : null,
@@ -927,6 +939,8 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
               <label><span className="label">Tank capacity</span><input type="number" min="0" step="0.1" value={form.tank_capacity_liters} onChange={(event) => update("tank_capacity_liters", event.target.value)} /><span className="subvalue">litres</span></label>
               <label><span className="label">Safety reserve policy</span><select value={safetyPolicy} onChange={(event) => setSafetyPolicy(event.target.value as typeof safetyPolicy)}><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option></select><span className="subvalue">Adjusts planning rate and reserve</span></label>
               <label><span className="label">Finish reserve</span><span className="strategy-inline-fields"><select value={reserveUnit} onChange={(event) => setReserveUnit(event.target.value as typeof reserveUnit)}><option value="laps">Equivalent laps</option><option value="liters">Litres</option></select><input type="number" min="0" step="0.1" value={reserveUnit === "laps" ? form.fuel_safety_margin_laps : form.fuel_safety_margin_liters} onChange={(event) => update(reserveUnit === "laps" ? "fuel_safety_margin_laps" : "fuel_safety_margin_liters", event.target.value)} /></span><span className="subvalue">{fmt(fuelSafetyMarginLiters, 2, " L")} before policy adjustment</span></label>
+              <label><span className="label">Lift-and-coast target</span><select value={form.lift_coast_mode} onChange={(event) => { const value = event.target.value as FormState["lift_coast_mode"]; setDirtyFields((current) => new Set(current).add("lift_coast_mode")); setForm((current) => ({ ...current, lift_coast_mode: value })); }}><option value="inferred">Infer saving needed</option><option value="fixed">Use selected percentage</option></select><span className="subvalue">Inference searches for the saving needed to extend a stint or remove a stop</span></label>
+              <label><span className="label">Selected lift-and-coast</span><input type="number" min="0.5" max="12" step="0.5" value={form.lift_coast_target_percent} onChange={(event) => update("lift_coast_target_percent", event.target.value)} disabled={form.lift_coast_mode !== "fixed"} /><span className="subvalue">Fuel saving target · defaults to 3%</span></label>
             </fieldset>
 
             <fieldset className="strategy-assumption-group">
@@ -963,6 +977,8 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           fuel_safety_margin_laps: form.fuel_safety_margin_laps,
           max_tyre_wear: form.max_tyre_wear,
           max_tyres_available: Math.max(4, Math.floor(form.max_tyres_available)),
+          lift_coast_mode: form.lift_coast_mode,
+          lift_coast_target_percent: Math.min(12, Math.max(0.5, form.lift_coast_target_percent)),
         })}>{t("strategyPlanner.saveAssumptions")}</button>
         </p>
       </section>
@@ -992,6 +1008,8 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           <div><span className="label">Pace trend / spread</span><strong>{fmt(paceEvidence.paceTrendSecondsPerLap, 3, " s/lap")}</strong><span className="subvalue">spread {fmt(paceEvidence.spreadSeconds, 3, " s")} · {paceEvidence.confidence || "low"} confidence</span></div>
           <div><span className="label">Stint pace model</span><strong>{activeModel.empiricalStintPace ? "Empirical regression" : "Fallback heuristic"}</strong><span className="subvalue">{activeModel.empiricalStintPace ? `${activeModel.empiricalStintPace.sampleLaps} laps · ${activeModel.empiricalStintPace.observedStints} stints · residual σ ${fmt(activeModel.empiricalStintPace.residualStdDevSeconds, 2, " s")}` : "Needs at least 12 laps with fuel and tyre wear"}</span></div>
           {activeModel.empiricalStintPace && <div><span className="label">Measured stint effects</span><strong>{fmt(activeModel.empiricalStintPace.fuelCoefficientSecondsPerLiter, 3, " s/L")} · {fmt(activeModel.empiricalStintPace.tyreWearCoefficientSecondsPerFraction, 1, " s/full wear")}</strong><span className="subvalue">warm-up {fmt(activeModel.empiricalStintPace.warmupLossSeconds, 2, " s")} · observed through lap {activeModel.empiricalStintPace.maxObservedStintLaps}</span></div>}
+          <div><span className="label">Lift-and-coast calibration</span><strong>{activeModel.liftCoastPace ? fmt(activeModel.liftCoastPace.secondsPerPercentPerLap, 3, " s / 1% / lap") : "Unavailable"}</strong><span className="subvalue">{activeModel.liftCoastPace ? `${activeModel.liftCoastPace.sampleLaps} comparable laps · coast/fuel correlation ${fmt(activeModel.liftCoastPace.fuelSavingCoastCorrelation, 2)} · ${activeModel.liftCoastPace.confidence} confidence` : "Needs clean laps with fuel, wear, throttle, and brake samples"}</span></div>
+          <div><span className="label">Lift-and-coast strategy</span><strong>{form.lift_coast_mode === "fixed" ? `${fmt(form.lift_coast_target_percent, 1, "%")} fixed target` : "Infer required saving"}</strong><span className="subvalue">Default selected target is 3%</span></div>
           <div><span className="label">Fuel use</span><strong>{fmt(Number.isFinite(fuelPerLap ?? NaN) ? fuelPerLap : null, 3, " L/lap")}</strong><span className="subvalue">{activeModel.fuelObservedLaps}/{activeModel.fuelRequiredLaps} valid laps</span></div>
           <div><span className="label">Fuel variance</span><strong>{fmt(activeModel.fuelUseStdDevLiters, 3, " L")}</strong><span className="subvalue">{activeModel.fuelConfidence} confidence · cumulative σ√laps allowance</span></div>
           <div><span className="label">Fuel margin</span><strong>{fmt(form.fuel_safety_margin_laps, 1, " laps")}</strong><span className="subvalue">{fmt(fuelSafetyMarginLiters, 2, " L")} from model fuel use</span></div>

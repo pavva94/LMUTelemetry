@@ -272,6 +272,21 @@ describe("strategy simulation", () => {
     expect(plan.warnings.join(" ")).toContain("pace cost unavailable");
   });
 
+  it("uses the selected fixed lift-and-coast percentage and calibrated pace cost", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 120,
+      liftCoastMode: "fixed",
+      liftCoastTargetPercent: 3,
+      liftCoastSecondsPerPercentPerLap: 0.2,
+    });
+    const fuelSave = plans.find((plan) => plan.category === "fuel-save");
+    expect(fuelSave).toBeDefined();
+    expect(fuelSave!.liftCoastSavePercent).toBe(3);
+    expect(fuelSave!.liftCoastLossSeconds).toBeGreaterThan(0);
+    expect(fuelSave!.warnings.join(" ")).not.toContain("pace cost unavailable");
+  });
+
   it("marks never-change tyre threshold violations as high risk", () => {
     const plan = simulateStrategies({ ...baseInput, raceDurationMinutes: 12, raceStartNewTyres: false, currentTyreWear: 0.65, currentTyreWearByWheel: { fl: 0.65, fr: 0.65, rl: 0.65, rr: 0.65 }, tyreWearRatePerLap: 0.02, tyreWearRateByWheel: {}, tyreChangePolicy: "never", maxStops: 0 })[0];
     expect(plan.risk).toBe("high");

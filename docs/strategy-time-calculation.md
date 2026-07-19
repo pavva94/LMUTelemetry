@@ -96,6 +96,12 @@ Less fuel at an individual stop reduces only refuelling time. It never reduces o
 
 Stop-count feasibility is recalculated using the laps actually completed after pit/service time, rather than only the no-stop lap estimate. A candidate is discarded if its final fuel-only stop can be removed by merging its last two stints within the applicable fuel and virtual-energy range. Lift-and-coast candidates re-run the same stint partitioning with the reduced consumption rate, allowing the planner to show when saving can genuinely skip a stop rather than merely adding finish fuel.
 
+When calibrated, lift-and-coast time is included explicitly:
+
+`lift-and-coast loss = seconds per 1% per lap × selected/inferred saving % × completed laps`
+
+Without sufficient comparable throttle, brake, fuel, wear, and pace evidence, the plan remains available but its pace cost is marked uncalibrated and it is not promoted as the normal fastest strategy.
+
 ## Final candidate time
 
 The displayed final time is the sum of:

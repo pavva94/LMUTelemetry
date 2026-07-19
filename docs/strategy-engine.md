@@ -40,6 +40,10 @@ For each candidate stop count, the engine:
 
 The planner ranks feasible non-saving candidates by completed timed-race laps and then elapsed time. Its default selection is the actual highest-ranked candidate. A lift-and-coast candidate is always presented separately: it preferentially shows a lower-stop solution when saving can remove a stop, otherwise it shows how saving extends the planned stints. When no measured lift-and-coast pace-cost model exists, that option remains a clearly warned contingency and is not promoted over the normal fastest plan.
 
+Lift-and-coast can be configured as `inferred` or `fixed`. Inferred mode searches for the fuel-saving percentage needed to extend the stint or remove a stop. Fixed mode applies the selected percentage to every lift-and-coast candidate; the saved default is 3%.
+
+For a selected saved session, the pace cost is calibrated only when at least 12 comparable clean laps contain fuel use, fuel load, four-corner wear, and at least 15 usable throttle/brake samples per lap. Coast time is detected where throttle is at most 8%, brake at most 3%, and speed at least 30 km/h. The calibration first requires a positive relationship between additional coasting and fuel saved. It then removes the fitted fuel-load, tyre-wear, and warm-up effects and robustly estimates seconds lost per lap for each percentage point of fuel saved. The model is rejected when saving range, coast range, correlation, sample size, or fitted direction is insufficient.
+
 Fuel saving is searched only when a lower-stop plan is otherwise infeasible, up to 8% of normal consumption. If no calibrated seconds-per-percent cost exists, feasibility is shown but pace cost is explicitly unavailable.
 
 ## Strategy selection and confidence
