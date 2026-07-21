@@ -277,7 +277,9 @@ def test_lap_input_trace_filters_before_downsampling(monkeypatch) -> None:
     assert len(result["points"]) == 120
     assert {point["lap_number"] for point in result["points"]} == {1, 3}
     assert result["points"][0]["progress"] == 0
+    assert result["points"][0]["elapsed_time"] == 0
     assert result["points"][59]["progress"] == 1
+    assert result["points"][59]["elapsed_time"] == 99
     assert result["points"][59]["lap_distance"] == 4950
 
 

@@ -4,6 +4,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Scatter,
   ScatterChart,
@@ -15,7 +16,7 @@ import { api } from "../api/client";
 import { CompetitorTable } from "../components/CompetitorTable";
 import { SectionTitle } from "../components/SectionTitle";
 import { useI18n } from "../i18n/I18nProvider";
-import { buildLapInputChartData, type LapInputTrace } from "../lib/lapInputTrace";
+import { buildLapInputChartData, buildLapTimeDeltaData, type LapInputTrace } from "../lib/lapInputTrace";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { toFiniteNumber } from "../lib/sessionAnalysis";
 import { formatDuration, formatRaceGap, formatRaceTime } from "../lib/timeFormat";
@@ -738,13 +739,15 @@ function LapInputComparison({ review, laps }: { review: SessionReview | null; la
   }, [sessionId, lapA, lapB]);
 
   const selectedLaps = Array.from(new Set([lapA, lapB].filter(Boolean)));
-  const chartData = useMemo(() => buildLapInputChartData(selectedLaps.map((lap) => {
+  const selectedTraces = useMemo(() => selectedLaps.map((lap) => {
     const points = (payload?.points || [])
       .filter((point) => String(point.lap_number ?? "") === lap)
-      .map((point) => ({ distance: Number(point.progress), throttle: inputFraction(point.throttle), brake: inputFraction(point.brake) }))
-      .filter((point): point is { distance: number; throttle: number; brake: number } => Number.isFinite(point.distance) && point.throttle != null && point.brake != null);
+      .map((point) => ({ distance: Number(point.progress), throttle: inputFraction(point.throttle), brake: inputFraction(point.brake), elapsedTime: Number(point.elapsed_time) }))
+      .filter((point): point is { distance: number; throttle: number; brake: number; elapsedTime: number } => Number.isFinite(point.distance) && point.throttle != null && point.brake != null && Number.isFinite(point.elapsedTime));
     return { id: `lap${lap}`, trace: { lap: Number(lap), points } as LapInputTrace };
-  }), 1), [payload, lapA, lapB]);
+  }), [payload, lapA, lapB]);
+  const chartData = useMemo(() => buildLapInputChartData(selectedTraces, 1), [selectedTraces]);
+  const deltaData = useMemo(() => buildLapTimeDeltaData(selectedTraces[0]?.trace, selectedTraces[1]?.trace), [selectedTraces]);
   const hasInputs = chartData.some((row) => selectedLaps.some((lap) => row[`lap${lap}Throttle`] != null || row[`lap${lap}Brake`] != null));
   const colors = ["#6dd6ff", "#e6b450"];
   const lapLabel = (lap: Field) => `Lap ${text(lap.lap_number)} · ${lapTime(Number(lap.lap_time))}`;
@@ -774,6 +777,21 @@ function LapInputComparison({ review, laps }: { review: SessionReview | null; la
         </ResponsiveContainer>
       ) : <EmptyState detail={status || "Throttle and brake samples are not available for the selected laps."} />}
       {status && hasInputs && <p className="muted">{status}</p>}
+      {deltaData.length > 0 && selectedLaps.length === 2 && (
+        <div className="chart-stack-section">
+          <SectionTitle title="Time Delta By Lap Distance" help={`Shows Lap ${lapB} minus Lap ${lapA} through the lap. Positive values mean Lap ${lapB} is behind; negative values mean it is ahead.`} />
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={deltaData}>
+              <CartesianGrid stroke="#27313a" />
+              <XAxis dataKey="progress" type="number" domain={[0, 100]} stroke="#8896a3" tickFormatter={(value) => `${Math.round(Number(value))}%`} label={{ value: "Lap distance", position: "insideBottom", offset: -2 }} />
+              <YAxis stroke="#8896a3" tickFormatter={(value) => `${Number(value) > 0 ? "+" : ""}${Number(value).toFixed(1)}s`} width={58} />
+              <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => `${Number(value).toFixed(1)}% lap distance`} formatter={(value) => [`${Number(value) > 0 ? "+" : ""}${Number(value).toFixed(3)}s`, `Lap ${lapB} vs Lap ${lapA}`]} />
+              <ReferenceLine y={0} stroke="#8896a3" strokeDasharray="4 4" />
+              <Line dataKey="delta" name={`Lap ${lapB} vs Lap ${lapA}`} stroke="#e6b450" strokeWidth={2.2} dot={false} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
     </section>
   );
 }

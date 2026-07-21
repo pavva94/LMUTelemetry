@@ -343,6 +343,7 @@ input[type="checkbox"] { width: auto; min-height: 0; margin-right: 8px; accent-c
 
 .section-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .section-toolbar .section-title { margin-bottom: 0; }
+.chart-stack-section { margin-top: 24px; }
 .class-filter { min-width: 170px; max-width: 220px; }
 .class-filter span { color: var(--muted); font-size: 12px; }
 .compact-panel { padding: 12px; }

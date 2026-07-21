@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, type LapInputTrace } from "./lapInputTrace";
+import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, buildLapTimeDeltaData, type LapInputTrace } from "./lapInputTrace";
 
 describe("lap input traces", () => {
   it("replaces stationary samples and keeps moving samples", () => {
@@ -24,5 +24,22 @@ describe("lap input traces", () => {
       { progress: 0, currentThrottle: 1, currentBrake: 0 },
       { progress: 50, currentThrottle: 0, currentBrake: 1 },
     ]);
+  });
+
+  it("interpolates comparison-minus-reference time delta over lap distance", () => {
+    const reference: LapInputTrace = { lap: 1, points: [
+      { distance: 0, throttle: 1, brake: 0, elapsedTime: 0 },
+      { distance: 1, throttle: 1, brake: 0, elapsedTime: 90 },
+    ] };
+    const comparison: LapInputTrace = { lap: 2, points: [
+      { distance: 0, throttle: 1, brake: 0, elapsedTime: 0 },
+      { distance: 0.5, throttle: 1, brake: 0, elapsedTime: 46 },
+      { distance: 1, throttle: 1, brake: 0, elapsedTime: 92 },
+    ] };
+
+    const rows = buildLapTimeDeltaData(reference, comparison);
+    expect(rows[0]).toEqual({ progress: 0, delta: 0 });
+    expect(rows[100]).toEqual({ progress: 50, delta: 1 });
+    expect(rows[200]).toEqual({ progress: 100, delta: 2 });
   });
 });

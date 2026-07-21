@@ -908,6 +908,7 @@ class Repository:
                 selected_rows = [(index, row) for index, row in enumerate(lap_rows) if index in indexes]
             else:
                 selected_rows = list(enumerate(lap_rows))
+            first_game_time = next((float(row.game_time) for row in lap_rows if row.game_time is not None and math.isfinite(float(row.game_time))), None)
             for output_index, (source_index, row) in enumerate(selected_rows):
                 if distance_min is not None and distance_span > 1.0 and row.lap_distance is not None:
                     distance = max(0.0, float(row.lap_distance) - distance_min)
@@ -921,6 +922,13 @@ class Repository:
                 points.append({
                     "lap_number": lap_number,
                     "game_time": row.game_time,
+                    "elapsed_time": (
+                        float(row.current_lap_time)
+                        if row.current_lap_time is not None and math.isfinite(float(row.current_lap_time))
+                        else float(row.game_time) - first_game_time
+                        if row.game_time is not None and first_game_time is not None and math.isfinite(float(row.game_time))
+                        else None
+                    ),
                     "lap_distance": distance,
                     "progress": max(0.0, min(1.0, progress)),
                     "throttle": row.throttle,
