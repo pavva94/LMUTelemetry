@@ -15,6 +15,7 @@ import { api } from "../api/client";
 import { CompetitorTable } from "../components/CompetitorTable";
 import { SectionTitle } from "../components/SectionTitle";
 import { useI18n } from "../i18n/I18nProvider";
+import { buildLapInputChartData, type LapInputTrace } from "../lib/lapInputTrace";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { toFiniteNumber } from "../lib/sessionAnalysis";
 import { formatDuration, formatRaceGap, formatRaceTime } from "../lib/timeFormat";
@@ -369,6 +370,20 @@ export function bestConsecutivePace(rows: Field[], windowSize: number) {
   return best;
 }
 
+export function fastestLapPair(validRows: Field[], allRows: Field[] = validRows) {
+  const lastPitLap = Math.max(0, ...allRows
+    .filter((row) => row.in_pit === true)
+    .map((row) => Number(row.lap_number))
+    .filter((lap) => Number.isFinite(lap)));
+  const currentStint = validRows.filter((row) => Number(row.lap_number) > lastPitLap);
+  const pool = currentStint.length >= 2 ? currentStint : validRows;
+  return [...pool]
+    .filter((row) => Number.isFinite(Number(row.lap_number)) && Number.isFinite(Number(row.lap_time)))
+    .sort((left, right) => Number(left.lap_time) - Number(right.lap_time))
+    .slice(0, 2)
+    .map((row) => String(row.lap_number));
+}
+
 function signedPaceDelta(value?: number | null) {
   if (value == null || !Number.isFinite(value)) return "--";
   const sign = value > 0 ? "+" : value < 0 ? "−" : "±";
@@ -670,6 +685,99 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
   );
 }
 
+type LapInputPayload = {
+  session_id: string;
+  laps: Array<string | number>;
+  points: Array<Record<string, number | string | boolean | null>>;
+  warnings: string[];
+};
+
+function inputFraction(value: unknown) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.min(1, Math.abs(number) <= 1.0001 ? number : number / 100));
+}
+
+function LapInputComparison({ review, laps }: { review: SessionReview | null; laps: Field[] }) {
+  const lapOptions = useMemo(() => [...laps].sort((left, right) => Number(left.lap_number) - Number(right.lap_number)), [laps]);
+  const defaultPair = useMemo(() => fastestLapPair(lapOptions, (review?.laps || []) as Field[]), [lapOptions, review?.laps]);
+  const [lapA, setLapA] = useState("");
+  const [lapB, setLapB] = useState("");
+  const [payload, setPayload] = useState<LapInputPayload | null>(null);
+  const [status, setStatus] = useState("");
+  const sessionId = review?.session?.id ? String(review.session.id) : "";
+  const optionSignature = lapOptions.map((lap) => String(lap.lap_number)).join("|");
+  const defaultSignature = defaultPair.join("|");
+
+  useEffect(() => {
+    const options = optionSignature.split("|");
+    setLapA((current) => current && options.includes(current) ? current : defaultPair[0] || "");
+    setLapB((current) => current && options.includes(current) ? current : defaultPair[1] || defaultPair[0] || "");
+  }, [defaultSignature, optionSignature]);
+
+  useEffect(() => {
+    if (!lapA || !sessionId) {
+      setPayload(null);
+      setStatus(lapA ? "The current session is unavailable." : "Complete two valid laps to compare driver inputs.");
+      return;
+    }
+    let active = true;
+    setStatus("Loading lap input traces");
+    api.sessionLapInputs(sessionId, lapA, lapB || undefined, 2400)
+      .then((data) => {
+        if (!active) return;
+        setPayload(data);
+        setStatus(data.warnings?.[0] || "");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setPayload(null);
+        setStatus(error instanceof Error ? error.message : "Could not load lap input traces.");
+      });
+    return () => { active = false; };
+  }, [sessionId, lapA, lapB]);
+
+  const selectedLaps = Array.from(new Set([lapA, lapB].filter(Boolean)));
+  const chartData = useMemo(() => buildLapInputChartData(selectedLaps.map((lap) => {
+    const points = (payload?.points || [])
+      .filter((point) => String(point.lap_number ?? "") === lap)
+      .map((point) => ({ distance: Number(point.progress), throttle: inputFraction(point.throttle), brake: inputFraction(point.brake) }))
+      .filter((point): point is { distance: number; throttle: number; brake: number } => Number.isFinite(point.distance) && point.throttle != null && point.brake != null);
+    return { id: `lap${lap}`, trace: { lap: Number(lap), points } as LapInputTrace };
+  }), 1), [payload, lapA, lapB]);
+  const hasInputs = chartData.some((row) => selectedLaps.some((lap) => row[`lap${lap}Throttle`] != null || row[`lap${lap}Brake`] != null));
+  const colors = ["#6dd6ff", "#e6b450"];
+  const lapLabel = (lap: Field) => `Lap ${text(lap.lap_number)} · ${lapTime(Number(lap.lap_time))}`;
+
+  return (
+    <section className="card span-12">
+      <div className="section-toolbar">
+        <SectionTitle title="Throttle And Brake By Lap Distance" help="Overlays throttle and brake through one normalized lap. The fastest and second-fastest valid laps from the current stint load automatically; choose any valid laps to compare braking points, releases, coasting, and throttle application." />
+        <div className="control-row">
+          <label><span className="label">Lap A</span><select value={lapA} onChange={(event) => setLapA(event.target.value)} disabled={!lapOptions.length}>{lapOptions.map((lap) => <option key={`a-${String(lap.lap_number)}`} value={String(lap.lap_number)}>{lapLabel(lap)}</option>)}</select></label>
+          <label><span className="label">Lap B</span><select value={lapB} onChange={(event) => setLapB(event.target.value)} disabled={!lapOptions.length}>{lapOptions.map((lap) => <option key={`b-${String(lap.lap_number)}`} value={String(lap.lap_number)}>{lapLabel(lap)}</option>)}</select></label>
+        </div>
+      </div>
+      {hasInputs ? (
+        <ResponsiveContainer width="100%" height={320}>
+          <LineChart data={chartData}>
+            <CartesianGrid stroke="#27313a" />
+            <XAxis dataKey="progress" type="number" domain={[0, 100]} stroke="#8896a3" tickFormatter={(value) => `${Math.round(Number(value))}%`} label={{ value: "Lap distance", position: "insideBottom", offset: -2 }} />
+            <YAxis domain={[0, 1]} stroke="#8896a3" tickFormatter={(value) => `${Math.round(Number(value) * 100)}%`} />
+            <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => `${Number(value).toFixed(1)}% lap distance`} formatter={(value, name) => [`${(Number(value) * 100).toFixed(1)}%`, String(name)]} />
+            <Legend />
+            {selectedLaps.flatMap((lap, index) => [
+              <Line key={`throttle-${lap}`} dataKey={`lap${lap}Throttle`} name={`Lap ${lap} throttle`} stroke={colors[index]} strokeWidth={2.2} dot={false} connectNulls isAnimationActive={false} />,
+              <Line key={`brake-${lap}`} dataKey={`lap${lap}Brake`} name={`Lap ${lap} brake`} stroke={colors[index]} strokeWidth={1.8} strokeDasharray="6 4" dot={false} connectNulls isAnimationActive={false} />,
+            ])}
+          </LineChart>
+        </ResponsiveContainer>
+      ) : <EmptyState detail={status || "Throttle and brake samples are not available for the selected laps."} />}
+      {status && hasInputs && <p className="muted">{status}</p>}
+    </section>
+  );
+}
+
 export function LapCompare({ telemetry }: EngineeringProps) {
   const { review } = useSessionReview();
   const laps = validPaceRows((review?.laps || []) as Field[]);
@@ -721,6 +829,7 @@ export function LapCompare({ telemetry }: EngineeringProps) {
       <section className="card span-6"><SectionTitle title="Fuel And Tyre Trend" help="Compares consumption and tyre wear across valid laps. Rising wear with slower laps points toward degradation; stable wear with slower laps often points to traffic or mistakes." /><BasicLineChart data={laps} lines={[["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
       <section className="card span-6"><SectionTitle title="Pace And Speed" help="Compares lap time against top speed. If top speed is stable while lap time grows, losses are likely in corners, traffic, or traction rather than straight-line pace." /><BasicLineChart data={laps} lines={[["lap_time", "#e6b450"], ["top_speed", "#69d28f"]]} /></section>
       <section className="card span-12"><SectionTitle title="Valid Lap Table" help="Lists the laps included in this comparison after invalid, pit, and outlier filtering." /><LapTable rows={laps} /></section>
+      <LapInputComparison review={review} laps={laps} />
     </div>
   );
 }

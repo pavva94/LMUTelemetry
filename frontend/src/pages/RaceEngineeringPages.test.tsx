@@ -38,4 +38,17 @@ describe("stint summary arithmetic", () => {
     expect(bestConsecutivePace(rows, 5)).toEqual({ average: 95, startLap: 5, endLap: 9 });
     expect(bestConsecutivePace(rows, 10)).toBeNull();
   });
+
+  it("defaults the input comparison to the two fastest laps in the current stint", async () => {
+    const { fastestLapPair } = await import("./RaceEngineeringPages");
+    const valid = [
+      { lap_number: 2, lap_time: 90, valid_lap: true },
+      { lap_number: 4, lap_time: 93, valid_lap: true },
+      { lap_number: 5, lap_time: 91, valid_lap: true },
+      { lap_number: 6, lap_time: 92, valid_lap: true },
+    ];
+    const all = [...valid, { lap_number: 3, lap_time: 120, in_pit: true, valid_lap: false }];
+
+    expect(fastestLapPair(valid, all)).toEqual(["5", "6"]);
+  });
 });

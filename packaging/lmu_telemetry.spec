@@ -29,6 +29,7 @@ def collect_tree(source, destination, excluded_parts):
 datas = [
     (str(ROOT / "frontend" / "dist"), "frontend/dist"),
     (str(ROOT / "config" / "default_strategy.yaml"), "config"),
+    (str(ROOT / "packaging" / "assets" / "pythonnet.runtime.config"), "."),
 ] + collect_tree(BACKEND / "pyLMUSharedMemory", "pyLMUSharedMemory", {".git", "tests", "__pycache__"})
 
 hiddenimports = [

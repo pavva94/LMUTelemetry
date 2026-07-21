@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { simulateStrategies, stopServiceTime, type StrategySimulationInput } from "./strategySimulation";
+import { explainNoViableStrategies, simulateStrategies, stopServiceTime, type StrategySimulationInput } from "./strategySimulation";
 
 const baseInput: StrategySimulationInput = {
   raceDurationMinutes: 60,
@@ -206,6 +206,27 @@ describe("strategy simulation", () => {
     expect(endurance!.recommendedStartFuelLiters).toBeLessThanOrEqual(80);
   });
 
+  it("searches tyre-driven stop counts for a six-hour race with a lower wear limit", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 360,
+      fuelPerLap: 1,
+      tankCapacityLiters: 60,
+      tyreWearRatePerLap: 0.005,
+      tyreWearRateByWheel: { fl: 0.03, fr: 0.005, rl: 0.005, rr: 0.005 },
+      maxTyreWear: 0.67,
+      maxTyresAvailable: 24,
+    });
+
+    expect(plans.length).toBeGreaterThan(0);
+    plans.forEach((plan) => {
+      expect(plan.totalTimeSeconds).toBeGreaterThanOrEqual(360 * 60);
+      expect(plan.projectedTyreWear).toBeLessThanOrEqual(0.67);
+      expect(plan.tyresUsed).toBeLessThanOrEqual(24);
+    });
+    expect(plans.some((plan) => plan.stops > 6)).toBe(true);
+  });
+
   it("removes a final splash stop when the preceding stint can reach the finish", () => {
     const plans = simulateStrategies({
       ...baseInput,
@@ -332,6 +353,27 @@ describe("strategy simulation", () => {
       maxTyresAvailable: 4,
       maxStops: 4,
     })).toEqual([]);
+  });
+
+  it("explains when tyre allocation prevents every otherwise viable strategy", () => {
+    const input = {
+      ...baseInput,
+      raceDurationMinutes: 120,
+      fuelPerLap: 1,
+      tankCapacityLiters: 45,
+      tyreChangePolicy: "all" as const,
+      maxTyresAvailable: 4,
+      maxStops: 4,
+    };
+
+    expect(simulateStrategies(input)).toEqual([]);
+    expect(explainNoViableStrategies(input).join(" ")).toContain("Tyre allocation is too small");
+  });
+
+  it("explains missing strategy inputs", () => {
+    expect(explainNoViableStrategies({ ...baseInput, fuelPerLap: null })).toEqual([
+      "Missing fuel use per lap. Add the required inputs before generating a strategy.",
+    ]);
   });
 
   it("reports tyre degradation as unavailable when no measured slope exists", () => {

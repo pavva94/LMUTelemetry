@@ -9,7 +9,7 @@ import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "..
 import { average, median, standardDeviation, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
 import { calibrateLiftCoast } from "../lib/liftCoastCalibration";
 import { calibrateStintPace } from "../lib/stintCalibration";
-import { simulateStrategies, type EmpiricalStintPaceModel, type LiftCoastPaceModel, type PaceEvidence, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
+import { explainNoViableStrategies, simulateStrategies, type EmpiricalStintPaceModel, type LiftCoastPaceModel, type PaceEvidence, type StrategyCandidate, type StrategyRisk, type StrategySimulationInput } from "../lib/strategySimulation";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import { MonteCarloStrategyPanel } from "./RaceSimulation";
 import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
@@ -826,7 +826,8 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const paceEvidence = dirtyFields.has("normal_lap_time")
     ? { ...activeModel.paceEvidence, weightedRecentPace: form.normal_lap_time, source: "manual lap-time override" }
     : activeModel.paceEvidence;
-  const plans = useMemo(() => simulateStrategies({
+  const strategyEvaluation = useMemo(() => {
+    const input: StrategySimulationInput = {
     raceDurationMinutes: form.race_duration_minutes,
     normalLapTime: form.normal_lap_time,
     paceEvidence,
@@ -857,13 +858,11 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     liftCoastSecondsPerPercentPerLap: activeModel.liftCoastPace?.secondsPerPercentPerLap ?? null,
     liftCoastMode: form.lift_coast_mode,
     liftCoastTargetPercent: Math.min(12, Math.max(0.5, form.lift_coast_target_percent)),
-  }), [activeModel.empiricalStintPace, activeModel.fuelConfidence, activeModel.fuelObservedLaps, activeModel.fuelRequiredLaps, activeModel.fuelUseStdDevLiters, activeModel.liftCoastPace, activeModel.tyreConfidence, activeModel.tyrePaceDegradationPerLap, activeModel.tyreWearRateByWheel, currentWear, form, fuelPerLap, fuelSafetyMarginLiters, paceEvidence, raceStartWear.fl, raceStartWear.fr, raceStartWear.rl, raceStartWear.rr, safetyPolicy, serviceModel, tyrePolicy, wearRate]);
-  const missingPlanInputs = [
-    fuelPerLap == null || !Number.isFinite(fuelPerLap) || fuelPerLap <= 0 ? "fuel per lap" : null,
-    form.tank_capacity_liters <= 0 ? "tank capacity" : null,
-    form.normal_lap_time <= 0 ? "normal lap time" : null,
-    form.race_duration_minutes <= 0 ? "race duration" : null,
-  ].filter((item): item is string => item != null);
+    };
+    const generatedPlans = simulateStrategies(input);
+    return { plans: generatedPlans, reasons: generatedPlans.length ? [] : explainNoViableStrategies(input) };
+  }, [activeModel.empiricalStintPace, activeModel.fuelConfidence, activeModel.fuelObservedLaps, activeModel.fuelRequiredLaps, activeModel.fuelUseStdDevLiters, activeModel.liftCoastPace, activeModel.tyreConfidence, activeModel.tyrePaceDegradationPerLap, activeModel.tyreWearRateByWheel, currentWear, form, fuelPerLap, fuelSafetyMarginLiters, paceEvidence, raceStartWear.fl, raceStartWear.fr, raceStartWear.rl, raceStartWear.rr, safetyPolicy, serviceModel, tyrePolicy, wearRate]);
+  const { plans, reasons: noStrategyReasons } = strategyEvaluation;
   const bestPlan = plans[0];
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? bestPlan;
   const activePlanId = selectedPlan?.id ?? null;
@@ -1054,7 +1053,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           key={plan.id}
         />
       )) : (
-        <section className="card span-12"><div className="empty-state"><strong>No viable strategy yet</strong><span>{missingPlanInputs.length ? `Missing ${missingPlanInputs.join(", ")}.` : "The race cannot be completed within the current fuel, tyre-wear, and tyre-allocation limits. Increase the tyre allocation or adjust the tyre plan."}</span></div></section>
+        <section className="card span-12"><div className="empty-state"><strong>No viable strategy</strong><span>The current assumptions block every simulated plan:</span><ul>{noStrategyReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div></section>
       )}
       </PageSection>
 

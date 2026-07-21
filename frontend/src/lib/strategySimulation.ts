@@ -626,7 +626,21 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
   const roughLaps = Math.max(1, Math.ceil(input.raceDurationMinutes * 60 / paceFor(input)));
   const fuelStint = stintResourceLimits(input, 1)[0];
   const minimumStops = Math.max(0, Math.ceil(roughLaps / fuelStint) - 1);
-  const maxStops = input.maxStops ?? Math.min(40, Math.max(minimumStops + 3, 4));
+  const startWear = startingWear(input);
+  const rates = wearRates(input);
+  const limits = wearLimits(input);
+  const tyreDrivenStops = startWear && rates && input.tyreChangePolicy !== "never"
+    ? Math.max(...wheels.map((wheel) => {
+      if (rates[wheel] <= 0) return 0;
+      const firstSetLaps = Math.max(0, Math.floor((limits[wheel] - startWear[wheel] + 1e-6) / rates[wheel]));
+      const freshSetLaps = Math.max(1, Math.floor((limits[wheel] + 1e-6) / rates[wheel]));
+      return Math.ceil(Math.max(0, roughLaps - firstSetLaps) / freshSetLaps);
+    }))
+    : 0;
+  // Long races can require substantially more tyre-driven stops than fuel-driven
+  // stops. Search far enough to find those valid layouts; allocation checks below
+  // still reject plans that do not have enough physical tyres available.
+  const maxStops = input.maxStops ?? Math.min(40, Math.max(minimumStops + 3, tyreDrivenStops + 3, 4));
   const candidates: StrategyCandidate[] = [];
   const fuelSaveCandidates: StrategyCandidate[] = [];
   const liftCoastTarget = Math.min(12, Math.max(0.5, input.liftCoastTargetPercent ?? 3));
@@ -672,4 +686,79 @@ export function simulateStrategies(input: StrategySimulationInput): StrategyCand
   add(candidates.find(item => item.stops !== all[0].stops), "alternative", "Alternative stop count");
   all.forEach(item => { if (selected.length < 5) add(item, "alternative", `${item.stops}-stop alternative`); });
   return selected.slice(0, 5);
+}
+
+export function explainNoViableStrategies(input: StrategySimulationInput): string[] {
+  const missing = [
+    !input.fuelPerLap || input.fuelPerLap <= 0 ? "fuel use per lap" : null,
+    !input.tankCapacityLiters || input.tankCapacityLiters <= 0 ? "tank capacity" : null,
+    paceFor(input) <= 0 ? "a valid lap-time estimate" : null,
+    input.raceDurationMinutes <= 0 ? "race duration" : null,
+  ].filter((item): item is string => item != null);
+  if (missing.length) return [`Missing ${missing.join(", ")}. Add the required inputs before generating a strategy.`];
+  if (simulateStrategies(input).length) return [];
+
+  const reasons: string[] = [];
+  const pace = paceFor(input);
+  const estimatedLaps = Math.max(1, Math.ceil(input.raceDurationMinutes * 60 / pace));
+  const fuelRate = fuelRateFor(input);
+  const reserve = reserveFor(input);
+  const capacity = futureFuelCapacity(input);
+  const firstLapFuel = fuelRate + fuelUncertaintyFor(input, 1);
+  if (firstLapFuel > capacity + 1e-6) {
+    reasons.push(`Fuel range is impossible: one lap needs about ${round(firstLapFuel, 2)} L before the finish reserve, but usable tank capacity is ${round(capacity, 2)} L.`);
+  } else if (firstLapFuel + reserve > capacity + 1e-6) {
+    reasons.push(`The ${round(reserve, 2)} L finish reserve and fuel-variance allowance leave too little usable tank capacity for a complete stint.`);
+  }
+
+  const withoutAllocation = simulateStrategies({ ...input, maxTyresAvailable: undefined });
+  if (input.maxTyresAvailable != null && withoutAllocation.length) {
+    const minimumRequired = Math.min(...withoutAllocation.map((plan) => plan.tyresUsed));
+    reasons.push(`Tyre allocation is too small: the current plan allows ${Math.max(4, Math.floor(input.maxTyresAvailable))} individual tyres, while the least-demanding viable layout needs ${minimumRequired}.`);
+  }
+
+  const start = startingWear(input);
+  const rates = wearRates(input);
+  const limits = wearLimits(input);
+  if (start && rates) {
+    const alreadyOver = wheels.filter((wheel) => start[wheel] > limits[wheel] + 1e-6);
+    if (alreadyOver.length) reasons.push(`${alreadyOver.map((wheel) => wheelLabel[wheel]).join(" + ")} start above the configured tyre-wear limit, so the first stint cannot begin safely.`);
+    const withoutWearConstraint = simulateStrategies({
+      ...input,
+      tyreWearRatePerLap: null,
+      tyreWearRateByWheel: {},
+      maxTyresAvailable: undefined,
+    });
+    if (!alreadyOver.length && withoutWearConstraint.length && !withoutAllocation.length) {
+      const limitingWheel = [...wheels].sort((left, right) => rates[right] - rates[left])[0];
+      const safeLaps = rates[limitingWheel] > 0 ? Math.max(0, Math.floor((limits[limitingWheel] - start[limitingWheel]) / rates[limitingWheel])) : estimatedLaps;
+      reasons.push(`Tyre life blocks every generated layout: ${wheelLabel[limitingWheel]} reaches the ${round(limits[limitingWheel] * 100, 1)}% limit after about ${safeLaps} laps with the current ${input.tyreChangePolicy ?? "automatic"} change policy.`);
+    }
+  }
+
+  const relaxedFuel = simulateStrategies({
+    ...input,
+    fuelSafetyMarginLiters: 0,
+    safetyPolicy: "aggressive",
+    fuelUseStdDevLiters: 0,
+    currentFuelLiters: undefined,
+    currentVirtualEnergyFraction: undefined,
+    virtualEnergyPerLap: undefined,
+    fuelToVirtualEnergyRatio: undefined,
+    maxTyresAvailable: undefined,
+  });
+  if (!reasons.some((reason) => reason.startsWith("Fuel range")) && relaxedFuel.length && !withoutAllocation.length) {
+    reasons.push(`Fuel safety constraints prevent a finish: the configured reserve or consumption variance does not fit the available tank across the required ${estimatedLaps} laps.`);
+  }
+
+  if (input.maxStops != null) {
+    const fuelStint = stintResourceLimits(input, 1)[0];
+    const requiredStops = Math.max(0, Math.ceil(estimatedLaps / Math.max(1, fuelStint)) - 1);
+    if (requiredStops > input.maxStops) reasons.push(`The stop limit is too low: fuel range needs at least ${requiredStops} stops, but the plan allows ${input.maxStops}.`);
+  }
+
+  if (!reasons.length) {
+    reasons.push(`No combination can cover the estimated ${estimatedLaps} laps with the current ${round(capacity, 1)} L usable tank, ${round(input.maxTyreWear * 100, 1)}% tyre-wear limit, tyre policy, and allocation. Relax one constraint and recalculate.`);
+  }
+  return reasons;
 }

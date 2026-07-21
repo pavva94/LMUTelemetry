@@ -134,6 +134,7 @@ class Repository:
                     timestamp=snapshot.timestamp.isoformat(),
                     game_time=state.current_time if state else None,
                     lap_number=player.lap_number if player else None,
+                    lap_distance=player_comp.lap_distance if player_comp else None,
                     position=player.position if player else None,
                     class_position=player.class_position if player else None,
                     current_lap_time=player.current_lap_time if player else None,
@@ -887,19 +888,41 @@ class Repository:
         points: list[dict] = []
         for lap_number in selected:
             lap_rows = [row for row in rows if row.lap_number == lap_number]
+            recorded_distances = [float(row.lap_distance) for row in lap_rows if row.lap_distance is not None and math.isfinite(float(row.lap_distance))]
+            distance_min = min(recorded_distances) if recorded_distances else None
+            distance_span = max(recorded_distances) - distance_min if distance_min is not None else 0.0
+            integrated_distances = [0.0]
+            if distance_span <= 1.0:
+                for previous, current in zip(lap_rows, lap_rows[1:]):
+                    delta_time = (current.game_time - previous.game_time) if current.game_time is not None and previous.game_time is not None else 0.0
+                    delta_time = max(0.0, min(5.0, delta_time))
+                    speeds = [speed for speed in (previous.speed_kph, current.speed_kph) if speed is not None and math.isfinite(float(speed))]
+                    average_speed = sum(float(speed) for speed in speeds) / len(speeds) if speeds else 0.0
+                    integrated_distances.append(integrated_distances[-1] + average_speed / 3.6 * delta_time)
+                integrated_span = integrated_distances[-1] if integrated_distances else 0.0
+            else:
+                integrated_span = 0.0
             if len(lap_rows) > per_lap_limit:
                 step = (len(lap_rows) - 1) / max(1, per_lap_limit - 1)
                 indexes = {round(index * step) for index in range(per_lap_limit)}
-                lap_rows = [row for index, row in enumerate(lap_rows) if index in indexes]
-            times = [row.game_time for row in lap_rows if row.game_time is not None]
-            start = min(times) if times else None
-            span = (max(times) - start) if times and start is not None else 0.0
-            for index, row in enumerate(lap_rows):
-                elapsed = row.game_time - start if row.game_time is not None and start is not None else None
+                selected_rows = [(index, row) for index, row in enumerate(lap_rows) if index in indexes]
+            else:
+                selected_rows = list(enumerate(lap_rows))
+            for output_index, (source_index, row) in enumerate(selected_rows):
+                if distance_min is not None and distance_span > 1.0 and row.lap_distance is not None:
+                    distance = max(0.0, float(row.lap_distance) - distance_min)
+                    progress = distance / distance_span
+                elif integrated_span > 1.0:
+                    distance = integrated_distances[source_index]
+                    progress = distance / integrated_span
+                else:
+                    distance = None
+                    progress = output_index / max(1, len(selected_rows) - 1)
                 points.append({
                     "lap_number": lap_number,
                     "game_time": row.game_time,
-                    "progress": elapsed / span if elapsed is not None and span > 0 else index / max(1, len(lap_rows) - 1),
+                    "lap_distance": distance,
+                    "progress": max(0.0, min(1.0, progress)),
                     "throttle": row.throttle,
                     "brake": row.brake,
                     "speed_kph": row.speed_kph,

@@ -263,6 +263,7 @@ def test_lap_input_trace_filters_before_downsampling(monkeypatch) -> None:
                     timestamp=f"2026-01-01T00:00:{offset % 60:02d}",
                     lap_number=lap_number,
                     game_time=(lap_number - 1) * 100 + offset,
+                    lap_distance=offset * 50,
                     throttle=offset / 100,
                     brake=(100 - offset) / 100,
                     speed_kph=200,
@@ -277,6 +278,7 @@ def test_lap_input_trace_filters_before_downsampling(monkeypatch) -> None:
     assert {point["lap_number"] for point in result["points"]} == {1, 3}
     assert result["points"][0]["progress"] == 0
     assert result["points"][59]["progress"] == 1
+    assert result["points"][59]["lap_distance"] == 4950
 
 
 def test_find_resume_session_uses_latest_compatible_unfinished_session(monkeypatch) -> None:

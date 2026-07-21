@@ -23,6 +23,7 @@ $VersionInfoFile = Join-Path $RepoRoot "build\windows-version-info.txt"
 $PackagedFrontendIndex = Join-Path $AppBundle "_internal\frontend\dist\index.html"
 $PackagedConfig = Join-Path $AppBundle "_internal\config\default_strategy.yaml"
 $PackagedTelemetryModule = Join-Path $AppBundle "_internal\pyLMUSharedMemory\lmu_data.py"
+$PackagedPythonnetConfig = Join-Path $AppBundle "_internal\pythonnet.runtime.config"
 
 function Invoke-Step {
     param(
@@ -202,6 +203,7 @@ try {
     Assert-FileExists $PackagedFrontendIndex "Packaged frontend entry point"
     Assert-FileExists $PackagedConfig "Packaged default strategy configuration"
     Assert-FileExists $PackagedTelemetryModule "Packaged LMU shared-memory telemetry module"
+    Assert-FileExists $PackagedPythonnetConfig "Packaged Python.NET runtime configuration"
 
     if (-not $SkipSmokeTest) {
         Invoke-Step "Smoke test packaged application" {

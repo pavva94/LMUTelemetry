@@ -64,6 +64,7 @@ def _ensure_sqlite_columns() -> None:
 
     existing = {column["name"] for column in inspector.get_columns("telemetry_samples")}
     columns = {
+        "lap_distance": "FLOAT",
         "position": "INTEGER",
         "class_position": "INTEGER",
         "current_lap_time": "FLOAT",
