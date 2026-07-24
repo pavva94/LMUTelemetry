@@ -1,6 +1,6 @@
 <h1><img src="website/imgs/lmu-telemetry-icon.png" alt="LMU Telemetry icon" width="32" height="32" align="center"> LMU Telemetry</h1>
 
-[Official Website](https://www.pavesialessandro.com/LMUTelemetry/website/en/index.html) · [Download LMU Telemetry for Windows](https://github.com/pavva94/LMUTelemetry/releases)
+[Official Website](https://www.pavesialessandro.com/LMUTelemetry/website/en/index.html) · [Download LMU Telemetry for Windows](https://github.com/pavva94/LMUTelemetry/releases) [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A3A423RK3Y)
 
 LMU Telemetry is a local-first telemetry, race-engineering, and strategy application for Le Mans Ultimate. It combines live shared-memory data with read-only analysis of LMU's native DuckDB telemetry files, providing race control, driver coaching, strategy planning, career statistics, and professional session reports in one Windows application.
 
