@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import logging
-import shutil
 from pathlib import Path
 
 from sqlalchemy import create_engine
@@ -10,47 +8,22 @@ from sqlalchemy import inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from app.core.config import get_settings
-from app.core.paths import seed_database_path
-
-
-logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase):
     pass
 
 
-def _sqlite_database_path(database_url: str) -> Path | None:
-    url = make_url(database_url)
-    if not url.drivername.startswith("sqlite") or not url.database or url.database == ":memory:":
-        return None
-    return Path(url.database).expanduser()
-
-
-def bootstrap_sqlite_database(database_url: str, seed_path: Path | None = None) -> bool:
-    """Install the committed cache only when the runtime database is absent."""
-    target = _sqlite_database_path(database_url)
-    seed = seed_path or seed_database_path()
-    if target is None or target.exists() or not seed.is_file():
-        return False
-    target.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(seed, target)
-    logger.info("Bootstrapped SQLite cache from %s into %s.", seed, target)
-    return True
-
-
-_settings = get_settings()
-bootstrap_sqlite_database(_settings.database_url)
-engine = create_engine(_settings.database_url, connect_args={"check_same_thread": False})
+engine = create_engine(get_settings().database_url, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def _ensure_sqlite_database_directory() -> None:
-    path = _sqlite_database_path(get_settings().database_url)
-    if path is None:
+    url = make_url(get_settings().database_url)
+    if not url.drivername.startswith("sqlite") or not url.database or url.database == ":memory:":
         return
 
-    path.parent.mkdir(parents=True, exist_ok=True)
+    Path(url.database).expanduser().parent.mkdir(parents=True, exist_ok=True)
 
 
 def init_db() -> None:

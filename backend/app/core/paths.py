@@ -43,10 +43,6 @@ def config_path() -> Path:
     return resource_root() / "config" / "default_strategy.yaml"
 
 
-def seed_database_path() -> Path:
-    return resource_root() / "data" / "seed" / "lmu_strategy.sqlite3"
-
-
 def frontend_dist_dir() -> Path:
     return resource_root() / "frontend" / "dist"
 
