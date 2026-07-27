@@ -36,6 +36,7 @@ MAX_SCAN_LIMIT = 1000
 FOLDER_SETTING_KEY = "lmu_duckdb_folder"
 SYNC_STATUS_SETTING_KEY = "lmu_duckdb_last_sync_status"
 SYNC_AT_SETTING_KEY = "lmu_duckdb_last_sync_at"
+FOLDER_ENV_KEY = "LMU_TELEMETRY_DUCKDB_FOLDER"
 DEFAULT_WINDOWS_TELEMETRY_FOLDER = Path("G:/SteamLibrary/steamapps/common/Le Mans Ultimate/UserData/Telemetry")
 LMU_TELEMETRY_RELATIVE_PATH = Path("steamapps/common/Le Mans Ultimate/UserData/Telemetry")
 ProgressCallback = Callable[[str, str, int, int, int], None]
@@ -1252,6 +1253,9 @@ def discover_lmu_telemetry_folder() -> str | None:
 
 
 def _configured_folder_path() -> str | None:
+    environment_path = os.getenv(FOLDER_ENV_KEY)
+    if environment_path:
+        return environment_path
     configured = _get_setting(FOLDER_SETTING_KEY)
     if configured:
         return configured
@@ -1282,7 +1286,7 @@ def get_settings() -> dict:
         except Exception:
             pass
     return {
-        "folder_path": folder.value if folder else _configured_folder_path(),
+        "folder_path": os.getenv(FOLDER_ENV_KEY) or (folder.value if folder else _configured_folder_path()),
         "last_sync_at": last_sync.value if last_sync else None,
         "last_sync_status": last_status.value if last_status else None,
         "cached_sessions": cached_sessions,

@@ -156,6 +156,18 @@ LMU_TELEMETRY_DATA_DIR=C:\path\to\data
 LMU_TELEMETRY_LOG_DIR=C:\path\to\logs
 ```
 
+Fresh deployments bootstrap `data/sessions/lmu_strategy.sqlite3` from the
+committed compact cache at `data/seed/lmu_strategy.sqlite3`. The cached session
+index and profile data are available immediately while the normal startup sync
+runs in the background. Set `LMU_TELEMETRY_DUCKDB_FOLDER` to the server's
+telemetry folder when it differs from the saved desktop setting.
+
+Refresh the committed seed after syncing local telemetry:
+
+```powershell
+python backend/scripts/build_seed_cache.py
+```
+
 See [Data Handling](docs/data-handling.md) for recording frequency, session boundaries, cache behavior, and stored tables.
 
 ## Development From Source
