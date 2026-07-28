@@ -1,4 +1,4 @@
-<h1><img src="website/imgs/lmu-telemetry-icon.png" alt="LMU Telemetry icon" width="32" height="32" align="center"> LMU Telemetry</h1>
+<h1><img src="website/imgs/lmu-telemetry-icon.png" alt="LMU Telemetry icon" width="32" height="32" align="center"> LMU Race Center</h1>
 
 [Official Website](https://www.pavesialessandro.com/LMUTelemetry/website/en/index.html) · [Download LMU Telemetry for Windows](https://github.com/pavva94/LMUTelemetry/releases) [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A3A423RK3Y)
 
