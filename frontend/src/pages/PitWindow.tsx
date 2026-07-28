@@ -159,6 +159,7 @@ function LiveStrategyTimeline({ plan, currentLap }: { plan?: StrategyCandidate; 
         <div><span className="label">{t("pitWindow.stopsRemaining")}</span><strong>{plan.stops}</strong></div>
         <div><span className="label">{t("pitWindow.raceRemaining")}</span><strong>{t("common.laps", { count: Math.round(plan.raceLaps) })}</strong></div>
         <div><span className="label">{t("pitWindow.fuelAtFinish")}</span><strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")}</strong></div>
+        <div><span className="label">{t("pitWindow.energyAtFinish")}</span><strong>{pct(plan.finishVirtualEnergy)}</strong></div>
       </div>
       <div className="strategy-track">
         {Array.from({ length: plan.stops + 1 }, (_, index) => {
@@ -191,8 +192,8 @@ function LiveStrategyTimeline({ plan, currentLap }: { plan?: StrategyCandidate; 
               <article className="stint-service" key={stint.stint}>
                 <header>
                   <div>
-                    <span className="label">Stint {stint.stint} Â· {stintLaps} laps</span>
-                    <strong>{stop ? `Pit stop ${index + 1} Â· Lap ${absoluteStopLap(currentLap, stop.lap)}` : "Finish"}</strong>
+                    <span className="label">Stint {stint.stint} · {stintLaps} laps</span>
+                    <strong>{stop ? `Pit stop ${index + 1} · Lap ${absoluteStopLap(currentLap, stop.lap)}` : "Finish"}</strong>
                   </div>
                   {stop && <span className="badge amber">{fmt(stop.stopTimeSeconds, 1, " s")} stop</span>}
                 </header>
@@ -211,16 +212,17 @@ function LiveStrategyTimeline({ plan, currentLap }: { plan?: StrategyCandidate; 
                     </div>
                   </div>
                   <div className="service-fuel">
-                    <span className="label">Fuel service</span>
+                    <span className="label">{t("pitWindow.fuelEnergyService")}</span>
                     {stop ? (
                       <>
                         <strong>{fmt(stop.fuelRemainingLiters, 1, " L")} remaining</strong>
                         <b>+ {fmt(stop.fuelAddedLiters, 1, " L")} to add</b>
+                        <small>{pct(stop.virtualEnergyRemaining)} VE → {pct(stop.virtualEnergyOnExit)}</small>
                       </>
                     ) : (
                       <>
                         <strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")} remaining</strong>
-                        <b>No service</b>
+                        <b>{pct(plan.finishVirtualEnergy)} VE</b>
                       </>
                     )}
                   </div>
@@ -251,6 +253,9 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
   const wearRate = Number(strategy?.tyres.wear_rate_per_lap);
   const tankCapacity = Number(player?.fuel_capacity_liters ?? strategy?.fuel.fuel_capacity_liters);
   const currentFuel = Number(player?.fuel_liters);
+  const currentVirtualEnergy = Number(strategy?.energy?.current_virtual_energy_fraction ?? player?.hybrid_state?.virtual_energy_fraction);
+  const virtualEnergyPerLap = Number(strategy?.energy?.virtual_energy_per_lap);
+  const fuelEnergyRatio = Number(strategy?.energy?.fuel_to_virtual_energy_ratio);
 
   const plans = useMemo(() => simulateStrategies({
     raceDurationMinutes: remaining.value != null ? remaining.value / 60 : 0,
@@ -261,6 +266,10 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
     fuelRequiredLaps: Number(strategy?.fuel.valid_laps_required || 3),
     fuelConfidence: strategy?.fuel.confidence,
     tankCapacityLiters: Number.isFinite(tankCapacity) && tankCapacity > 0 ? tankCapacity : null,
+    currentFuelLiters: Number.isFinite(currentFuel) && currentFuel >= 0 ? currentFuel : null,
+    currentVirtualEnergyFraction: Number.isFinite(currentVirtualEnergy) ? currentVirtualEnergy : null,
+    virtualEnergyPerLap: Number.isFinite(virtualEnergyPerLap) && virtualEnergyPerLap > 0 ? virtualEnergyPerLap : null,
+    fuelToVirtualEnergyRatio: Number.isFinite(fuelEnergyRatio) && fuelEnergyRatio > 0 ? fuelEnergyRatio : null,
     raceStartFuelLiters: Number.isFinite(currentFuel) && currentFuel > 0 ? currentFuel : null,
     raceStartNewTyres: false,
     fuelSafetyMarginLiters: Number(assumptions.fuel_safety_margin_liters ?? 2),
@@ -298,6 +307,9 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
     assumptions.safety_car_pit_loss_seconds,
     assumptions.tyre_change_seconds_per_tyre,
     currentFuel,
+    currentVirtualEnergy,
+    virtualEnergyPerLap,
+    fuelEnergyRatio,
     currentWear,
     fuelPerLap,
     lapTime.value,
@@ -369,6 +381,7 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
         <div className="header-grid">
           <div><span className="label">{t("pitWindow.call")}</span><strong>{firstStop ? t("pitWindow.pitLap", { lap: absoluteStopLap(absoluteCurrentLap, firstStop.lap) }) : selectedPlan ? t("pitWindow.stayOut") : "--"}</strong><span className="subvalue">{firstStop ? t("pitWindow.inLaps", { count: firstStop.lap }) : t("pitWindow.selectedPlanReachesFinish")}</span></div>
           <div><span className="label">{t("pitWindow.fuelAtStop")}</span><strong>{firstStop ? fmt(firstStop.fuelRemainingLiters, 1, " L") : fmt(currentFuel, 1, " L")}</strong><span className="subvalue">{firstStop ? t("pitWindow.addFuel", { fuel: fmt(firstStop.fuelAddedLiters, 1, " L") }) : t("pitWindow.finishFuel", { fuel: fmt(selectedPlan?.finishFuelRemainingLiters, 1, " L") })}</span></div>
+          <div><span className="label">{t("pitWindow.virtualEnergyAtStop")}</span><strong>{firstStop ? pct(firstStop.virtualEnergyRemaining) : pct(currentVirtualEnergy)}</strong><span className="subvalue">{firstStop ? t("pitWindow.restoreEnergy", { energy: pct(firstStop.virtualEnergyOnExit) }) : t("pitWindow.finishEnergy", { energy: pct(selectedPlan?.finishVirtualEnergy) })}</span></div>
           <div><span className="label">{t("pitWindow.tyresToChange")}</span><strong>{firstStop ? tyreChangeWearText(firstStop, t) : t("pitWindow.none")}</strong></div>
           <div><span className="label">{t("pitWindow.stopTimeLabel")}</span><strong>{firstStop ? fmt(firstStop.stopTimeSeconds, 1, " s") : "0 s"}</strong></div>
           <div><span className="label">{t("pitWindow.remaining")}</span><strong>{formatDuration(remaining.value)}</strong><span className="subvalue">{remaining.source}</span></div>
@@ -393,12 +406,15 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
         <div className="analysis-value-grid">
           <div><span className="label">{t("pitWindow.currentLap")}</span><strong>{text(absoluteCurrentLap)}</strong><span className="subvalue">{t("pitWindow.absoluteRaceLap")}</span></div>
           <div><span className="label">{t("pitWindow.currentFuel")}</span><strong>{fmt(currentFuel, 1, " L")}</strong><span className="subvalue">{t("pitWindow.tank", { fuel: fmt(tankCapacity, 1, " L") })}</span></div>
+          <div><span className="label">{t("pitWindow.currentVirtualEnergy")}</span><strong>{pct(currentVirtualEnergy)}</strong><span className="subvalue">{fmt(Number.isFinite(virtualEnergyPerLap) ? virtualEnergyPerLap * 100 : null, 2, "% / lap")}</span></div>
+          <div><span className="label">{t("pitWindow.fuelEnergyRatio")}</span><strong>{fmt(Number.isFinite(fuelEnergyRatio) ? fuelEnergyRatio : null, 2)}</strong><span className="subvalue">{t("pitWindow.ratioDetail")}</span></div>
           <div><span className="label">{t("pitWindow.fuelUse")}</span><strong>{fmt(Number.isFinite(fuelPerLap) ? fuelPerLap : null, 3, " L/lap")}</strong><span className="subvalue">{t("pitWindow.validLaps", { observed: strategy?.fuel.valid_laps_observed ?? 0, required: strategy?.fuel.valid_laps_required ?? 3 })}</span></div>
           <div><span className="label">{t("pitWindow.tyreWear")}</span><strong>{pct(Number.isFinite(currentWear) ? currentWear : null)}</strong><span className="subvalue">{tyreWearText({ fl: tyres?.wear_fl ?? currentWear, fr: tyres?.wear_fr ?? currentWear, rl: tyres?.wear_rl ?? currentWear, rr: tyres?.wear_rr ?? currentWear })}</span></div>
           <div><span className="label">{t("pitWindow.wearRate")}</span><strong>{fmt(Number.isFinite(wearRate) ? wearRate * 100 : null, 2, "% / lap")}</strong><span className="subvalue">{t("pitWindow.maxWear", { value: pct(Number(assumptions.max_tyre_wear ?? 0.75)) })}</span></div>
           <div><span className="label">{t("pitWindow.pitModel")}</span><strong>{fmt(Number(assumptions.pit_loss_seconds ?? 28), 1, " s")}</strong><span className="subvalue">{t("pitWindow.pitModelDetail", { tyre: fmt(Number(assumptions.tyre_change_seconds_per_tyre ?? 3), 1, " s"), fuel: fmt(Number(assumptions.refuel_seconds_per_5_liters ?? 1.2), 1, " s per 5L") })}</span></div>
           <div><span className="label">{t("pitWindow.safetyCar")}</span><strong>{pit?.safety_car_pit_recommendation ? t("pitWindow.activePitGain") : t("pitWindow.notApplied")}</strong><span className="subvalue">{t("pitWindow.pitLossIfActive", { time: fmt(Number(assumptions.safety_car_pit_loss_seconds ?? 16), 1, " s") })}</span></div>
           <div><span className="label">{t("pitWindow.fuelMarginNow")}</span><strong>{fmt(strategy?.fuel.fuel_delta_to_finish, 1, " L")}</strong><span className="subvalue">{strategy?.fuel.confidence || t("common.low")} {t("pitWindow.confidence").toLowerCase()}</span></div>
+          <div><span className="label">{t("pitWindow.energyMarginNow")}</span><strong>{pct(strategy?.energy?.virtual_energy_delta_to_finish)}</strong><span className="subvalue">{strategy?.energy?.confidence || t("common.low")} {t("pitWindow.confidence").toLowerCase()}</span></div>
           <div><span className="label">{t("pitWindow.trafficRisk")}</span><strong>{text(pit?.traffic_risk_after_stop)}</strong><span className="subvalue">{t("pitWindow.rejoin", { position: pit?.projected_rejoin_position ?? "--" })}</span></div>
         </div>
       </section>
@@ -419,6 +435,7 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
                 <tr><td>{t("pitWindow.liftCoastLoss")}</td><td>{fmt(selectedPlan.liftCoastLossSeconds, 1, " s")}</td><td>{t("pitWindow.liftCoastUse")}</td></tr>
                 <tr><td>{t("pitWindow.trafficLoss")}</td><td>{fmt(selectedPlan.trafficLossSeconds, 1, " s")}</td><td>{t("pitWindow.trafficLossUse")}</td></tr>
                 <tr><td>{t("pitWindow.fuelModel")}</td><td>{fmt(selectedPlan.calculationBreakdown.fuelUseLitersPerLap, 3, " L/lap")}</td><td>{t("pitWindow.fuelModelUse")}</td></tr>
+                <tr><td>{t("pitWindow.virtualEnergyModel")}</td><td>{fmt(Number.isFinite(virtualEnergyPerLap) ? virtualEnergyPerLap * 100 : null, 3, "% / lap")}</td><td>{t("pitWindow.virtualEnergyModelUse")}</td></tr>
                 <tr><td>{t("pitWindow.fuelAtFinish")}</td><td>{fmt(selectedPlan.finishFuelRemainingLiters, 1, " L")}</td><td>{t("pitWindow.finishFuelUse")}</td></tr>
                 <tr><td>{t("pitWindow.confidence")}</td><td>{selectedPlan.confidence}</td><td>{t("pitWindow.finishFuelUse")}</td></tr>
               </tbody>

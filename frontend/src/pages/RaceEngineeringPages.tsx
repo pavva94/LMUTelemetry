@@ -4,6 +4,7 @@ import {
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   ResponsiveContainer,
   Scatter,
   ScatterChart,
@@ -15,6 +16,7 @@ import { api } from "../api/client";
 import { CompetitorTable } from "../components/CompetitorTable";
 import { SectionTitle } from "../components/SectionTitle";
 import { useI18n } from "../i18n/I18nProvider";
+import { buildLapInputChartData, buildLapTimeDeltaData, type LapInputTrace } from "../lib/lapInputTrace";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { toFiniteNumber } from "../lib/sessionAnalysis";
 import { formatDuration, formatRaceGap, formatRaceTime } from "../lib/timeFormat";
@@ -306,6 +308,7 @@ function CompetitorRows({ competitors, limit = 10, filter = "all", showGap = tru
 
 function BasicLineChart({ data, lines, xKey = "lap_number", height = 220 }: { data: Field[]; lines: Array<[string, string]>; xKey?: string; height?: number }) {
   const timeAxis = lines.some(([key]) => isRaceTimeField(key));
+  const singleSeriesKey = lines.length === 1 ? lines[0][0] : null;
   const xTimeAxis = isRaceTimeField(xKey);
   if (!data.length) return <EmptyState />;
   return (
@@ -313,7 +316,7 @@ function BasicLineChart({ data, lines, xKey = "lap_number", height = 220 }: { da
       <LineChart data={data}>
         <CartesianGrid stroke="#27313a" />
         <XAxis dataKey={xKey} stroke="#8896a3" tickFormatter={(value) => xTimeAxis ? chartLabelFormatter(value, xKey) : String(value)} />
-        <YAxis stroke="#8896a3" tickFormatter={(value) => timeAxis ? formatRaceTime(Number(value)) : String(value)} />
+        <YAxis stroke="#8896a3" tickFormatter={(value) => singleSeriesKey ? formatTelemetryValue(value, singleSeriesKey) : timeAxis ? formatRaceTime(Number(value)) : String(value)} />
         <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => xTimeAxis ? chartLabelFormatter(value, xKey) : String(value)} formatter={chartValueFormatter} />
         <Legend />
         {lines.map(([key, color]) => <Line key={key} dataKey={key} stroke={color} dot={false} connectNulls />)}
@@ -350,6 +353,42 @@ function averageLapDelta(rows: Field[], key: string) {
   const first = avgField(rows.slice(0, middle), key);
   const second = avgField(rows.slice(middle), key);
   return first != null && second != null ? second - first : null;
+}
+
+export function bestConsecutivePace(rows: Field[], windowSize: number) {
+  if (!Number.isInteger(windowSize) || windowSize < 1) return null;
+  const ordered = validPaceRows(rows)
+    .map((row) => ({ lap: Number(row.lap_number), time: Number(row.lap_time) }))
+    .filter((row) => Number.isInteger(row.lap) && row.lap > 0 && Number.isFinite(row.time))
+    .sort((a, b) => a.lap - b.lap);
+  let best: { average: number; startLap: number; endLap: number } | null = null;
+  for (let index = 0; index <= ordered.length - windowSize; index += 1) {
+    const window = ordered.slice(index, index + windowSize);
+    if (!window.every((row, offset) => row.lap === window[0].lap + offset)) continue;
+    const windowAverage = window.reduce((sum, row) => sum + row.time, 0) / windowSize;
+    if (!best || windowAverage < best.average) best = { average: windowAverage, startLap: window[0].lap, endLap: window[window.length - 1].lap };
+  }
+  return best;
+}
+
+export function fastestLapPair(validRows: Field[], allRows: Field[] = validRows) {
+  const lastPitLap = Math.max(0, ...allRows
+    .filter((row) => row.in_pit === true)
+    .map((row) => Number(row.lap_number))
+    .filter((lap) => Number.isFinite(lap)));
+  const currentStint = validRows.filter((row) => Number(row.lap_number) > lastPitLap);
+  const pool = currentStint.length >= 2 ? currentStint : validRows;
+  return [...pool]
+    .filter((row) => Number.isFinite(Number(row.lap_number)) && Number.isFinite(Number(row.lap_time)))
+    .sort((left, right) => Number(left.lap_time) - Number(right.lap_time))
+    .slice(0, 2)
+    .map((row) => String(row.lap_number));
+}
+
+function signedPaceDelta(value?: number | null) {
+  if (value == null || !Number.isFinite(value)) return "--";
+  const sign = value > 0 ? "+" : value < 0 ? "−" : "±";
+  return `${sign}${Math.abs(value).toFixed(3)} s`;
 }
 
 function numericSampleFields(samples: Field[]) {
@@ -647,12 +686,124 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
   );
 }
 
+type LapInputPayload = {
+  session_id: string;
+  laps: Array<string | number>;
+  points: Array<Record<string, number | string | boolean | null>>;
+  warnings: string[];
+};
+
+function inputFraction(value: unknown) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return null;
+  return Math.max(0, Math.min(1, Math.abs(number) <= 1.0001 ? number : number / 100));
+}
+
+function LapInputComparison({ review, laps }: { review: SessionReview | null; laps: Field[] }) {
+  const lapOptions = useMemo(() => [...laps].sort((left, right) => Number(left.lap_number) - Number(right.lap_number)), [laps]);
+  const defaultPair = useMemo(() => fastestLapPair(lapOptions, (review?.laps || []) as Field[]), [lapOptions, review?.laps]);
+  const [lapA, setLapA] = useState("");
+  const [lapB, setLapB] = useState("");
+  const [payload, setPayload] = useState<LapInputPayload | null>(null);
+  const [status, setStatus] = useState("");
+  const sessionId = review?.session?.id ? String(review.session.id) : "";
+  const optionSignature = lapOptions.map((lap) => String(lap.lap_number)).join("|");
+  const defaultSignature = defaultPair.join("|");
+
+  useEffect(() => {
+    const options = optionSignature.split("|");
+    setLapA((current) => current && options.includes(current) ? current : defaultPair[0] || "");
+    setLapB((current) => current && options.includes(current) ? current : defaultPair[1] || defaultPair[0] || "");
+  }, [defaultSignature, optionSignature]);
+
+  useEffect(() => {
+    if (!lapA || !sessionId) {
+      setPayload(null);
+      setStatus(lapA ? "The current session is unavailable." : "Complete two valid laps to compare driver inputs.");
+      return;
+    }
+    let active = true;
+    setStatus("Loading lap input traces");
+    api.sessionLapInputs(sessionId, lapA, lapB || undefined, 2400)
+      .then((data) => {
+        if (!active) return;
+        setPayload(data);
+        setStatus(data.warnings?.[0] || "");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setPayload(null);
+        setStatus(error instanceof Error ? error.message : "Could not load lap input traces.");
+      });
+    return () => { active = false; };
+  }, [sessionId, lapA, lapB]);
+
+  const selectedLaps = Array.from(new Set([lapA, lapB].filter(Boolean)));
+  const selectedTraces = useMemo(() => selectedLaps.map((lap) => {
+    const points = (payload?.points || [])
+      .filter((point) => String(point.lap_number ?? "") === lap)
+      .map((point) => ({ distance: Number(point.progress), throttle: inputFraction(point.throttle), brake: inputFraction(point.brake), elapsedTime: Number(point.elapsed_time) }))
+      .filter((point): point is { distance: number; throttle: number; brake: number; elapsedTime: number } => Number.isFinite(point.distance) && point.throttle != null && point.brake != null && Number.isFinite(point.elapsedTime));
+    return { id: `lap${lap}`, trace: { lap: Number(lap), points } as LapInputTrace };
+  }), [payload, lapA, lapB]);
+  const chartData = useMemo(() => buildLapInputChartData(selectedTraces, 1), [selectedTraces]);
+  const deltaData = useMemo(() => buildLapTimeDeltaData(selectedTraces[0]?.trace, selectedTraces[1]?.trace), [selectedTraces]);
+  const hasInputs = chartData.some((row) => selectedLaps.some((lap) => row[`lap${lap}Throttle`] != null || row[`lap${lap}Brake`] != null));
+  const colors = ["#6dd6ff", "#e6b450"];
+  const lapLabel = (lap: Field) => `Lap ${text(lap.lap_number)} · ${lapTime(Number(lap.lap_time))}`;
+
+  return (
+    <section className="card span-12">
+      <div className="section-toolbar">
+        <SectionTitle title="Throttle And Brake By Lap Distance" help="Overlays throttle and brake through one normalized lap. The fastest and second-fastest valid laps from the current stint load automatically; choose any valid laps to compare braking points, releases, coasting, and throttle application." />
+        <div className="control-row">
+          <label><span className="label">Lap A</span><select value={lapA} onChange={(event) => setLapA(event.target.value)} disabled={!lapOptions.length}>{lapOptions.map((lap) => <option key={`a-${String(lap.lap_number)}`} value={String(lap.lap_number)}>{lapLabel(lap)}</option>)}</select></label>
+          <label><span className="label">Lap B</span><select value={lapB} onChange={(event) => setLapB(event.target.value)} disabled={!lapOptions.length}>{lapOptions.map((lap) => <option key={`b-${String(lap.lap_number)}`} value={String(lap.lap_number)}>{lapLabel(lap)}</option>)}</select></label>
+        </div>
+      </div>
+      {hasInputs ? (
+        <ResponsiveContainer width="100%" height={320}>
+          <LineChart data={chartData}>
+            <CartesianGrid stroke="#27313a" />
+            <XAxis dataKey="progress" type="number" domain={[0, 100]} stroke="#8896a3" tickFormatter={(value) => `${Math.round(Number(value))}%`} label={{ value: "Lap distance", position: "insideBottom", offset: -2 }} />
+            <YAxis domain={[0, 1]} stroke="#8896a3" tickFormatter={(value) => `${Math.round(Number(value) * 100)}%`} />
+            <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => `${Number(value).toFixed(1)}% lap distance`} formatter={(value, name) => [`${(Number(value) * 100).toFixed(1)}%`, String(name)]} />
+            <Legend />
+            {selectedLaps.flatMap((lap, index) => [
+              <Line key={`throttle-${lap}`} dataKey={`lap${lap}Throttle`} name={`Lap ${lap} throttle`} stroke={colors[index]} strokeWidth={2.2} dot={false} connectNulls isAnimationActive={false} />,
+              <Line key={`brake-${lap}`} dataKey={`lap${lap}Brake`} name={`Lap ${lap} brake`} stroke={colors[index]} strokeWidth={1.8} strokeDasharray="6 4" dot={false} connectNulls isAnimationActive={false} />,
+            ])}
+          </LineChart>
+        </ResponsiveContainer>
+      ) : <EmptyState detail={status || "Throttle and brake samples are not available for the selected laps."} />}
+      {status && hasInputs && <p className="muted">{status}</p>}
+      {deltaData.length > 0 && selectedLaps.length === 2 && (
+        <div className="chart-stack-section">
+          <SectionTitle title="Time Delta By Lap Distance" help={`Shows Lap ${lapB} minus Lap ${lapA} through the lap. Positive values mean Lap ${lapB} is behind; negative values mean it is ahead.`} />
+          <ResponsiveContainer width="100%" height={220}>
+            <LineChart data={deltaData}>
+              <CartesianGrid stroke="#27313a" />
+              <XAxis dataKey="progress" type="number" domain={[0, 100]} stroke="#8896a3" tickFormatter={(value) => `${Math.round(Number(value))}%`} label={{ value: "Lap distance", position: "insideBottom", offset: -2 }} />
+              <YAxis stroke="#8896a3" tickFormatter={(value) => `${Number(value) > 0 ? "+" : ""}${Number(value).toFixed(1)}s`} width={58} />
+              <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => `${Number(value).toFixed(1)}% lap distance`} formatter={(value) => [`${Number(value) > 0 ? "+" : ""}${Number(value).toFixed(3)}s`, `Lap ${lapB} vs Lap ${lapA}`]} />
+              <ReferenceLine y={0} stroke="#8896a3" strokeDasharray="4 4" />
+              <Line dataKey="delta" name={`Lap ${lapB} vs Lap ${lapA}`} stroke="#e6b450" strokeWidth={2.2} dot={false} isAnimationActive={false} />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function LapCompare({ telemetry }: EngineeringProps) {
   const { review } = useSessionReview();
   const laps = validPaceRows((review?.laps || []) as Field[]);
   const fastestLapTime = minField(laps, "lap_time");
   const slowestLapTime = maxField(laps, "lap_time");
   const averageLapTime = avgField(laps, "lap_time");
+  const bestFiveLapPace = bestConsecutivePace(laps, 5);
+  const bestTenLapPace = bestConsecutivePace(laps, 10);
   const fastestLap = laps.find((lap) => Number(lap.lap_time) === fastestLapTime);
   const trend = averageLapDelta(laps, "lap_time");
   const fuelTrend = averageLapDelta(laps, "fuel_used");
@@ -683,6 +834,8 @@ export function LapCompare({ telemetry }: EngineeringProps) {
           <Metric label="Valid laps" value={laps.length || "--"} />
           <Metric label="Fastest" value={lapTime(fastestLapTime)} sub={fastestLap ? `Lap ${text(fastestLap.lap_number)}` : undefined} />
           <Metric label="Average" value={lapTime(averageLapTime)} />
+          <Metric label="Best 5-lap pace" value={lapTime(bestFiveLapPace?.average)} sub={bestFiveLapPace && averageLapTime != null ? `Laps ${bestFiveLapPace.startLap}–${bestFiveLapPace.endLap} · Δ ${signedPaceDelta(bestFiveLapPace.average - averageLapTime)} vs average` : "Needs 5 consecutive valid laps"} />
+          <Metric label="Best 10-lap pace" value={lapTime(bestTenLapPace?.average)} sub={bestTenLapPace && averageLapTime != null ? `Laps ${bestTenLapPace.startLap}–${bestTenLapPace.endLap} · Δ ${signedPaceDelta(bestTenLapPace.average - averageLapTime)} vs average` : "Needs 10 consecutive valid laps"} />
           <Metric label="Spread" value={fastestLapTime != null && slowestLapTime != null ? formatRaceTime(slowestLapTime - fastestLapTime) : "--"} />
           <Metric label="Avg fuel" value={fmt(avgField(laps, "fuel_used"), 2, " L")} />
           <Metric label="Top speed" value={fmt(maxField(laps, "top_speed"), 0, " km/h")} />
@@ -694,6 +847,7 @@ export function LapCompare({ telemetry }: EngineeringProps) {
       <section className="card span-6"><SectionTitle title="Fuel And Tyre Trend" help="Compares consumption and tyre wear across valid laps. Rising wear with slower laps points toward degradation; stable wear with slower laps often points to traffic or mistakes." /><BasicLineChart data={laps} lines={[["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
       <section className="card span-6"><SectionTitle title="Pace And Speed" help="Compares lap time against top speed. If top speed is stable while lap time grows, losses are likely in corners, traffic, or traction rather than straight-line pace." /><BasicLineChart data={laps} lines={[["lap_time", "#e6b450"], ["top_speed", "#69d28f"]]} /></section>
       <section className="card span-12"><SectionTitle title="Valid Lap Table" help="Lists the laps included in this comparison after invalid, pit, and outlier filtering." /><LapTable rows={laps} /></section>
+      <LapInputComparison review={review} laps={laps} />
     </div>
   );
 }
@@ -774,7 +928,9 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
       <section className="card span-12"><SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits come from telemetry pit entries, and returning to the main menu starts a new session." /><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<span className="muted">Stints split only on pit entry or a new session.</span></div></section>
       <section className="card span-3"><SectionTitle title="Summary" help="Condenses clean-lap stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Valid / detected laps" value={`${text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} / ${text(summary.detected_lap_count ?? summary.lap_count)}`} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Clean-lap fuel used" value={fmt(summary.fuel_used as number, 2, " L")} /></section>
       <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes eligible lap-to-lap wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Avg wear / valid lap" value={pct(summary.tyre_wear_delta as number)} /><Metric label="Model wear rate" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
-      <section className="card span-6"><SectionTitle title="Stint Comparison" help="Compares lap time, fuel use, and tyre change across the stint. Look for degradation trends after fuel load falls." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"], ["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
+      <section className="card span-4"><SectionTitle title="Lap time" help="Shows lap-time evolution across the selected stint, isolated from fuel and tyre scales so pace changes are easier to read." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"]]} height={240} /></section>
+      <section className="card span-4"><SectionTitle title="Fuel used" help="Shows fuel consumed on each lap of the selected stint. Compare consistent laps to identify consumption changes or anomalous readings." /><BasicLineChart data={rows} lines={[["fuel_used", "#6dd6ff"]]} height={240} /></section>
+      <section className="card span-4"><SectionTitle title="Tyre wear delta" help="Shows the lap-to-lap tyre wear change for the selected stint, independently scaled to make degradation trends visible." /><BasicLineChart data={rows} lines={[["tyre_wear_delta", "#ff8c69"]]} height={240} /></section>
       <section className="card span-12"><SectionTitle title="Stint Lap Table" help="Shows every lap in the selected stint. Sort the story by lap time, fuel used, and events before changing setup assumptions." /><LapTable rows={rows} /></section>
     </div>
   );

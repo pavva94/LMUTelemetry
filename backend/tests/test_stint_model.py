@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas.strategy import FuelState, TyreStrategyState
+from app.schemas.strategy import EnergyState, FuelState, TyreStrategyState
 from app.strategy.stint_model import StintModel
 from app.telemetry.mock_collector import MockTelemetryCollector
 
@@ -18,6 +18,19 @@ def test_stint_end_uses_minimum_limit() -> None:
         TyreStrategyState(estimated_remaining_tyre_life_laps=8),
     )
     assert state.recommended_stint_end_lap == 15
+
+
+def test_virtual_energy_can_limit_the_stint_before_fuel() -> None:
+    snapshot = MockTelemetryCollector().poll_once()
+    snapshot.player.lap_number = 10
+    state = StintModel().update(
+        snapshot,
+        FuelState(fuel_laps_remaining=8),
+        TyreStrategyState(estimated_remaining_tyre_life_laps=10),
+        EnergyState(virtual_energy_laps_remaining=4.8),
+    )
+    assert state.virtual_energy_limited_stint_end_lap == 14
+    assert state.recommended_stint_end_lap == 14
 
 
 def test_stint_resets_after_pit_exit() -> None:

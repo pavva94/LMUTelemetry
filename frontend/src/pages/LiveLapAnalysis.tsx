@@ -578,7 +578,7 @@ function FindingList({ findings, activeId, onSelect, showAll, setShowAll, langua
       <div className="coach-findings-head"><div><span>{coachText("03 · Priorities", language)}</span><h2 id="findings-title">{coachText("Next gains", language)}</h2></div><small>{coachText(`${findings.length} supported findings`, language)}</small></div>
       <div className="coach-finding-list">
         {visible.map((finding, index) => <button key={finding.id} className={`coach-finding ${activeId === finding.id ? "active" : ""}`} onClick={() => onSelect(finding)}>
-          <span className="finding-rank">0{index + 1}</span>
+          <span className="finding-rank">0{index + 1}<b>T{finding.corner_id}</b></span>
           <span className="finding-main"><small>{coachText(finding.phase, language)} · {coachText(finding.category, language)}</small><strong>{coachText(finding.title, language)}</strong></span>
           <span className="finding-proof"><b>{finding.opportunity.toFixed(2)}s</b><small>{coachText(`${finding.confidence} confidence`, language)}</small><em>{trendIcon(finding.trend)} {coachText(finding.trend, language)}</em></span>
         </button>)}

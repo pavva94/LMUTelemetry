@@ -46,6 +46,8 @@ export type RacePrepReport = {
     trend: "improving" | "degrading" | "stable" | "unavailable";
     consistency: "high" | "medium" | "low" | "unknown";
     deltas: Array<{ lap: number | null; lapTime: number; delta: number }>;
+    bestFiveContinuous: ContinuousPace | null;
+    bestTenContinuous: ContinuousPace | null;
   };
   sectors: {
     available: boolean;
@@ -128,6 +130,14 @@ export type RacePrepReport = {
   engineeringFindings: EngineeringFinding[];
 };
 
+export type ContinuousPace = {
+  average: number;
+  startLap: number;
+  endLap: number;
+  fastestLap: number;
+  slowestLap: number;
+};
+
 export type RacePrepOptions = {
   raceLaps?: number | null;
   raceDurationMinutes?: number | null;
@@ -155,6 +165,31 @@ function lapTrend(values: number[]): RacePrepReport["pace"]["trend"] {
   if (result === "rising") return "degrading";
   if (result === "falling") return "improving";
   return result;
+}
+
+export function bestContinuousPace(laps: Row[], windowSize: number): ContinuousPace | null {
+  if (!Number.isInteger(windowSize) || windowSize < 1) return null;
+  const ordered = laps
+    .map((lap) => ({ lap: num(lap.lap_number), time: num(lap.lap_time) }))
+    .filter((lap): lap is { lap: number; time: number } => lap.lap != null && Number.isInteger(lap.lap) && lap.lap > 0 && lap.time != null)
+    .sort((a, b) => a.lap - b.lap);
+  let best: ContinuousPace | null = null;
+  for (let index = 0; index <= ordered.length - windowSize; index += 1) {
+    const window = ordered.slice(index, index + windowSize);
+    if (!window.every((row, offset) => row.lap === window[0].lap + offset)) continue;
+    const times = window.map((row) => row.time);
+    const average = times.reduce((sum, value) => sum + value, 0) / windowSize;
+    if (!best || average < best.average) {
+      best = {
+        average,
+        startLap: window[0].lap,
+        endLap: window[window.length - 1].lap,
+        fastestLap: Math.min(...times),
+        slowestLap: Math.max(...times),
+      };
+    }
+  }
+  return best;
 }
 
 function rowTime(row: Row): number {
@@ -218,7 +253,13 @@ function buildLapSeries(laps: Row[], bestLap: number | null): ChartRow[] {
       lap: chartNumber(lap.lap_number) ?? index + 1,
       lap_time: lapTime,
       delta: lapTime != null && bestLap != null ? lapTime - bestLap : null,
+      sector1: chartNumber(lap.sector1),
+      sector2: chartNumber(lap.sector2),
+      sector3: chartNumber(lap.sector3),
+      fuel_start: chartNumber(lap.fuel_start),
+      fuel_end: chartNumber(lap.fuel_end),
       fuel_used: chartNumber(lap.fuel_used),
+      fuel_added: chartNumber(lap.fuel_added),
       top_speed: chartNumber(lap.top_speed),
       tyre_wear_delta: tyreWearDelta,
       track_temp: chartNumber(lap.track_temp),
@@ -227,6 +268,7 @@ function buildLapSeries(laps: Row[], bestLap: number | null): ChartRow[] {
       engine_water_temp: chartNumber(lap.engine_water_temp),
       valid_lap: Boolean(valid),
       in_pit: lap.in_pit === true,
+      tyre_compound: typeof lap.tyre_compound === "string" ? lap.tyre_compound : typeof lap.compound_front === "string" ? lap.compound_front : null,
       invalid_marker: valid ? null : lapTime,
       pit_marker: lap.in_pit === true ? lapTime : null,
     };
@@ -245,6 +287,9 @@ function buildSampleSeries(samples: Row[]): ChartRow[] {
   return decimateRows(samples).map((sample) => {
     const row: ChartRow = {
       game_time: rowTime(sample),
+      lap_number: chartNumber(sample.lap_number),
+      lap_distance: chartNumber(sample.lap_distance),
+      progress: chartNumber(sample.progress),
       speed_kph: chartNumber(sample.speed_kph),
       rpm: chartNumber(sample.rpm),
       throttle: chartNumber(sample.throttle),
@@ -384,6 +429,7 @@ function buildPitStopReport(review: SessionReview, laps: Row[]): ChartRow[] {
       timestamp: source.timestamp,
       type: String(event?.type ?? "Pit stop"),
       message: String(event?.message ?? event?.phase ?? (pitLap ? "Pit lap detected" : "Pit event")),
+      pit_time: chartNumber(event?.total_pit_loss ?? event?.total_duration ?? event?.duration),
       fuel_before: fuelBefore,
       fuel_after: fuelAfter,
       fuel_added: fuelAdded,
@@ -638,12 +684,12 @@ function validTyreChannelValue(key: string, value: number | null): value is numb
 function isUsableTyreSample(sample: Row, key: string): boolean {
   if (!key.includes("wear")) return true;
   const wearValues = wheels.map((wheel) => num(sample[`tyre_wear_${wheel}`]));
-  const hasNonZeroWear = wearValues.some((value) => value != null && value > 0);
-  if (hasNonZeroWear) return true;
+  const hasMeaningfulWear = wearValues.some((value) => value != null && value > 0.0001);
+  if (hasMeaningfulWear) return true;
   const hasSupportingTyreData = wheels.some((wheel) => {
     const pressure = num(sample[`tyre_pressure_${wheel}`]);
     const temp = num(sample[`tyre_temp_${wheel}`]);
-    return (pressure != null && pressure > 0) || (temp != null && temp > 0);
+    return (pressure != null && pressure >= 130) || (temp != null && temp >= 20);
   });
   return hasSupportingTyreData;
 }
@@ -745,8 +791,8 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
     const lapDeltas = cleanLaps
       .map((lap) => num(lap[`tyre_wear_delta_${wheel}`]) ?? num(lap.tyre_wear_delta))
       .filter((value): value is number => value != null && value > 0 && value < 0.2);
-    const perLap = avg(lapDeltas);
     const delta = lapDeltas.length ? lapDeltas.reduce((sum, value) => sum + value, 0) : start != null && end != null && end >= start ? end - start : null;
+    const perLap = avg(lapDeltas) ?? (delta != null && cleanLaps.length ? delta / cleanLaps.length : null);
     wear[wheel] = { start, end, delta, perLap };
   }
   const wearDeltas = Object.fromEntries(wheels.map((wheel) => [wheel, wear[wheel].delta])) as Record<Wheel, number | null>;
@@ -835,6 +881,8 @@ export function buildRacePrepReport(review: SessionReview, options: RacePrepOpti
       trend: lapTrend(lapTimes),
       consistency,
       deltas,
+      bestFiveContinuous: bestContinuousPace(cleanLaps, 5),
+      bestTenContinuous: bestContinuousPace(cleanLaps, 10),
     },
     sectors: sectorReport(cleanLaps, bestLap, bestLapNumber),
     fuel: {

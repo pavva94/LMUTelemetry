@@ -250,6 +250,39 @@ def temp_session_factory():
     return sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
+def test_lap_input_trace_filters_before_downsampling(monkeypatch) -> None:
+    factory = temp_session_factory()
+    monkeypatch.setattr(repository_module, "SessionLocal", factory)
+    with factory() as db:
+        db.add(SessionModel(id="inputs", created_at="2026-01-01T00:00:00", track_name="Spa", session_type="Practice"))
+        rows = []
+        for lap_number in (1, 2, 3):
+            for offset in range(100):
+                rows.append(TelemetrySampleModel(
+                    session_id="inputs",
+                    timestamp=f"2026-01-01T00:00:{offset % 60:02d}",
+                    lap_number=lap_number,
+                    game_time=(lap_number - 1) * 100 + offset,
+                    lap_distance=offset * 50,
+                    throttle=offset / 100,
+                    brake=(100 - offset) / 100,
+                    speed_kph=200,
+                ))
+        db.add_all(rows)
+        db.commit()
+
+    result = Repository().lap_input_trace("inputs", [1, 3], max_points=120)
+
+    assert result["laps"] == [1, 3]
+    assert len(result["points"]) == 120
+    assert {point["lap_number"] for point in result["points"]} == {1, 3}
+    assert result["points"][0]["progress"] == 0
+    assert result["points"][0]["elapsed_time"] == 0
+    assert result["points"][59]["progress"] == 1
+    assert result["points"][59]["elapsed_time"] == 99
+    assert result["points"][59]["lap_distance"] == 4950
+
+
 def test_find_resume_session_uses_latest_compatible_unfinished_session(monkeypatch) -> None:
     factory = temp_session_factory()
     monkeypatch.setattr(repository_module, "SessionLocal", factory)

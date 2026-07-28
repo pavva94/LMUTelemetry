@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
+import { AlertTriangle, BadgeCheck, CalendarDays, Car, CircleGauge, Clock3, Database, Flag, Gauge, MapPinned, Medal, Route, Search, Timer, Trophy, type LucideIcon } from "lucide-react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
+import { PageSection } from "../components/PageSection";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import type { LmuDuckdbSettings, LmuDuckdbSyncStatus } from "../types/lmuDuckdb";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
@@ -16,8 +18,12 @@ const wearText = (value?: number | null) => fmt(value == null ? null : value * 1
 const isSyncActive = (status?: LmuDuckdbSyncStatus | null) => status?.status === "queued" || status?.status === "running";
 const fileName = (path?: string | null) => path ? path.split(/[\\/]/).pop() || path : "";
 
-function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
-  return <div className="metric compact"><span className="label">{label}</span><span className="value">{value}</span>{sub && <span className="subvalue">{sub}</span>}</div>;
+function ProfileStat({ icon: Icon, label, value, sub, tone = "cyan" }: { icon: LucideIcon; label: string; value: string | number; sub?: string; tone?: "cyan" | "amber" | "green" | "red" | "purple" }) {
+  return <div className={`profile-stat profile-stat-${tone}`}><div className="profile-stat-label"><span><Icon size={15} /></span><small>{label}</small></div><strong>{value}</strong>{sub && <p>{sub}</p>}</div>;
+}
+
+function ProfileRankingTitle({ icon: Icon, title }: { icon: LucideIcon; title: string }) {
+  return <header className="profile-ranking-title"><span><Icon size={17} /></span><h2>{title}</h2></header>;
 }
 
 function Empty({ detail = "No historical telemetry found yet." }: { detail?: string }) {
@@ -223,41 +229,44 @@ export function UserProfile() {
             <small>Processed {syncStatus.processed}; skipped {syncStatus.skipped}; failed {syncStatus.failed}; inactive {syncStatus.inactive}</small>
           </div>
         )}
-        <div className="header-grid">
-          <Metric label="Cached sessions" value={text(settings?.active_sessions)} sub={`${text(settings?.cached_sessions)} total records`} />
-          <Metric label="Warnings" value={text(settings?.warning_count)} />
-          <Metric label="Last sync" value={dateText(settings?.last_sync_at)} />
+        <div className="profile-stat-grid profile-source-stats">
+          <ProfileStat icon={Database} label="Cached sessions" value={text(settings?.active_sessions)} sub={`${text(settings?.cached_sessions)} total records`} tone="cyan" />
+          <ProfileStat icon={AlertTriangle} label="Warnings" value={text(settings?.warning_count)} tone={Number(settings?.warning_count || 0) > 0 ? "red" : "green"} />
+          <ProfileStat icon={Clock3} label="Last sync" value={dateText(settings?.last_sync_at)} tone="purple" />
         </div>
         {(settings?.warnings || []).slice(0, 5).map((warning) => <p className="analysis-warning" key={warning}>{warning}</p>)}
       </section>
-      <section className="card span-12">
-        <h2>Career Overview</h2>
-        <div className="header-grid">
-          <Metric label="Distance" value={fmt(totals.total_distance_km as number, 1, " km")} />
-          <Metric label="Sessions" value={text(totals.total_sessions as number)} sub={`${text(totals.duckdb_sessions as number)} saved`} />
-          <Metric label="Detected laps" value={text(totals.total_laps as number)} sub={`${text(totals.completed_laps as number)} completed; ${text(totals.valid_laps as number)} ranking-valid`} />
-          <Metric label="Completed driving time" value={formatDuration(totals.total_driving_time as number)} />
-          <Metric label="Cars" value={text(totals.different_cars as number)} />
-          <Metric label="Tracks" value={text(totals.different_tracks as number)} />
-          <Metric label="Avg session" value={formatDuration(totals.average_session_duration as number)} />
-          <Metric label="Avg distance" value={fmt(totals.average_distance_per_session as number, 1, " km")} />
-          <Metric label="Avg laps" value={fmt(totals.average_laps_per_session as number, 1)} />
-          <Metric label="Best-lap records" value={text(totals.best_lap_count as number)} />
+      <section className="card span-12 profile-overview-card">
+        <div className="profile-section-heading"><div><span>Career telemetry</span><h2>Career Overview</h2></div><p>Your driving history distilled into distance, activity, variety, and validated pace records.</p></div>
+        <div className="profile-stat-grid profile-career-grid">
+          <ProfileStat icon={Route} label="Distance" value={fmt(totals.total_distance_km as number, 1, " km")} tone="cyan" />
+          <ProfileStat icon={CalendarDays} label="Sessions" value={text(totals.total_sessions as number)} sub={`${text(totals.duckdb_sessions as number)} saved`} tone="purple" />
+          <ProfileStat icon={Flag} label="Detected laps" value={text(totals.total_laps as number)} sub={`${text(totals.completed_laps as number)} completed; ${text(totals.valid_laps as number)} ranking-valid`} tone="amber" />
+          <ProfileStat icon={Timer} label="Completed driving time" value={formatDuration(totals.total_driving_time as number)} tone="green" />
+          <ProfileStat icon={Car} label="Cars" value={text(totals.different_cars as number)} tone="cyan" />
+          <ProfileStat icon={MapPinned} label="Tracks" value={text(totals.different_tracks as number)} tone="purple" />
+          <ProfileStat icon={Clock3} label="Avg session" value={formatDuration(totals.average_session_duration as number)} tone="green" />
+          <ProfileStat icon={Gauge} label="Avg distance" value={fmt(totals.average_distance_per_session as number, 1, " km")} tone="cyan" />
+          <ProfileStat icon={CircleGauge} label="Avg laps" value={fmt(totals.average_laps_per_session as number, 1)} tone="amber" />
+          <ProfileStat icon={Trophy} label="Best-lap records" value={text(totals.best_lap_count as number)} tone="amber" />
         </div>
       </section>
 
-      <section className="card span-4"><h2>Distance By Class</h2><SimpleTable rows={summary?.distance_by_class || []} columns={["car_class", "distance_km", "sessions", "laps", "distance_percent"]} /></section>
-      <section className="card span-4"><h2>Most Used Cars</h2><SimpleTable rows={summary?.top_cars || []} columns={["car", "car_class", "distance_km", "sessions", "laps", "tracks"]} /></section>
-      <section className="card span-4"><h2>Most Driven Tracks</h2><SimpleTable rows={summary?.top_tracks || []} columns={["track", "layout", "distance_km", "sessions", "laps", "best_lap", "most_used_car"]} /></section>
+      <PageSection number="02" title="Driving History" description="Compare the classes, cars, and circuits that make up your saved telemetry history.">
+      <section className="card span-4 profile-ranking-card"><ProfileRankingTitle icon={Medal} title="Distance By Class" /><SimpleTable rows={summary?.distance_by_class || []} columns={["car_class", "distance_km", "sessions", "laps", "distance_percent"]} /></section>
+      <section className="card span-4 profile-ranking-card"><ProfileRankingTitle icon={Car} title="Most Used Cars" /><SimpleTable rows={summary?.top_cars || []} columns={["car", "car_class", "distance_km", "sessions", "laps", "tracks"]} /></section>
+      <section className="card span-4 profile-ranking-card"><ProfileRankingTitle icon={MapPinned} title="Most Driven Tracks" /><SimpleTable rows={summary?.top_tracks || []} columns={["track", "layout", "distance_km", "sessions", "laps", "best_lap", "most_used_car"]} /></section>
+      </PageSection>
 
+      <PageSection number="03" title="Pace Records" description="Validated personal records for every session type, circuit, layout, and exact car combination.">
       <section className="card span-12">
         <h2>Best Laps</h2>
         <p className="section-copy">One fastest validated lap for every session type, circuit, layout, and exact car combination. Every record links back to its source session and lap.</p>
-        <div className="header-grid profile-quality-grid">
-          <Metric label="Valid candidates" value={text(quality?.valid_candidates)} />
-          <Metric label="Personal bests" value={text(quality?.personal_bests)} />
-          <Metric label="Excluded laps" value={text(quality?.excluded_laps)} />
-          <Metric label="Needs review" value={text(quality?.suspicious_laps)} />
+        <div className="profile-stat-grid profile-quality-grid">
+          <ProfileStat icon={BadgeCheck} label="Valid candidates" value={text(quality?.valid_candidates)} tone="green" />
+          <ProfileStat icon={Trophy} label="Personal bests" value={text(quality?.personal_bests)} tone="amber" />
+          <ProfileStat icon={AlertTriangle} label="Excluded laps" value={text(quality?.excluded_laps)} tone="red" />
+          <ProfileStat icon={Search} label="Needs review" value={text(quality?.suspicious_laps)} tone="purple" />
         </div>
         <div className="control-row profile-quality-actions">
           <button type="button" onClick={() => void revalidate()}>Revalidate history</button>
@@ -268,6 +277,7 @@ export function UserProfile() {
           ? (excludedLaps.length ? <LapTable rows={excludedLaps} sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="No excluded or suspicious laps were found." />)
           : (bestLaps.length ? <LapTable rows={bestLaps} compact sort={sort} direction={direction} onSort={onSort} /> : <Empty detail="Best laps appear once the configured LMU session folder is synced." />)}
       </section>
+      </PageSection>
     </div>
   );
 }

@@ -26,7 +26,23 @@ Each simulated lap contains:
 
 `lap time = simulation pace + recent pace trend loss + tyre degradation loss + lift-and-coast loss`
 
-Only positive recent pace trends are projected. A negative trend is not treated as a guaranteed future gain.
+Only positive recent pace trends are projected. A negative trend is not treated as a guaranteed future gain. The positive slope is weighted by evidence confidence (high 100%, medium 65%, low 35%). When a measured tyre-degradation slope is also available, it is removed from the recent trend before projection so the same pace loss is not counted twice.
+
+Because the trend is measured from a recent window of at most ten laps, its pace offset follows a bounded saturation curve:
+
+`trend offset = residual trend × 10 × (1 - exp(-completed laps / 10))`
+
+The offset therefore approaches `residual trend × 10` instead of growing without bound through an endurance race.
+
+## Stint pace projection
+
+Every stint is simulated lap by lap. The projected pace for each lap is:
+
+`lap pace = baseline pace + bounded recent-trend offset + measured tyre-age loss + fuel-load loss + calibrated lift-and-coast loss`
+
+Fuel-load loss is recalculated from the actual fuel carried at the start of each lap and falls as fuel is consumed. Tyre loss uses average equivalent age across all four corners, and only serviced corners reset at a stop. The planner exposes start, average, and end pace for each stint together with cumulative fuel, tyre, and trend losses.
+
+For a sufficiently complete saved session, the fuel, tyre, and warm-up terms come from a robust multivariable stint regression rather than fixed generic coefficients. The fitted curve is centered on the selected median, trimmed-mean, or percentile baseline. The residual sigma describes lap-to-lap variation left unexplained by fuel, wear, and warm-up. This produces a P90 total-time range without inventing a permanent per-lap slowdown.
 
 ## Tyre degradation
 
@@ -68,13 +84,23 @@ Under an active safety-car pit recommendation, the configured safety-car pit-lan
 
 ## Fuel calculation
 
-The planning fuel rate starts with measured fuel use and can include a variance allowance according to the selected safety policy. Each stint must fit within tank capacity and retain the required finish reserve.
+The planning fuel rate starts with robust measured fuel use. Each stint must fit within tank capacity and retain the required finish reserve. Fuel variance is accumulated statistically:
 
-At a stop, the simulator adds only the fuel required for the next stint and reserve:
+`fuel uncertainty = policy z-score * per-lap fuel sigma * sqrt(stint laps)`
 
-`fuel added = max(0, next stint fuel + reserve - fuel at pit entry)`
+At a stop, the simulator adds expected fuel, cumulative uncertainty, and reserve:
+
+`fuel added = max(0, next stint expected fuel + uncertainty + reserve - fuel at pit entry)`
 
 Less fuel at an individual stop reduces only refuelling time. It never reduces or removes the fixed pit-lane driving loss for that stop.
+
+Stop-count feasibility is recalculated using the laps actually completed after pit/service time, rather than only the no-stop lap estimate. A candidate is discarded if its final fuel-only stop can be removed by merging its last two stints within the applicable fuel and virtual-energy range. Lift-and-coast candidates re-run the same stint partitioning with the reduced consumption rate, allowing the planner to show when saving can genuinely skip a stop rather than merely adding finish fuel.
+
+When calibrated, lift-and-coast time is included explicitly:
+
+`lift-and-coast loss = seconds per 1% per lap × selected/inferred saving % × completed laps`
+
+Without sufficient comparable throttle, brake, fuel, wear, and pace evidence, the plan remains available but its pace cost is marked uncalibrated and it is not promoted as the normal fastest strategy.
 
 ## Final candidate time
 

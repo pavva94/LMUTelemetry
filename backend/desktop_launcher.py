@@ -21,6 +21,43 @@ from app.core.paths import app_data_dir, config_path, frontend_dist_dir, log_dir
 APP_NAME = "LMU Telemetry"
 
 
+def _bundle_dir() -> Path:
+    return Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+
+
+def _unblock_bundled_desktop_runtime() -> None:
+    """Remove Internet-zone marks from the app's own managed UI assemblies."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+
+    bundle_dir = _bundle_dir()
+    runtime_roots = (
+        bundle_dir / "pythonnet" / "runtime",
+        bundle_dir / "webview" / "lib",
+    )
+    for root in runtime_roots:
+        if not root.is_dir():
+            continue
+        for dll in root.rglob("*.dll"):
+            try:
+                os.remove(f"{dll}:Zone.Identifier")
+            except OSError:
+                # Missing streams and read-only installed locations are both safe to ignore.
+                pass
+
+
+def _configure_pythonnet_runtime() -> None:
+    """Allow the bundled .NET bridge to load from downloaded portable builds."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+
+    bundle_dir = _bundle_dir()
+    runtime_config = bundle_dir / "pythonnet.runtime.config"
+    if runtime_config.is_file():
+        os.environ.setdefault("PYTHONNET_RUNTIME", "netfx")
+        os.environ.setdefault("PYTHONNET_NETFX_CONFIG_FILE", str(runtime_config))
+
+
 def _message_box(title: str, message: str) -> None:
     try:
         ctypes.windll.user32.MessageBoxW(None, message, title, 0x10)
@@ -141,6 +178,10 @@ def _run_packaged_smoke_test(base_url: str) -> None:
     if response.status != 200 or b"<!doctype html" not in index:
         raise RuntimeError("Packaged frontend did not return its index page.")
 
+    _unblock_bundled_desktop_runtime()
+    _configure_pythonnet_runtime()
+    import webview.platforms.winforms  # noqa: F401
+
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=f"Launch {APP_NAME}.")
@@ -173,6 +214,8 @@ def main() -> int:
         return 1
 
     try:
+        _unblock_bundled_desktop_runtime()
+        _configure_pythonnet_runtime()
         import webview
     except Exception as exc:
         _stop_server(server, server_thread)
@@ -188,6 +231,14 @@ def main() -> int:
     window.events.closed += _on_closed
     try:
         webview.start(private_mode=False)
+    except Exception as exc:
+        _write_launcher_error(exc)
+        _message_box(
+            APP_NAME,
+            f"{APP_NAME} could not open its desktop window.\n\n"
+            f"The Windows desktop runtime could not be initialized:\n{exc}",
+        )
+        return 1
     finally:
         _stop_server(server, server_thread)
     return 0

@@ -9,7 +9,7 @@ Source: WebSocket telemetry and strategy state.
 - Main driving display: speed, gear, RPM ratio, throttle, brake, steering, and clutch from `player`.
 - RPM bar: `rpm / max(max_rpm, 1)`, capped to `1`; default max RPM is `9000` if missing.
 - Input bars: input value times `100`, clamped to `0-100%`.
-- Fuel card: current fuel from telemetry, model values from `strategy.fuel`.
+- Fuel & Pit card: current fuel and virtual energy from telemetry, plus per-lap rates, range, and the inferred fuel/virtual-energy load ratio from `strategy.fuel` and `strategy.energy`.
 - Needed clean fuel laps: `valid_laps_required - valid_laps_observed`, floored at zero.
 - Tyre life limit lap: `floor(current_lap + estimated_remaining_tyre_life_laps)`.
 - Tyre wear display formats `0-1` wear as percent.
@@ -67,7 +67,8 @@ Lift-and-coast:
 
 Source: `strategy.pit_window`.
 
-- Live pit options use the shared strategy simulator with backend pace evidence, current fuel, tank capacity, tyre wear by wheel, wear rate, pit service assumptions, safety-car pit loss, and traffic risk.
+- Live pit options use the shared strategy simulator with backend pace evidence, current fuel, current virtual energy, measured fuel/energy rates, the fuel/virtual-energy load ratio, tank capacity, tyre wear by wheel, wear rate, pit service assumptions, safety-car pit loss, and traffic risk.
+- The first live stint is constrained by both resources currently on board. Later stints restore virtual energy to `100%`; physical fuel load is capped by the measured ratio and physical tank capacity. Stops expose fuel remaining/added/on-exit and virtual energy remaining/restored/on-exit.
 - The page displays the pace model and live calculation breakdown so the optimal call can be audited from the exact inputs and penalties.
 
 - Earliest, latest, optimal, traffic risk, and rejoin position are backend outputs. Rejoin requires real competitor gaps; otherwise it is unavailable. No illustrative time/position penalties are added by the frontend.

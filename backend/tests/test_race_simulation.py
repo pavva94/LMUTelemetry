@@ -55,6 +55,25 @@ def test_generated_strategy_contains_initial_fuel_and_pit_service_plan():
     assert plan["pits"][0]["fuel_to_add_liters"] > 0
 
 
+def test_tyre_allocation_filters_monte_carlo_strategies():
+    model = derive_model(_review(), RaceSimulationRequest(
+        session_id="test", race_duration_minutes=120, simulation_count=100,
+        tyre_wear_rate_per_lap=.02,
+    ))
+    constrained = RaceSimulationRequest(
+        session_id="test", race_duration_minutes=120, simulation_count=100,
+        tyre_wear_rate_per_lap=.02, max_tyres_available=8,
+    )
+    _, strategies = generate_strategies(model, constrained, 90)
+
+    assert strategies
+    assert all(4 + 4 * sum(stint.change_tyres for stint in strategy.stints[1:]) <= 8 for strategy in strategies)
+
+    impossible = constrained.model_copy(update={"max_tyres_available": 4})
+    with pytest.raises(ValueError, match="tyre-allocation"):
+        generate_strategies(model, impossible, 90)
+
+
 def test_pace_override_does_not_change_observed_variability():
     normal = derive_model(_review(), _request())
     overridden = derive_model(

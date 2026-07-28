@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
+import { PageSection } from "../components/PageSection";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
 import { useT } from "../i18n/I18nProvider";
 import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { average, median, standardDeviation, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
-import { simulateStrategies, type PaceEvidence, type StrategyCandidate, type StrategyRisk } from "../lib/strategySimulation";
+import { calibrateLiftCoast } from "../lib/liftCoastCalibration";
+import { calibrateStintPace } from "../lib/stintCalibration";
+import { explainNoViableStrategies, simulateStrategies, type EmpiricalStintPaceModel, type LiftCoastPaceModel, type PaceEvidence, type StrategyCandidate, type StrategyRisk, type StrategySimulationInput } from "../lib/strategySimulation";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import { MonteCarloStrategyPanel } from "./RaceSimulation";
 import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
@@ -26,11 +29,14 @@ type FormState = {
   tyre_change_seconds_per_tyre: number;
   refuel_seconds_per_5_liters: number;
   max_tyre_wear: number;
+  max_tyres_available: number;
+  lift_coast_mode: "inferred" | "fixed";
+  lift_coast_target_percent: number;
   safety_car_pit_loss_seconds: number;
   fuel_safety_margin_laps: number;
 };
 
-type NumericFormKey = Exclude<keyof FormState, "race_start_new_tyres">;
+type NumericFormKey = Exclude<keyof FormState, "race_start_new_tyres" | "lift_coast_mode">;
 type ModelSource = "live" | "session" | "history";
 type PaceBasis = "median" | "trimmed" | "percentile";
 
@@ -51,11 +57,17 @@ type PlannerModel = {
   fuelUseStdDevLiters: number | null;
   fuelConfidence: string;
   paceEvidence: PaceEvidence;
+  empiricalStintPace: EmpiricalStintPaceModel | null;
+  liftCoastPace: LiftCoastPaceModel | null;
 };
 
 const fmt = (value: number | null | undefined, digits = 1, suffix = "") =>
   value == null || !Number.isFinite(value) ? "--" : `${value.toFixed(digits)}${suffix}`;
 const pct = (value: number | null | undefined) => value == null || !Number.isFinite(value) ? "--" : `${Math.round(value * 100)}%`;
+const signedSeconds = (value: number | null | undefined) =>
+  value == null || !Number.isFinite(value) ? "--" : `${value > 0 ? "+" : value < 0 ? "−" : ""}${Math.abs(value).toFixed(1)} s`;
+const paceEffectTone = (value: number | null | undefined) =>
+  value == null || !Number.isFinite(value) || Math.abs(value) < 0.05 ? "neutral" : value > 0 ? "loss" : "gain";
 const DEFAULT_TANK_CAPACITY_LITERS = 90;
 const wheels: Wheel[] = ["fl", "fr", "rl", "rr"];
 const wheelLabels: Record<Wheel, string> = { fl: "FL", fr: "FR", rl: "RL", rr: "RR" };
@@ -111,7 +123,17 @@ function sessionPaceEvidence(lapTimes: number[], fallback?: number | null): Pace
     : lapTimes.length >= 7 && last7 != null && lastLap != null
       ? last7 * 0.75 + lastLap * 0.25
       : last7 ?? last10 ?? lastLap ?? fallback ?? null;
-  const trend = last7 != null && last10 != null && lapTimes.length >= 10 ? last7 - last10 : null;
+  const trendWindow = lapTimes.slice(-10);
+  const trend = trendWindow.length >= 4
+    ? (() => {
+        const xMean = (trendWindow.length - 1) / 2;
+        const yMean = average(trendWindow) ?? 0;
+        const denominator = trendWindow.reduce((sum, _, index) => sum + (index - xMean) ** 2, 0);
+        return denominator > 0
+          ? trendWindow.reduce((sum, value, index) => sum + (index - xMean) * (value - yMean), 0) / denominator
+          : null;
+      })()
+    : null;
   return {
     lastLapTime: lastLap,
     last7LapAverage: last7,
@@ -218,6 +240,9 @@ function seededForm(strategy: StrategyState | null, telemetry?: TelemetrySnapsho
     tyre_change_seconds_per_tyre: numberFrom(assumptions.tyre_change_seconds_per_tyre, current?.tyre_change_seconds_per_tyre ?? 3),
     refuel_seconds_per_5_liters: numberFrom(assumptions.refuel_seconds_per_5_liters, current?.refuel_seconds_per_5_liters ?? 1.2),
     max_tyre_wear: numberFrom(assumptions.max_tyre_wear, current?.max_tyre_wear ?? 0.75),
+    max_tyres_available: numberFrom(assumptions.max_tyres_available, current?.max_tyres_available ?? 24),
+    lift_coast_mode: assumptions.lift_coast_mode === "fixed" || assumptions.lift_coast_mode === "inferred" ? assumptions.lift_coast_mode : current?.lift_coast_mode ?? "inferred",
+    lift_coast_target_percent: numberFrom(assumptions.lift_coast_target_percent, current?.lift_coast_target_percent ?? 3),
     safety_car_pit_loss_seconds: numberFrom(assumptions.safety_car_pit_loss_seconds, current?.safety_car_pit_loss_seconds ?? 16),
     fuel_safety_margin_laps: numberFrom(assumptions.fuel_safety_margin_laps, current?.fuel_safety_margin_laps ?? 1),
   };
@@ -261,6 +286,8 @@ function modelFromLive(strategy: StrategyState | null, telemetry?: TelemetrySnap
     fuelUseStdDevLiters: strategy?.fuel.fuel_use_stddev_liters ?? null,
     fuelConfidence: strategy?.fuel.confidence || "low",
     paceEvidence: livePaceEvidence(strategy, liveLap.value),
+    empiricalStintPace: null,
+    liftCoastPace: null,
   };
 }
 
@@ -273,7 +300,7 @@ function robustPace(values: number[], basis: PaceBasis) {
   return average(trim ? ordered.slice(trim, -trim) : ordered);
 }
 
-function modelFromSession(review: SessionReview | null, sessionLabel: string, current?: FormState, paceBasis: PaceBasis = "median"): PlannerModel | null {
+export function modelFromSession(review: SessionReview | null, sessionLabel: string, current?: FormState, paceBasis: PaceBasis = "median"): PlannerModel | null {
   if (!review) return null;
   const cleanLaps = validSessionLaps(review);
   const lapTimes = cleanLaps.map((lap) => toFiniteNumber(lap.lap_time)).filter((value): value is number => value != null);
@@ -297,10 +324,13 @@ function modelFromSession(review: SessionReview | null, sessionLabel: string, cu
   const wheelWearValues = wheels.map((wheel) => wheelWear[wheel]).filter((value): value is number => value != null);
   const averageWear = wheelWearValues.length ? average(wheelWearValues) : tyreWearUsedFraction(toFiniteNumber(review.summary?.average_tyre_wear));
   const wearRate = average(wheelRates);
+  const baselinePace = robustPace(lapTimes, paceBasis);
+  const sessionEvidence = sessionPaceEvidence(lapTimes, current?.normal_lap_time);
+  const empiricalStintPace = calibrateStintPace(review);
   return {
     label: sessionLabel,
     source: "session",
-    normalLapTime: robustPace(lapTimes, paceBasis),
+    normalLapTime: baselinePace,
     fuelPerLap: median(fuelValues),
     fuelObservedLaps: fuelValues.length,
     fuelRequiredLaps: 3,
@@ -313,49 +343,98 @@ function modelFromSession(review: SessionReview | null, sessionLabel: string, cu
     tyreConfidence: wheelRates.length >= 3 ? "high" : wheelRates.length >= 2 ? "medium" : "low",
     fuelUseStdDevLiters: standardDeviation(fuelValues),
     fuelConfidence: fuelValues.length >= 3 ? "high" : "low",
-    paceEvidence: { ...sessionPaceEvidence(lapTimes, current?.normal_lap_time), method: paceBasis === "trimmed" ? "10% trimmed mean" : paceBasis === "percentile" ? "60th percentile" : "median", spreadSeconds: standardDeviation(lapTimes), foundLaps: review.laps.length },
+    paceEvidence: { ...sessionEvidence, weightedRecentPace: baselinePace, source: "Saved-session robust baseline", method: paceBasis === "trimmed" ? "10% trimmed mean" : paceBasis === "percentile" ? "60th percentile" : "median", spreadSeconds: standardDeviation(lapTimes), foundLaps: review.laps.length },
+    empiricalStintPace,
+    liftCoastPace: calibrateLiftCoast(review, empiricalStintPace),
   };
 }
 
 function PlanCard({ plan, index, selected, onSelect }: { plan: StrategyCandidate; index: number; selected: boolean; onSelect: () => void }) {
+  const tyrePaceEffect = plan.tyreDegradationLossSeconds;
+  const fuelPaceEffect = plan.stintPace.reduce((sum, stint) => sum + stint.fuelLoadLossSeconds, 0);
+  const warmupOrTrendEffect = plan.projectedPaceLossSeconds - fuelPaceEffect;
+  const liftCoastEffect = plan.liftCoastLossSeconds ?? 0;
+  const netPaceEffect = plan.projectedPaceLossSeconds + (tyrePaceEffect ?? 0) + liftCoastEffect;
+  const empiricalPace = plan.calculationBreakdown.paceModelSource === "empirical stint regression";
   return (
     <section className={`card span-4 strategy-card${selected ? " selected" : ""}`}>
-      <div className="row">
-        <span className="badge blue">#{index + 1} · {plan.category}</span>
-        <span className={`badge ${riskBadge(plan.risk)}`}>{plan.risk} risk</span>
-      </div>
-      <h2>{plan.label}</h2>
-      <div className="strategy-card-main">
-        <strong>{formatDuration(plan.totalTimeSeconds)}</strong>
-        <span>{plan.stops} stop{plan.stops === 1 ? "" : "s"} - up to {plan.maxTyresChangedPerStop} tyre{plan.maxTyresChangedPerStop === 1 ? "" : "s"} when needed</span>
-      </div>
-      <div className="header-grid two">
-        <div><span className="label">Pit time</span><strong>{fmt(plan.pitTimeSeconds, 1, " s")}</strong></div>
-        <div><span className="label">Driving time</span><strong>{formatDuration(plan.baseRaceTimeSeconds)}</strong><span className="subvalue">{fmt(plan.calculationBreakdown.simulationPaceSeconds, 3, " s/lap")}</span></div>
-        <div><span className="label">Pace loss</span><strong>{fmt(plan.projectedPaceLossSeconds + (plan.tyreDegradationLossSeconds ?? 0), 1, " s")}</strong><span className="subvalue">trend {fmt(plan.projectedPaceLossSeconds, 1, " s")} / tyres {fmt(plan.tyreDegradationLossSeconds, 1, " s")}</span></div>
-        <div><span className="label">Traffic loss</span><strong>{fmt(plan.trafficLossSeconds, 1, " s")}</strong></div>
-        <div><span className="label">Confidence</span><strong>{plan.confidence}</strong></div>
-        <div><span className="label">Stint</span><strong>{fmt(plan.stintLaps, 1, " laps")}</strong></div>
-        <div><span className="label">Fuel margin</span><strong>{fmt(plan.fuelMarginLiters, 1, " L")}</strong></div>
-        <div><span className="label">Finish fuel</span><strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")}</strong></div>
-        <div><span className="label">Start fuel needed</span><strong>{fmt(plan.recommendedStartFuelLiters, 1, " L")}</strong><span className="subvalue">{plan.startFuelIsFullTank ? "full tank" : `${fmt(plan.firstStintFuelNeedLiters, 1, " L")} stint + margin`}</span></div>
-        <div><span className="label">Lift/coast</span><strong>{fmt(plan.liftCoastSavePercent, 1, "%")}</strong></div>
-        <div><span className="label">Max tyre wear</span><strong>{pct(plan.projectedTyreWear)}</strong></div>
-        <div><span className="label">Lowest remaining</span><strong>{fmt(plan.lowestRemainingTyreWear == null ? null : plan.lowestRemainingTyreWear * 100, 0, "%")}</strong></div>
-      </div>
-      {plan.stopsDetail.length > 0 && (
-        <div className="metric compact">
-          <span className="label">Tyre calls</span>
-          {plan.stopsDetail.map((stop) => (
-            <span className="subvalue" key={stop.lap}>Lap {stop.lap}: {tyreChangeWearText(stop)}, {fmt(stop.fuelRemainingLiters, 1, " L")} remaining</span>
-          ))}
+      <header className="strategy-card-header">
+        <div>
+          <div className="strategy-card-badges">
+            <span className="badge blue">#{index + 1} · {plan.category}</span>
+            <span className={`badge ${riskBadge(plan.risk)}`}>{plan.risk} risk</span>
+          </div>
+          <h2>{plan.label}</h2>
         </div>
-      )}
-      <div className="metric compact">
-        <span className="label">Why this is shown</span>
-        {plan.reasons.map((reason) => <span className="subvalue" key={reason}>{reason}</span>)}
+        <span className="strategy-confidence">{plan.confidence} confidence</span>
+      </header>
+
+      <div className="strategy-outcome">
+        <span className="eyebrow">PROJECTED RACE TIME</span>
+        <strong>{formatDuration(plan.totalTimeSeconds)}</strong>
+        <div className="strategy-outcome-facts">
+          <span><b>{plan.raceLaps}</b> laps</span>
+          <span><b>{plan.stops}</b> stop{plan.stops === 1 ? "" : "s"}</span>
+          <span><b>{fmt(plan.stintLaps, 1)}</b> laps / stint</span>
+        </div>
       </div>
+
+      <section className="strategy-time-block">
+        <div className="strategy-section-heading">
+          <div><span className="eyebrow">WHERE THE TIME GOES</span><strong>Race-time breakdown</strong></div>
+          <span className="strategy-reference-pace">Reference pace {formatRaceTime(plan.calculationBreakdown.simulationPaceSeconds)}</span>
+        </div>
+        <div className="strategy-time-rows">
+          <div><span>Reference driving time<small>{plan.raceLaps} laps at baseline pace</small></span><strong>{formatDuration(plan.baseRaceTimeSeconds)}</strong></div>
+          <div><span>Pace effects<small>Fuel, warm-up, tyres{plan.liftCoastSavePercent > 0 ? ", and lift-and-coast" : ""}</small></span><strong className={paceEffectTone(netPaceEffect)}>{signedSeconds(netPaceEffect)}</strong></div>
+          <div><span>Pit lane &amp; service<small>{plan.stops} complete pit visit{plan.stops === 1 ? "" : "s"}</small></span><strong>+{fmt(plan.pitTimeSeconds, 1, " s")}</strong></div>
+          {plan.trafficLossSeconds > 0 && <div><span>Traffic allowance</span><strong>+{fmt(plan.trafficLossSeconds, 1, " s")}</strong></div>}
+        </div>
+        <div className="pace-effect-summary">
+          <div className="pace-effect-heading">
+            <span><span className="label">PACE EFFECTS VS REFERENCE</span><small>Negative values recover time; positive values add time.</small></span>
+            <strong className={`pace-effect-total ${paceEffectTone(netPaceEffect)}`}>{fmt(Math.abs(netPaceEffect), 1, " s")} {netPaceEffect >= 0 ? "slower" : "faster"}</strong>
+          </div>
+          <div className="pace-effect-breakdown">
+            <span><span>Fuel carried</span><strong className={paceEffectTone(fuelPaceEffect)}>{signedSeconds(fuelPaceEffect)}</strong><small>Changes with stint length</small></span>
+            <span><span>{empiricalPace ? "Tyre warm-up" : "Recent pace trend"}</span><strong className={paceEffectTone(warmupOrTrendEffect)}>{signedSeconds(warmupOrTrendEffect)}</strong><small>{empiricalPace ? "Resets after tyre service" : "Bounded projection"}</small></span>
+            <span><span>Tyre wear</span><strong className={paceEffectTone(tyrePaceEffect)}>{signedSeconds(tyrePaceEffect)}</strong><small>{tyrePaceEffect == null ? "Not available" : "Measured wear effect"}</small></span>
+            {plan.liftCoastSavePercent > 0 && <span><span>Lift-and-coast</span><strong className={paceEffectTone(liftCoastEffect)}>{plan.liftCoastLossSeconds == null ? "Uncalibrated" : signedSeconds(liftCoastEffect)}</strong><small>{fmt(plan.liftCoastSavePercent, 1, "% fuel saving")}</small></span>}
+          </div>
+        </div>
+      </section>
+
+      <section className="strategy-resource-block">
+        <div className="strategy-section-heading"><div><span className="eyebrow">RACE LIMITS</span><strong>Fuel &amp; tyres</strong></div></div>
+        <div className="strategy-resource-grid">
+          <div><span>Start fuel</span><strong>{fmt(plan.recommendedStartFuelLiters, 1, " L")}</strong><small>{plan.startFuelIsFullTank ? "Full tank" : `${fmt(plan.firstStintFuelNeedLiters, 1, " L")} stint requirement`}</small></div>
+          <div><span>Fuel at finish</span><strong>{fmt(plan.finishFuelRemainingLiters, 1, " L")}</strong><small>{fmt(plan.fuelMarginLiters, 1, " L")} above reserve</small></div>
+          <div><span>Peak tyre wear</span><strong>{pct(plan.projectedTyreWear)}</strong><small>{fmt(plan.lowestRemainingTyreWear == null ? null : plan.lowestRemainingTyreWear * 100, 0, "% life remaining")}</small></div>
+          <div><span>Tyre allocation</span><strong>{plan.tyresUsed} / {plan.tyresAvailable ?? "Unlimited"}</strong><small>{plan.tyresRemaining == null ? "No allocation configured" : `${plan.tyresRemaining} unused · starting four included`}</small></div>
+          <div><span>Fuel saving</span><strong>{plan.liftCoastSavePercent > 0 ? fmt(plan.liftCoastSavePercent, 1, "%") : "Not required"}</strong><small>{plan.liftCoastSavePercent > 0 ? `${fmt(plan.liftCoastSaveLitersPerLap, 3, " L/lap")} target` : "Run normal consumption"}</small></div>
+        </div>
+      </section>
+
+      {plan.stopsDetail.length > 0 && (
+        <section className="strategy-stop-block">
+          <div className="strategy-section-heading"><div><span className="eyebrow">PIT PLAN</span><strong>{plan.stops} scheduled stop{plan.stops === 1 ? "" : "s"}</strong></div></div>
+          <div className="strategy-stop-list">
+          {plan.stopsDetail.map((stop) => (
+            <div key={stop.lap}>
+              <strong>Lap {stop.lap}</strong>
+              <span>Fuel +{fmt(stop.fuelAddedLiters, 1, " L")}</span>
+              <span>Tyres: {tyreChangeWearText(stop)}</span>
+              <small>{fmt(stop.stopTimeSeconds, 1, " s")} total</small>
+            </div>
+          ))}
+          </div>
+        </section>
+      )}
       {plan.warnings.length > 0 && <div className="metric compact strategy-warning"><span className="label">Model warnings</span>{plan.warnings.map((warning) => <span className="subvalue" key={warning}>{warning}</span>)}</div>}
+      <details className="strategy-rationale">
+        <summary>Why this strategy is ranked #{index + 1}</summary>
+        <ul>{plan.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul>
+      </details>
       <button className={`strategy-select${selected ? " active-control" : ""}`} type="button" onClick={onSelect}>
         {selected ? "Selected strategy" : "Select strategy"}
       </button>
@@ -387,6 +466,7 @@ function StrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
             style={{ left: `${Math.min(98, Math.max(2, (stop.lap / plan.raceLaps) * 100))}%` }}
           >
             <strong>Lap {stop.lap}</strong>
+            <small>{formatDuration(stop.raceTimeRemainingAtPitSeconds)} remaining</small>
             <small>{fmt(stop.fuelRemainingLiters, 1, " L")} left · add {fmt(stop.fuelAddedLiters, 1, " L")} · {tyreChangeWearText(stop)} · {fmt(stop.stopTimeSeconds, 1, " s")}</small>
             <small>{stop.reason}</small>
           </span>
@@ -412,6 +492,25 @@ function StrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
                   <td>{tyreWearText(stint.startWear)}</td>
                   <td>{tyreWearText(stint.endWear)}</td>
                   <td>{tyreRemainingText(stint.remainingWear)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {plan.stintPace.length > 0 && (
+        <div className="table-wrap">
+          <table>
+            <thead><tr><th>Stint pace</th><th>Laps</th><th>Start → average → end</th><th>Fuel-load loss</th><th>Tyre loss</th><th>Recent-trend loss</th></tr></thead>
+            <tbody>
+              {plan.stintPace.map((stint) => (
+                <tr key={stint.stint}>
+                  <td>Stint {stint.stint}</td>
+                  <td>{stint.startLap}-{stint.endLap}</td>
+                  <td>{formatRaceTime(stint.startPaceSeconds)} → {formatRaceTime(stint.averagePaceSeconds)} → {formatRaceTime(stint.endPaceSeconds)}</td>
+                  <td>{fmt(stint.fuelLoadLossSeconds, 1, " s")}</td>
+                  <td>{stint.tyreDegradationLossSeconds == null ? "Unavailable" : fmt(stint.tyreDegradationLossSeconds, 1, " s")}</td>
+                  <td>{fmt(stint.recentTrendLossSeconds, 1, " s")}</td>
                 </tr>
               ))}
             </tbody>
@@ -470,7 +569,7 @@ function LiveStyleStrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
               style={{ left: `${Math.min(98, Math.max(2, (stop.lap / plan.raceLaps) * 100))}%` }}
             >
               <strong>Lap {stop.lap}</strong>
-              <small>Pit {index + 1}</small>
+              <small>Pit {index + 1} · {formatDuration(stop.raceTimeRemainingAtPitSeconds)} left</small>
             </span>
           ))}
         </div>
@@ -489,6 +588,7 @@ function LiveStyleStrategyTimeline({ plan }: { plan?: StrategyCandidate }) {
                   </div>
                   {stop && <span className="badge amber">{fmt(stop.stopTimeSeconds, 1, " s")} stop</span>}
                 </header>
+                {plan.stintPace[index] && <span className="subvalue">Projected average pace {formatRaceTime(plan.stintPace[index].averagePaceSeconds)} · {formatRaceTime(plan.stintPace[index].startPaceSeconds)} → {formatRaceTime(plan.stintPace[index].endPaceSeconds)}</span>}
                 <div className="stint-service-body">
                   <div>
                     <span className="label">Tyre life at {stop ? "pit entry" : "finish"}</span>
@@ -726,7 +826,8 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const paceEvidence = dirtyFields.has("normal_lap_time")
     ? { ...activeModel.paceEvidence, weightedRecentPace: form.normal_lap_time, source: "manual lap-time override" }
     : activeModel.paceEvidence;
-  const plans = useMemo(() => simulateStrategies({
+  const strategyEvaluation = useMemo(() => {
+    const input: StrategySimulationInput = {
     raceDurationMinutes: form.race_duration_minutes,
     normalLapTime: form.normal_lap_time,
     paceEvidence,
@@ -750,15 +851,18 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     tyrePaceDegradationPerLap: activeModel.tyrePaceDegradationPerLap,
     tyreConfidence: activeModel.tyreConfidence,
     maxTyreWear: form.max_tyre_wear,
+    maxTyresAvailable: Math.max(4, Math.floor(form.max_tyres_available)),
     tyreChangePolicy: tyrePolicy,
     safetyCarPitLossSeconds: form.safety_car_pit_loss_seconds,
-  }), [activeModel.fuelConfidence, activeModel.fuelObservedLaps, activeModel.fuelRequiredLaps, activeModel.fuelUseStdDevLiters, activeModel.tyreConfidence, activeModel.tyrePaceDegradationPerLap, activeModel.tyreWearRateByWheel, currentWear, form, fuelPerLap, fuelSafetyMarginLiters, paceEvidence, raceStartWear.fl, raceStartWear.fr, raceStartWear.rl, raceStartWear.rr, safetyPolicy, serviceModel, tyrePolicy, wearRate]);
-  const missingPlanInputs = [
-    fuelPerLap == null || !Number.isFinite(fuelPerLap) || fuelPerLap <= 0 ? "fuel per lap" : null,
-    form.tank_capacity_liters <= 0 ? "tank capacity" : null,
-    form.normal_lap_time <= 0 ? "normal lap time" : null,
-    form.race_duration_minutes <= 0 ? "race duration" : null,
-  ].filter((item): item is string => item != null);
+    empiricalStintPace: activeModel.empiricalStintPace,
+    liftCoastSecondsPerPercentPerLap: activeModel.liftCoastPace?.secondsPerPercentPerLap ?? null,
+    liftCoastMode: form.lift_coast_mode,
+    liftCoastTargetPercent: Math.min(12, Math.max(0.5, form.lift_coast_target_percent)),
+    };
+    const generatedPlans = simulateStrategies(input);
+    return { plans: generatedPlans, reasons: generatedPlans.length ? [] : explainNoViableStrategies(input) };
+  }, [activeModel.empiricalStintPace, activeModel.fuelConfidence, activeModel.fuelObservedLaps, activeModel.fuelRequiredLaps, activeModel.fuelUseStdDevLiters, activeModel.liftCoastPace, activeModel.tyreConfidence, activeModel.tyrePaceDegradationPerLap, activeModel.tyreWearRateByWheel, currentWear, form, fuelPerLap, fuelSafetyMarginLiters, paceEvidence, raceStartWear.fl, raceStartWear.fr, raceStartWear.rl, raceStartWear.rr, safetyPolicy, serviceModel, tyrePolicy, wearRate]);
+  const { plans, reasons: noStrategyReasons } = strategyEvaluation;
   const bestPlan = plans[0];
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? bestPlan;
   const activePlanId = selectedPlan?.id ?? null;
@@ -783,6 +887,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           <span className="subvalue">{paceEvidence.foundLaps ?? paceEvidence.sampleLaps ?? 0} complete laps found · {paceEvidence.sampleLaps ?? 0} valid race-pace laps used</span>
         </div>
       </section>
+      <PageSection number="01" title="Race Plan" description="Set the race target, evidence source, fuel reserve, service timing, and tyre constraints.">
       <section className="card span-12">
         <SectionTitle title={t("strategyPlanner.raceAssumptions")} help={t("strategyPlanner.raceAssumptionsHelp")} />
         <div className="strategy-assumption-layout">
@@ -833,6 +938,8 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
               <label><span className="label">Tank capacity</span><input type="number" min="0" step="0.1" value={form.tank_capacity_liters} onChange={(event) => update("tank_capacity_liters", event.target.value)} /><span className="subvalue">litres</span></label>
               <label><span className="label">Safety reserve policy</span><select value={safetyPolicy} onChange={(event) => setSafetyPolicy(event.target.value as typeof safetyPolicy)}><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option></select><span className="subvalue">Adjusts planning rate and reserve</span></label>
               <label><span className="label">Finish reserve</span><span className="strategy-inline-fields"><select value={reserveUnit} onChange={(event) => setReserveUnit(event.target.value as typeof reserveUnit)}><option value="laps">Equivalent laps</option><option value="liters">Litres</option></select><input type="number" min="0" step="0.1" value={reserveUnit === "laps" ? form.fuel_safety_margin_laps : form.fuel_safety_margin_liters} onChange={(event) => update(reserveUnit === "laps" ? "fuel_safety_margin_laps" : "fuel_safety_margin_liters", event.target.value)} /></span><span className="subvalue">{fmt(fuelSafetyMarginLiters, 2, " L")} before policy adjustment</span></label>
+              <label><span className="label">Lift-and-coast target</span><select value={form.lift_coast_mode} onChange={(event) => { const value = event.target.value as FormState["lift_coast_mode"]; setDirtyFields((current) => new Set(current).add("lift_coast_mode")); setForm((current) => ({ ...current, lift_coast_mode: value })); }}><option value="inferred">Infer saving needed</option><option value="fixed">Use selected percentage</option></select><span className="subvalue">Inference searches for the saving needed to extend a stint or remove a stop</span></label>
+              <label><span className="label">Selected lift-and-coast</span><input type="number" min="0.5" max="12" step="0.5" value={form.lift_coast_target_percent} onChange={(event) => update("lift_coast_target_percent", event.target.value)} disabled={form.lift_coast_mode !== "fixed"} /><span className="subvalue">Fuel saving target · defaults to 3%</span></label>
             </fieldset>
 
             <fieldset className="strategy-assumption-group">
@@ -845,6 +952,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
 
             <fieldset className="strategy-assumption-group">
               <legend>Tyre plan</legend>
+              <label><span className="label">Tyres available for race</span><input type="number" min="4" max="200" step="1" value={form.max_tyres_available} onChange={(event) => update("max_tyres_available", event.target.value)} /><span className="subvalue">Individual tyres · includes the four fitted at the start</span></label>
               <label><span className="label">Maximum tyre wear</span><input type="number" min="0" max="1" step="0.01" value={form.max_tyre_wear} onChange={(event) => update("max_tyre_wear", event.target.value)} /><span className="subvalue">fraction · 0.75 means 75%</span></label>
               <label><span className="label">Tyre change policy</span><select value={tyrePolicy} onChange={(event) => setTyrePolicy(event.target.value as typeof tyrePolicy)}><option value="automatic">Automatic by corner</option><option value="all">All four at every stop</option><option value="never">Never (exploration)</option></select><span className="subvalue">Automatic changes threshold crossings</span></label>
               <label><span className="label">{t("strategyPlanner.startTyreSet")}</span><span className="toggle-line"><input type="checkbox" checked={form.race_start_new_tyres} onChange={(event) => updateBoolean("race_start_new_tyres", event.target.checked)} /><span>{t("strategyPlanner.startOnNewTyres")}</span></span><span className="subvalue">{t("strategyPlanner.otherwiseReferenceWear")}</span></label>
@@ -867,23 +975,29 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           fuel_safety_margin_liters: fuelSafetyMarginLiters,
           fuel_safety_margin_laps: form.fuel_safety_margin_laps,
           max_tyre_wear: form.max_tyre_wear,
+          max_tyres_available: Math.max(4, Math.floor(form.max_tyres_available)),
+          lift_coast_mode: form.lift_coast_mode,
+          lift_coast_target_percent: Math.min(12, Math.max(0.5, form.lift_coast_target_percent)),
         })}>{t("strategyPlanner.saveAssumptions")}</button>
         </p>
       </section>
+      </PageSection>
 
-      {strategyMethod === "monte-carlo" ? <MonteCarloStrategyPanel sessionId={selectedSessionId} assumptions={{
+      {strategyMethod === "monte-carlo" ? <PageSection number="02" title="Race Simulation" description="Stress-test the plan across pace variation, fuel risk, tyre life, traffic, and pit outcomes."><MonteCarloStrategyPanel sessionId={selectedSessionId} assumptions={{
         raceDurationMinutes: form.race_duration_minutes,
         tankCapacityLiters: form.tank_capacity_liters,
         finishReserveLiters: fuelSafetyMarginLiters,
         pitLossSeconds: form.pit_loss_seconds,
         tyreWearLimit: form.max_tyre_wear,
+        maxTyresAvailable: Math.max(4, Math.floor(form.max_tyres_available)),
         tyreChangeSecondsPerTyre: form.tyre_change_seconds_per_tyre,
         refuelSecondsPer5Liters: form.refuel_seconds_per_5_liters,
         serviceModel,
         normalLapTime: form.normal_lap_time,
         fuelPerLapLiters: fuelPerLap,
         tyreWearRatePerLap: wearRate,
-      }} /> : <>
+      }} /></PageSection> : <>
+      <PageSection number="02" title="Model Evidence" description="Review the measured inputs, confidence, and calculation factors behind the strategy ranking.">
       <section className="card span-12">
         <SectionTitle title="Model Status" help="Summarizes the live data feeding the race simulation. More valid fuel and tyre laps improve confidence." />
         <div className="analysis-value-grid">
@@ -891,8 +1005,12 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           <div><span className="label">Pace model</span><strong>{formatRaceTime(paceEvidence.weightedRecentPace)}</strong><span className="subvalue">{paceEvidence.method || paceBasis} · {paceEvidence.source}</span></div>
           <div><span className="label">Pace windows</span><strong>{formatRaceTime(paceEvidence.last7LapAverage)} / {formatRaceTime(paceEvidence.last10LapAverage)}</strong><span className="subvalue">7-lap / 10-lap averages</span></div>
           <div><span className="label">Pace trend / spread</span><strong>{fmt(paceEvidence.paceTrendSecondsPerLap, 3, " s/lap")}</strong><span className="subvalue">spread {fmt(paceEvidence.spreadSeconds, 3, " s")} · {paceEvidence.confidence || "low"} confidence</span></div>
+          <div><span className="label">Stint pace model</span><strong>{activeModel.empiricalStintPace ? "Empirical regression" : "Fallback heuristic"}</strong><span className="subvalue">{activeModel.empiricalStintPace ? `${activeModel.empiricalStintPace.sampleLaps} laps · ${activeModel.empiricalStintPace.observedStints} stints · residual σ ${fmt(activeModel.empiricalStintPace.residualStdDevSeconds, 2, " s")}` : "Needs at least 12 laps with fuel and tyre wear"}</span></div>
+          {activeModel.empiricalStintPace && <div><span className="label">Measured stint effects</span><strong>{fmt(activeModel.empiricalStintPace.fuelCoefficientSecondsPerLiter, 3, " s/L")} · {fmt(activeModel.empiricalStintPace.tyreWearCoefficientSecondsPerFraction, 1, " s/full wear")}</strong><span className="subvalue">warm-up {fmt(activeModel.empiricalStintPace.warmupLossSeconds, 2, " s")} · observed through lap {activeModel.empiricalStintPace.maxObservedStintLaps}</span></div>}
+          <div><span className="label">Lift-and-coast calibration</span><strong>{activeModel.liftCoastPace ? fmt(activeModel.liftCoastPace.secondsPerPercentPerLap, 3, " s / 1% / lap") : "Unavailable"}</strong><span className="subvalue">{activeModel.liftCoastPace ? `${activeModel.liftCoastPace.sampleLaps} comparable laps · coast/fuel correlation ${fmt(activeModel.liftCoastPace.fuelSavingCoastCorrelation, 2)} · ${activeModel.liftCoastPace.confidence} confidence` : "Needs clean laps with fuel, wear, throttle, and brake samples"}</span></div>
+          <div><span className="label">Lift-and-coast strategy</span><strong>{form.lift_coast_mode === "fixed" ? `${fmt(form.lift_coast_target_percent, 1, "%")} fixed target` : "Infer required saving"}</strong><span className="subvalue">Default selected target is 3%</span></div>
           <div><span className="label">Fuel use</span><strong>{fmt(Number.isFinite(fuelPerLap ?? NaN) ? fuelPerLap : null, 3, " L/lap")}</strong><span className="subvalue">{activeModel.fuelObservedLaps}/{activeModel.fuelRequiredLaps} valid laps</span></div>
-          <div><span className="label">Fuel variance</span><strong>{fmt(activeModel.fuelUseStdDevLiters, 3, " L")}</strong><span className="subvalue">{activeModel.fuelConfidence} confidence</span></div>
+          <div><span className="label">Fuel variance</span><strong>{fmt(activeModel.fuelUseStdDevLiters, 3, " L")}</strong><span className="subvalue">{activeModel.fuelConfidence} confidence · cumulative σ√laps allowance</span></div>
           <div><span className="label">Fuel margin</span><strong>{fmt(form.fuel_safety_margin_laps, 1, " laps")}</strong><span className="subvalue">{fmt(fuelSafetyMarginLiters, 2, " L")} from model fuel use</span></div>
           <div><span className="label">Tyre wear</span><strong>{pct(Number.isFinite(currentWear) ? currentWear : null)}</strong><span className="subvalue">{fmt(wearRate != null && Number.isFinite(wearRate) ? wearRate * 100 : null, 2, "% / lap")}</span></div>
           <div><span className="label">Calculated start fuel</span><strong>{fmt(selectedPlan?.recommendedStartFuelLiters, 1, " L")}</strong><span className="subvalue">first stint + configured reserve, capped by tank</span></div>
@@ -909,6 +1027,8 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
               <thead><tr><th>Input / derived factor</th><th>Value</th><th>Source / formula</th><th>Used for</th></tr></thead>
               <tbody>
                 <tr><td>Active normal lap</td><td>{formatRaceTime(selectedPlan.calculationBreakdown.simulationPaceSeconds)}</td><td>{paceEvidence.method || paceBasis} of {paceEvidence.sampleLaps ?? 0} valid laps</td><td>Base pace</td></tr>
+                <tr><td>Stint pace model</td><td>{selectedPlan.calculationBreakdown.paceModelSource}</td><td>Fuel load + tyre wear + warm-up, robustly fitted when available</td><td>Lap-by-lap pace</td></tr>
+                <tr><td>Pace variability / P90</td><td>{fmt(selectedPlan.calculationBreakdown.paceVariabilitySecondsPerLap, 2, " s/lap")} / {formatDuration(selectedPlan.calculationBreakdown.p90TotalTimeSeconds)}</td><td>Robust residual variance propagated as σ√laps</td><td>Downside range</td></tr>
                 <tr><td>Race duration</td><td>{fmt(form.race_duration_minutes, 0, " min")}</td><td>User assumption</td><td>Elapsed-time target</td></tr>
                 <tr><td>Completed laps</td><td>{selectedPlan.raceLaps}</td><td>Event simulation including pit/service time</td><td>Fuel and stint plan</td></tr>
                 <tr><td>Fuel use</td><td>{fmt(selectedPlan.calculationBreakdown.fuelUseLitersPerLap, 3, " L/lap")}</td><td>Robust measured rate + safety policy</td><td>Stint fuel</td></tr>
@@ -921,7 +1041,9 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           </div>
         </section>
       )}
+      </PageSection>
 
+      <PageSection number="03" title="Strategy Options" description="Compare viable stop plans, projected race time, resource use, and risk before selecting a strategy.">
       {plans.length ? plans.map((plan, index) => (
         <PlanCard
           plan={plan}
@@ -931,13 +1053,16 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           key={plan.id}
         />
       )) : (
-        <section className="card span-12"><div className="empty-state"><strong>No viable strategy yet</strong><span>{missingPlanInputs.length ? `Missing ${missingPlanInputs.join(", ")}.` : "Try more stops, more start fuel, or a longer fuel-saving strategy."}</span></div></section>
+        <section className="card span-12"><div className="empty-state"><strong>No viable strategy</strong><span>The current assumptions block every simulated plan:</span><ul>{noStrategyReasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div></section>
       )}
+      </PageSection>
 
+      <PageSection number="04" title="Pit Plan" description="Follow the selected strategy stint by stint, including pit timing, fuel service, and tyre life.">
       <section className="card span-12 pit-strategy-visualization">
         <SectionTitle title="Live Pit Strategy Visualization" help="Shows the selected plan as a stint timeline, then details tyre life and fuel service at every pit stop." />
         <LiveStyleStrategyTimeline plan={selectedPlan} />
       </section>
+      </PageSection>
       </>}
     </div>
   );

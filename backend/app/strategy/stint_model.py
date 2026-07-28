@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.schemas.strategy import FuelState, StintState, TyreStrategyState
+from app.schemas.strategy import EnergyState, FuelState, StintState, TyreStrategyState
 from app.schemas.telemetry import TelemetrySnapshot
 from app.telemetry.event_detector import _player_in_pits
 
@@ -11,7 +11,7 @@ class StintModel:
         self._was_in_pits = False
         self._stint_active = True
 
-    def update(self, snapshot: TelemetrySnapshot, fuel_state: FuelState, tyre_state: TyreStrategyState) -> StintState:
+    def update(self, snapshot: TelemetrySnapshot, fuel_state: FuelState, tyre_state: TyreStrategyState, energy_state: EnergyState | None = None) -> StintState:
         lap = snapshot.player.lap_number if snapshot.player else None
         in_pits = _player_in_pits(snapshot)
         if in_pits and not self._was_in_pits:
@@ -22,12 +22,14 @@ class StintModel:
         self._was_in_pits = in_pits
         current_stint_lap = (lap - self.last_pit_lap) if lap is not None and self._stint_active else 0
         fuel_end = int(lap + fuel_state.fuel_laps_remaining) if lap is not None and fuel_state.fuel_laps_remaining is not None else None
+        energy_end = int(lap + energy_state.virtual_energy_laps_remaining) if lap is not None and energy_state and energy_state.virtual_energy_laps_remaining is not None else None
         tyre_end = int(lap + tyre_state.estimated_remaining_tyre_life_laps) if lap is not None and tyre_state.estimated_remaining_tyre_life_laps is not None else None
-        recommended = min([v for v in [fuel_end, tyre_end] if v is not None], default=None)
+        recommended = min([v for v in [fuel_end, energy_end, tyre_end] if v is not None], default=None)
         return StintState(
             current_stint_lap=current_stint_lap,
             last_pit_lap=self.last_pit_lap,
             fuel_limited_stint_end_lap=fuel_end,
+            virtual_energy_limited_stint_end_lap=energy_end,
             tyre_limited_stint_end_lap=tyre_end,
             recommended_stint_end_lap=recommended,
         )

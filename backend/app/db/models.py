@@ -221,6 +221,7 @@ class TelemetrySampleModel(Base):
     timestamp: Mapped[str] = mapped_column(String, nullable=False)
     game_time: Mapped[Optional[float]] = mapped_column(Float)
     lap_number: Mapped[Optional[int]] = mapped_column(Integer)
+    lap_distance: Mapped[Optional[float]] = mapped_column(Float)
     position: Mapped[Optional[int]] = mapped_column(Integer)
     class_position: Mapped[Optional[int]] = mapped_column(Integer)
     current_lap_time: Mapped[Optional[float]] = mapped_column(Float)

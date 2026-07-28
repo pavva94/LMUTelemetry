@@ -17,6 +17,7 @@ from app.schemas.telemetry import CompetitorState, TelemetrySnapshot
 from app.services.session_logger import SessionLogger
 from app.strategy.competitor_model import CompetitorModel
 from app.strategy.fuel_model import FuelModel
+from app.strategy.energy_model import EnergyModel
 from app.strategy.pace_model import PaceModel
 from app.strategy.pit_window_model import PitWindowModel
 from app.strategy.recommendation_engine import RecommendationEngine
@@ -59,6 +60,7 @@ class TelemetryService:
         self.assumptions: StrategyAssumptions = settings.assumptions
         self.collector = MockTelemetryCollector(settings.poll_hz) if settings.use_mock_telemetry else LMUTelemetryCollector(settings.poll_hz)
         self.fuel_model = FuelModel(self.assumptions)
+        self.energy_model = EnergyModel()
         self.tyre_model = TyreModel(self.assumptions)
         self.stint_model = StintModel()
         self.pit_window_model = PitWindowModel(self.assumptions)
@@ -127,6 +129,7 @@ class TelemetryService:
 
     def _reset_live_models(self) -> None:
         self.fuel_model = FuelModel(self.assumptions)
+        self.energy_model = EnergyModel()
         self.tyre_model = TyreModel(self.assumptions)
         self.stint_model = StintModel()
         self.pit_window_model = PitWindowModel(self.assumptions)
@@ -307,13 +310,14 @@ class TelemetryService:
         self.latest_snapshot = snapshot
         events = self.event_detector.update(snapshot)
         fuel = self.fuel_model.update(snapshot)
+        energy = self.energy_model.update(snapshot, fuel)
         tyres = self.tyre_model.update(snapshot)
         pace = self.pace_model.update(events.get("lap_completed"))
-        stint = self.stint_model.update(snapshot, fuel, tyres)
+        stint = self.stint_model.update(snapshot, fuel, tyres, energy)
         pit_window = self.pit_window_model.update(snapshot, fuel, tyres, stint)
         competitors = self.competitor_model.update(snapshot)
-        recommendation = self.recommendation_engine.update(snapshot, fuel, tyres, stint, pit_window, competitors)
-        strategy = StrategyState(fuel=fuel, tyres=tyres, pace=pace, stint=stint, pit_window=pit_window, assumptions=self.assumptions)
+        recommendation = self.recommendation_engine.update(snapshot, fuel, tyres, stint, pit_window, competitors, energy)
+        strategy = StrategyState(fuel=fuel, energy=energy, tyres=tyres, pace=pace, stint=stint, pit_window=pit_window, assumptions=self.assumptions)
         recommendation.explanation = self.assistant.explain_recommendation(recommendation, strategy)
         self.strategy_state = strategy
         self.competitors = competitors

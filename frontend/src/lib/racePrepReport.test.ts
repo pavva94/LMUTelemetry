@@ -3,6 +3,53 @@ import { buildRacePrepReport } from "./racePrepReport";
 import type { SessionReview } from "../types/session";
 
 describe("race prep report", () => {
+  it("finds the best 5- and 10-lap pace only across continuous valid laps", () => {
+    const laps = [
+      ...Array.from({ length: 5 }, (_, index) => ({ lap_number: index + 1, lap_time: 100, valid_lap: true, in_pit: false })),
+      { lap_number: 6, lap_time: 80, valid_lap: false, in_pit: true },
+      ...Array.from({ length: 5 }, (_, index) => ({ lap_number: index + 7, lap_time: 90, valid_lap: true, in_pit: false })),
+      ...Array.from({ length: 10 }, (_, index) => ({ lap_number: index + 20, lap_time: 92, valid_lap: true, in_pit: false })),
+    ];
+    const report = buildRacePrepReport({ session: null, recommendations: [], pit_events: [], telemetry_samples: [], laps });
+
+    expect(report.pace.bestFiveContinuous).toEqual({ average: 90, startLap: 7, endLap: 11, fastestLap: 90, slowestLap: 90 });
+    expect(report.pace.bestTenContinuous).toEqual({ average: 92, startLap: 20, endLap: 29, fastestLap: 92, slowestLap: 92 });
+  });
+
+  it("preserves detailed lap, sector, fuel, tyre, and condition fields for the report table", () => {
+    const report = buildRacePrepReport({
+      session: null,
+      recommendations: [],
+      pit_events: [],
+      telemetry_samples: [],
+      laps: [{
+        lap_number: 3, lap_time: 91, sector1: 30, sector2: 31, sector3: 30,
+        fuel_start: 60, fuel_end: 56, fuel_used: 4, fuel_added: 0,
+        tyre_compound: "Medium", tyre_wear_end_fl: 0.12, tyre_temp_fl: 88, tyre_pressure_fl: 186,
+        track_temp: 34, ambient_temp: 24, top_speed: 301, valid_lap: true, in_pit: false,
+      }],
+    });
+
+    expect(report.charts.laps[0]).toMatchObject({
+      lap: 3, sector1: 30, sector2: 31, sector3: 30,
+      fuel_start: 60, fuel_end: 56, fuel_used: 4, fuel_added: 0,
+      tyre_compound: "Medium", tyre_wear_fl: 0.12, tyre_temp_fl: 88, tyre_pressure_fl: 186,
+      track_temp: 34, ambient_temp: 24, top_speed: 301,
+    });
+  });
+
+  it("preserves lap alignment fields in report telemetry samples", () => {
+    const report = buildRacePrepReport({
+      session: null,
+      recommendations: [],
+      pit_events: [],
+      laps: [{ lap_number: 4, lap_time: 90, valid_lap: true, in_pit: false }],
+      telemetry_samples: [{ game_time: 12, lap_number: 4, lap_distance: 1234, progress: 0.25, throttle: 0.8, brake: 0.1 }],
+    });
+
+    expect(report.charts.samples[0]).toMatchObject({ lap_number: 4, lap_distance: 1234, progress: 0.25, throttle: 0.8, brake: 0.1 });
+  });
+
   it("reports radiator temperatures and per-wheel grass contact when channels exist", () => {
     const report = buildRacePrepReport({
       session: null,
@@ -90,6 +137,29 @@ describe("race prep report", () => {
     expect(report.tyres.wear.fl.delta).toBeCloseTo(0.02);
     expect(report.tyres.temperature.fl.average).toBe(85);
     expect(report.tyres.pressure.fl.average).toBe(185);
+  });
+
+  it("ignores terminal garage tyre placeholders when calculating wear endpoints", () => {
+    const review: SessionReview = {
+      session: null,
+      recommendations: [],
+      pit_events: [],
+      laps: [{ lap_number: 1, lap_time: 90, valid_lap: true, in_pit: false }],
+      telemetry_samples: [
+        { game_time: 1, tyre_wear_fl: 0, tyre_wear_fr: 0, tyre_wear_rl: 0, tyre_wear_rr: 0, tyre_pressure_fl: 122, tyre_temp_fl: 18 },
+        { game_time: 2, tyre_wear_fl: 0.02, tyre_wear_fr: 0.03, tyre_wear_rl: 0.04, tyre_wear_rr: 0.05, tyre_pressure_fl: 160, tyre_temp_fl: 70 },
+        { game_time: 3, tyre_wear_fl: 0.29, tyre_wear_fr: 0.35, tyre_wear_rl: 0.46, tyre_wear_rr: 0.45, tyre_pressure_fl: 174, tyre_temp_fl: 52 },
+        { game_time: 4, tyre_wear_fl: 0, tyre_wear_fr: 0, tyre_wear_rl: 0, tyre_wear_rr: 0, tyre_pressure_fl: 119, tyre_temp_fl: 14 },
+      ],
+    };
+
+    const report = buildRacePrepReport(review);
+
+    expect(report.tyres.wear.fl).toMatchObject({ start: 0.02, end: 0.29 });
+    expect(report.tyres.wear.fl.delta).toBeCloseTo(0.27);
+    expect(report.tyres.wear.fl.perLap).toBeCloseTo(0.27);
+    expect(report.tyres.wear.rr).toMatchObject({ start: 0.05, end: 0.45 });
+    expect(report.tyres.wear.rr.delta).toBeCloseTo(0.40);
   });
 
   it("uses saved lap and aggregate summaries when finalized sessions have no raw samples", () => {
@@ -316,7 +386,7 @@ describe("race prep report", () => {
     const review: SessionReview = {
       session: { id: "race", track_name: "Spa", session_type: "Race", vehicle_model: "Hypercar" },
       recommendations: [],
-      pit_events: [{ lap_number: 3, timestamp: 270, type: "pit", message: "Box this lap" }],
+      pit_events: [{ lap_number: 3, timestamp: 270, type: "pit", message: "Box this lap", total_pit_loss: 42.5 }],
       telemetry_samples: [],
       laps: [
         { lap_number: 1, lap_time: 90, fuel_start: 80, fuel_end: 76, fuel_used: 4, valid_lap: true, in_pit: false, tyre_wear_end_fl: 0.10, tyre_wear_end_fr: 0.10, tyre_wear_end_rl: 0.12, tyre_wear_end_rr: 0.12 },
@@ -331,6 +401,7 @@ describe("race prep report", () => {
     expect(report.charts.pitStops).toHaveLength(1);
     expect(report.charts.pitStops[0].lap).toBe(3);
     expect(report.charts.pitStops[0].fuel_added).toBe(30);
+    expect(report.charts.pitStops[0].pit_time).toBe(42.5);
     expect(report.charts.pitStops[0].tyres_changed).toBe("FL, FR, RL, RR");
   });
 });

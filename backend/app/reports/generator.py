@@ -68,6 +68,17 @@ class SessionReportGenerator:
                 analysis = SessionAnalysisPipeline().analyze(review)
             stage = self.STAGES[4]
             progress(stage, "Preparing only charts supported by available evidence", 4, 6, 74)
+            best_lap_number = analysis.lap.get("best_lap_number")
+            if best_lap_number is not None:
+                try:
+                    trace = lmu_duckdb_repository.trajectory_session(session_id, lap_a=str(best_lap_number), max_points=1800)
+                    analysis.comparison["best_lap_trace"] = {
+                        "lap": best_lap_number,
+                        "points": trace.get("points") or [],
+                        "warnings": trace.get("warnings") or [],
+                    }
+                except Exception:
+                    analysis.comparison["best_lap_trace"] = {"lap": best_lap_number, "points": [], "warnings": ["Best-lap input trace unavailable."]}
             output = report_root() / session_id / f"{report_id}.pdf"
             stage = self.STAGES[5]
             progress(stage, "Rendering the vector PDF and report metadata", 5, 6, 88)

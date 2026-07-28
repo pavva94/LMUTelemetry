@@ -61,6 +61,8 @@ Tyre wear accumulates from `wear_rate × stint_wear_bias` every lap; push multip
 
 At a stop, refuelling time is `fuel_added / 5 × refuel_seconds_per_5_liters`; tyre service is `4 × tyre_change_seconds_per_tyre`. Parallel service uses the larger duration; sequential service sums them. Pit time adds pit-lane loss plus service and normal pit-loss variation. A run below zero fuel before a stop is marked fuel-risk; its deficit is never counted as fuel added.
 
+Monte Carlo treats the configured tyre allocation as individual tyres including the four fitted at the start. It keeps a set across fuel-only stops while projected life permits, consumes four tyres only when a full-set change is scheduled, and excludes generated strategies that exceed the allocation.
+
 ## Synthetic field and traffic
 
 The field contains `field_size - 1` opponents. Same-class cars are centred on user pace; faster and slower classes use their configured deltas. Every opponent gets a normal pace offset using `opponent_pace_spread_seconds`. Unallocated slots become same-class cars.
@@ -74,7 +76,7 @@ Encounter probability depends on traffic preset, opening laps, pit rejoin, grid 
 | Run | `session_id`, `race_duration_minutes`, `simulation_count`, `random_seed` |
 | Fuel | `starting_fuel_liters`, `fuel_tank_capacity_liters`, `finish_reserve_liters`, `fuel_per_lap_liters` |
 | Pace/tyre | `normal_lap_time`, `tyre_wear_rate_per_lap`, `race_start_new_tyres`, `used_tyre_wear`, `tyre_wear_limit`, `tyre_wear_variability`, `pace_variability_multiplier` |
-| Pit | `pit_loss_seconds`, `tyre_change_seconds_per_tyre`, `refuel_seconds_per_5_liters`, `service_model`, `pit_variability_multiplier` |
+| Pit / tyres | `pit_loss_seconds`, `tyre_change_seconds_per_tyre`, `refuel_seconds_per_5_liters`, `service_model`, `pit_variability_multiplier`, `max_tyres_available` |
 | Field | `field_size`, three class counts, `starting_position`, pace spread, faster/slower deltas |
 | Traffic | `traffic_preset`, `traffic_aggression`, `traffic_loss_seconds`, `traffic_wear_multiplier`, `traffic_fuel_multiplier` |
 | Ranking | `objective`: expected time, median time, downside risk (P90), fastest probability, or balanced |

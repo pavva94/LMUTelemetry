@@ -1066,8 +1066,8 @@ def _dense_channel_values(conn, layout: ChannelLayout, target: str) -> tuple[lis
 
 def _trajectory_rows(conn, layout: ChannelLayout, lap_numbers: list[str], max_points: int) -> tuple[list[dict], list[str]]:
     warnings: list[str] = []
-    if not {"game_time", "gps_latitude", "gps_longitude"}.issubset(layout.mapped):
-        return [], ["GPS Time, GPS Latitude, or GPS Longitude is missing."]
+    if "game_time" not in layout.mapped:
+        return [], ["GPS Time is missing, so lap traces cannot be synchronized."]
     if "lap_number" not in layout.mapped:
         return [], ["Lap Number is missing, so trajectory laps cannot be isolated."]
 
@@ -1106,8 +1106,7 @@ def _trajectory_rows(conn, layout: ChannelLayout, lap_numbers: list[str], max_po
             index = max(0, int(math.floor((time_value - start_time) * float(frequency))))
             if index < len(values):
                 row[target] = _num(values[index])
-        if row.get("gps_latitude") is not None and row.get("gps_longitude") is not None:
-            grouped[lap].append(row)
+        grouped[lap].append(row)
 
     per_lap_limit = max(80, math.ceil(max_points / max(1, len(selected_laps))))
     rows: list[dict] = []
@@ -1125,6 +1124,8 @@ def _trajectory_rows(conn, layout: ChannelLayout, lap_numbers: list[str], max_po
             else:
                 row["progress"] = index / denominator
         rows.extend(_downsample_evenly(lap_rows, per_lap_limit))
+    if not {"gps_latitude", "gps_longitude"}.issubset(layout.mapped):
+        warnings.append("GPS coordinates are unavailable; input traces remain available.")
     return rows, warnings
 
 

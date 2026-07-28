@@ -21,6 +21,7 @@ class PitWindowModel:
             return PitWindowState(explanation=["No player lap available."])
         limit_candidates = [
             ("fuel", stint_state.fuel_limited_stint_end_lap),
+            ("virtual energy", stint_state.virtual_energy_limited_stint_end_lap),
             ("tyres", stint_state.tyre_limited_stint_end_lap),
         ]
         available_limits = [(name, value) for name, value in limit_candidates if value is not None]

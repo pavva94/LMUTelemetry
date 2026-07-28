@@ -19,6 +19,7 @@ export type MonteCarloAssumptions = {
   finishReserveLiters: number;
   pitLossSeconds: number;
   tyreWearLimit: number;
+  maxTyresAvailable: number;
   tyreChangeSecondsPerTyre: number;
   refuelSecondsPer5Liters: number;
   serviceModel: "parallel" | "sequential";
@@ -70,6 +71,7 @@ function MonteCarloExecutionPlan({ summary }: { summary?: RaceSimulationSummary 
       <Metric label="Start tyres" value={plan.start_new_tyres ? "New" : "Used"} />
       <Metric label="Planned stops" value={plan.pits.length} />
       <Metric label="Stints" value={plan.stints} />
+      <Metric label="Tyre allocation" value={`${plan.tyres_used}/${plan.tyres_available} used`} />
     </div>
     {!plan.pits.length ? <p className="muted">No pit stops are planned for this strategy.</p> : <div className="table-wrap"><table><thead><tr><th>Stop</th><th>Pit lap</th><th>Next stint</th><th>Tyres</th><th>Fuel to add</th><th>Fuel target</th><th>Pace</th></tr></thead><tbody>{plan.pits.map((pit, index) => <tr key={pit.pit_lap}><td>#{index + 1}</td><td>{pit.pit_lap}</td><td>{pit.next_stint_laps} laps</td><td>{pit.change_tyres ? "Change all tyres" : "No tyre change"}</td><td>{fmt(pit.fuel_to_add_liters, 1, " L")}</td><td>{fmt(pit.target_fuel_liters, 1, " L")}</td><td>{pit.pace_mode}</td></tr>)}</tbody></table></div>}
   </section>;
@@ -113,6 +115,7 @@ export function MonteCarloStrategyPanel({ sessionId, assumptions }: { sessionId:
       finish_reserve_liters: assumptions.finishReserveLiters,
       pit_loss_seconds: assumptions.pitLossSeconds,
       tyre_wear_limit: assumptions.tyreWearLimit,
+      max_tyres_available: assumptions.maxTyresAvailable,
       tyre_change_seconds_per_tyre: assumptions.tyreChangeSecondsPerTyre,
       refuel_seconds_per_5_liters: assumptions.refuelSecondsPer5Liters,
       service_model: assumptions.serviceModel,

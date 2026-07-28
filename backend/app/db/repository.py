@@ -134,6 +134,7 @@ class Repository:
                     timestamp=snapshot.timestamp.isoformat(),
                     game_time=state.current_time if state else None,
                     lap_number=player.lap_number if player else None,
+                    lap_distance=player_comp.lap_distance if player_comp else None,
                     position=player.position if player else None,
                     class_position=player.class_position if player else None,
                     current_lap_time=player.current_lap_time if player else None,
@@ -869,6 +870,73 @@ class Repository:
             }
             self._review_cache = {cache_key: result}
             return result
+
+    def lap_input_trace(self, session_id: str, lap_numbers: list[int], max_points: int = 2400) -> dict:
+        selected = list(dict.fromkeys(number for number in lap_numbers if number >= 0))[:2]
+        if not selected:
+            return {"session_id": session_id, "laps": [], "points": [], "warnings": ["No laps were selected."]}
+        with SessionLocal() as db:
+            session = db.get(SessionModel, session_id)
+            if not session or not session.is_saved:
+                return {"session_id": session_id, "laps": selected, "points": [], "warnings": ["Session is unavailable."]}
+            rows = db.scalars(
+                select(TelemetrySampleModel)
+                .where(TelemetrySampleModel.session_id == session_id, TelemetrySampleModel.lap_number.in_(selected))
+                .order_by(TelemetrySampleModel.id.asc())
+            ).all()
+        per_lap_limit = max(40, max_points // max(1, len(selected)))
+        points: list[dict] = []
+        for lap_number in selected:
+            lap_rows = [row for row in rows if row.lap_number == lap_number]
+            recorded_distances = [float(row.lap_distance) for row in lap_rows if row.lap_distance is not None and math.isfinite(float(row.lap_distance))]
+            distance_min = min(recorded_distances) if recorded_distances else None
+            distance_span = max(recorded_distances) - distance_min if distance_min is not None else 0.0
+            integrated_distances = [0.0]
+            if distance_span <= 1.0:
+                for previous, current in zip(lap_rows, lap_rows[1:]):
+                    delta_time = (current.game_time - previous.game_time) if current.game_time is not None and previous.game_time is not None else 0.0
+                    delta_time = max(0.0, min(5.0, delta_time))
+                    speeds = [speed for speed in (previous.speed_kph, current.speed_kph) if speed is not None and math.isfinite(float(speed))]
+                    average_speed = sum(float(speed) for speed in speeds) / len(speeds) if speeds else 0.0
+                    integrated_distances.append(integrated_distances[-1] + average_speed / 3.6 * delta_time)
+                integrated_span = integrated_distances[-1] if integrated_distances else 0.0
+            else:
+                integrated_span = 0.0
+            if len(lap_rows) > per_lap_limit:
+                step = (len(lap_rows) - 1) / max(1, per_lap_limit - 1)
+                indexes = {round(index * step) for index in range(per_lap_limit)}
+                selected_rows = [(index, row) for index, row in enumerate(lap_rows) if index in indexes]
+            else:
+                selected_rows = list(enumerate(lap_rows))
+            first_game_time = next((float(row.game_time) for row in lap_rows if row.game_time is not None and math.isfinite(float(row.game_time))), None)
+            for output_index, (source_index, row) in enumerate(selected_rows):
+                if distance_min is not None and distance_span > 1.0 and row.lap_distance is not None:
+                    distance = max(0.0, float(row.lap_distance) - distance_min)
+                    progress = distance / distance_span
+                elif integrated_span > 1.0:
+                    distance = integrated_distances[source_index]
+                    progress = distance / integrated_span
+                else:
+                    distance = None
+                    progress = output_index / max(1, len(selected_rows) - 1)
+                points.append({
+                    "lap_number": lap_number,
+                    "game_time": row.game_time,
+                    "elapsed_time": (
+                        float(row.current_lap_time)
+                        if row.current_lap_time is not None and math.isfinite(float(row.current_lap_time))
+                        else float(row.game_time) - first_game_time
+                        if row.game_time is not None and first_game_time is not None and math.isfinite(float(row.game_time))
+                        else None
+                    ),
+                    "lap_distance": distance,
+                    "progress": max(0.0, min(1.0, progress)),
+                    "throttle": row.throttle,
+                    "brake": row.brake,
+                    "speed_kph": row.speed_kph,
+                })
+        warnings = [] if points else ["No input samples were stored for the selected laps."]
+        return {"session_id": session_id, "laps": selected, "points": points, "warnings": warnings}
 
     def remove_session(self, session_id: str) -> dict | None:
         with SessionLocal() as db:

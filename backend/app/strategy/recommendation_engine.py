@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from app.schemas.recommendations import RecommendationType, StrategyRecommendation
-from app.schemas.strategy import FuelState, PitWindowState, StrategyAssumptions, StintState, TyreStrategyState
+from app.schemas.strategy import EnergyState, FuelState, PitWindowState, StrategyAssumptions, StintState, TyreStrategyState
 from app.schemas.telemetry import CompetitorState, TelemetrySnapshot
 
 
@@ -26,10 +26,19 @@ class RecommendationEngine:
             and tyre_state.confidence != "low"
         )
 
-    def _pit_window_ready(self, fuel_state: FuelState, tyre_state: TyreStrategyState, pit_window_state: PitWindowState) -> bool:
+    def _energy_ready(self, energy_state: EnergyState | None) -> bool:
+        return bool(
+            energy_state
+            and energy_state.virtual_energy_laps_remaining is not None
+            and energy_state.virtual_energy_per_lap is not None
+            and energy_state.valid_laps_observed >= energy_state.valid_laps_required
+            and energy_state.confidence != "low"
+        )
+
+    def _pit_window_ready(self, fuel_state: FuelState, tyre_state: TyreStrategyState, pit_window_state: PitWindowState, energy_state: EnergyState | None = None) -> bool:
         if pit_window_state.latest_safe_pit_lap is None:
             return False
-        return self._fuel_ready(fuel_state) or self._tyres_ready(tyre_state)
+        return self._fuel_ready(fuel_state) or self._energy_ready(energy_state) or self._tyres_ready(tyre_state)
 
     def _remember(self, recommendation: StrategyRecommendation, lap: int | None) -> StrategyRecommendation:
         self._last_action_type = recommendation.type
@@ -52,6 +61,7 @@ class RecommendationEngine:
         stint_state: StintState,
         pit_window_state: PitWindowState,
         competitors: list[CompetitorState],
+        energy_state: EnergyState | None = None,
     ) -> StrategyRecommendation:
         lap = snapshot.player.lap_number if snapshot.player else None
         assumptions = {
@@ -59,10 +69,31 @@ class RecommendationEngine:
             "pit_loss_s": self.assumptions.pit_loss_seconds,
             "safety_margin_l": self.assumptions.fuel_safety_margin_liters,
             "max_tyre_wear": self.assumptions.max_tyre_wear,
+            "virtual_energy_per_lap": energy_state.virtual_energy_per_lap if energy_state and energy_state.virtual_energy_per_lap is not None else 0,
         }
         fuel_ready = self._fuel_ready(fuel_state)
         tyres_ready = self._tyres_ready(tyre_state)
-        pit_window_ready = self._pit_window_ready(fuel_state, tyre_state, pit_window_state)
+        energy_ready = self._energy_ready(energy_state)
+        pit_window_ready = self._pit_window_ready(fuel_state, tyre_state, pit_window_state, energy_state)
+
+        if (
+            energy_ready
+            and energy_state is not None
+            and energy_state.virtual_energy_laps_remaining is not None
+            and energy_state.virtual_energy_laps_remaining <= self.assumptions.fuel_safety_margin_laps + 0.5
+        ):
+            if self._recent_same_action(RecommendationType.PIT_NOW, lap):
+                return self._hold(fuel_ready, tyres_ready, "action_recently_issued", assumptions, energy_ready)
+            return self._remember(StrategyRecommendation(
+                type=RecommendationType.PIT_NOW,
+                priority="high",
+                title="Virtual energy critical",
+                message="Verified virtual-energy range is inside the safety margin. Pit now before the usable WEC energy allocation is exhausted.",
+                reason_codes=["virtual_energy_range_inside_safety_margin"],
+                assumptions_used=assumptions,
+                confidence=0.88,
+                expires_in_seconds=45,
+            ), lap)
 
         if (
             fuel_ready
@@ -71,7 +102,7 @@ class RecommendationEngine:
         ):
             recommendation_type = RecommendationType.SAVE_FUEL if pit_window_state.traffic_risk_after_stop == "high" else RecommendationType.PIT_NOW
             if self._recent_same_action(recommendation_type, lap):
-                return self._hold(fuel_ready, tyres_ready, "action_recently_issued", assumptions)
+                return self._hold(fuel_ready, tyres_ready, "action_recently_issued", assumptions, energy_ready)
             return self._remember(StrategyRecommendation(
                 type=recommendation_type,
                 priority="high",
@@ -85,12 +116,12 @@ class RecommendationEngine:
 
         if lap is not None and pit_window_ready and pit_window_state.latest_safe_pit_lap is not None and lap >= pit_window_state.latest_safe_pit_lap:
             if self._recent_same_action(RecommendationType.PIT_THIS_LAP, lap):
-                return self._hold(fuel_ready, tyres_ready, "action_recently_issued", assumptions)
+                return self._hold(fuel_ready, tyres_ready, "action_recently_issued", assumptions, energy_ready)
             return self._remember(StrategyRecommendation(
                 type=RecommendationType.PIT_THIS_LAP,
                 priority="high",
                 title="Pit this lap",
-                message="The verified fuel or tyre limit has reached the latest safe pit lap.",
+                message="The verified virtual-energy, fuel, or tyre limit has reached the latest safe pit lap.",
                 reason_codes=["latest_safe_pit_lap_reached", "strategy_model_confident"],
                 assumptions_used=assumptions,
                 confidence=0.86,
@@ -134,7 +165,7 @@ class RecommendationEngine:
                 expires_in_seconds=120,
             ), lap)
 
-        return self._hold(fuel_ready, tyres_ready, "strategy_stable", assumptions)
+        return self._hold(fuel_ready, tyres_ready, "strategy_stable", assumptions, energy_ready)
 
     def _hold(
         self,
@@ -142,17 +173,20 @@ class RecommendationEngine:
         tyres_ready: bool,
         reason: str,
         assumptions: dict[str, float | str | int | bool],
+        energy_ready: bool = False,
     ) -> StrategyRecommendation:
         missing = []
-        if not fuel_ready:
-            missing.append("fuel_model_collecting_laps")
+        if not fuel_ready and not energy_ready:
+            missing.extend(["fuel_model_collecting_laps", "virtual_energy_model_collecting_laps"])
         if not tyres_ready:
             missing.append("tyre_model_collecting_laps")
         reason_codes = [reason, *missing] if missing else [reason, "fuel_margin_ok", "tyre_window_ok"]
+        if energy_ready:
+            reason_codes.append("virtual_energy_margin_ok")
         message = (
-            "No strategy action yet. The model is still collecting clean fuel and tyre laps before making pit calls."
+            "No strategy action yet. The model is still collecting clean virtual-energy, fuel, and tyre laps before making pit calls."
             if missing
-            else "No verified fuel, tyre, pit-window, or traffic trigger requires action."
+            else "No verified virtual-energy, fuel, tyre, pit-window, or traffic trigger requires action."
         )
         return StrategyRecommendation(
             type=RecommendationType.HOLD_STRATEGY,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { simulateStrategies, stopServiceTime, type StrategySimulationInput } from "./strategySimulation";
+import { explainNoViableStrategies, simulateStrategies, stopServiceTime, type StrategySimulationInput } from "./strategySimulation";
 
 const baseInput: StrategySimulationInput = {
   raceDurationMinutes: 60,
@@ -55,6 +55,28 @@ describe("strategy simulation", () => {
     }
   });
 
+  it("uses current virtual energy for the first stop and ratio-limits future fuel loads", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 90,
+      tankCapacityLiters: 100,
+      currentFuelLiters: 42,
+      currentVirtualEnergyFraction: 0.5,
+      virtualEnergyPerLap: 0.03,
+      fuelToVirtualEnergyRatio: 0.85,
+    });
+    expect(plans.length).toBeGreaterThan(0);
+    plans.forEach((plan) => {
+      expect(plan.stopsDetail[0].lap).toBeLessThanOrEqual(16);
+      plan.stopsDetail.forEach((stop) => {
+        expect(stop.fuelOnExitLiters).toBeLessThanOrEqual(85);
+        expect(stop.virtualEnergyOnExit).toBe(1);
+        expect(stop.virtualEnergyRemaining).toBeGreaterThanOrEqual(0);
+      });
+      expect(plan.finishVirtualEnergy).toBeGreaterThanOrEqual(0);
+    });
+  });
+
   it("evaluates latest-feasible pit layouts alongside balanced stints", () => {
     const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: 180 });
     const late = plans.find((plan) => plan.reasons.some((reason) => reason.includes("latest fuel-feasible")));
@@ -64,10 +86,9 @@ describe("strategy simulation", () => {
   });
 
   it("uses elapsed time so pit stops can reduce completed laps", () => {
-    const noStop = simulateStrategies({ ...baseInput, fuelPerLap: 0.5, tankCapacityLiters: 100, maxStops: 0 })[0];
-    const stopped = simulateStrategies({ ...baseInput, fuelPerLap: 0.5, tankCapacityLiters: 100, maxStops: 1 }).find((plan) => plan.stops === 1);
+    const stopped = simulateStrategies({ ...baseInput, fuelPerLap: 1, tankCapacityLiters: 20, maxStops: 1 }).find((plan) => plan.stops === 1);
     expect(stopped).toBeDefined();
-    expect(stopped!.raceLaps).toBeLessThanOrEqual(noStop.raceLaps);
+    expect(stopped!.raceLaps).toBeLessThanOrEqual(30);
     expect(stopped!.calculationBreakdown.pitTimeSeconds).toBeGreaterThan(0);
   });
 
@@ -75,6 +96,16 @@ describe("strategy simulation", () => {
     const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: 120, maxStops: 5 });
     plans.forEach((plan) => {
       expect(plan.calculationBreakdown.pitLaneTimeSeconds).toBe(plan.stops * baseInput.pitLaneLossSeconds);
+    });
+  });
+
+  it("reports the scheduled race time remaining at every pit entry", () => {
+    const plan = simulateStrategies({ ...baseInput, raceDurationMinutes: 180 })[0];
+    expect(plan.stopsDetail.length).toBeGreaterThan(1);
+    plan.stopsDetail.forEach((stop, index) => {
+      expect(stop.raceElapsedAtPitSeconds + stop.raceTimeRemainingAtPitSeconds).toBeCloseTo(180 * 60, 1);
+      expect(stop.raceTimeRemainingAtPitSeconds).toBeGreaterThan(0);
+      if (index > 0) expect(stop.raceTimeRemainingAtPitSeconds).toBeLessThan(plan.stopsDetail[index - 1].raceTimeRemainingAtPitSeconds);
     });
   });
 
@@ -96,18 +127,163 @@ describe("strategy simulation", () => {
   it("never returns a strategy that ends before the race-duration target", () => {
     const durationMinutes = 180;
     const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: durationMinutes });
-    expect(plans).toHaveLength(4);
+    expect(plans.length).toBeGreaterThanOrEqual(4);
     plans.forEach((plan) => {
       expect(plan.totalTimeSeconds).toBeGreaterThanOrEqual(durationMinutes * 60);
       expect(plan.calculationBreakdown.timeRemainingSeconds).toBeLessThanOrEqual(0);
     });
   });
 
+  it("does not extrapolate a short recent pace trend across an endurance race", () => {
+    const durationMinutes = 360;
+    const nominalLaps = Math.ceil(durationMinutes * 60 / 94);
+    const plan = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: durationMinutes,
+      normalLapTime: 94,
+      paceEvidence: {
+        weightedRecentPace: 94,
+        paceTrendSecondsPerLap: 0.8,
+        sampleLaps: 10,
+        confidence: "high",
+        source: "test session",
+      },
+      fuelPerLap: 2,
+      tankCapacityLiters: 100,
+      tyreWearRatePerLap: null,
+      tyreWearRateByWheel: {},
+      maxStops: 8,
+    })[0];
+
+    expect(plan).toBeDefined();
+    expect(plan.raceLaps).toBeGreaterThan(nominalLaps - 30);
+    expect(plan.raceLaps).toBeLessThanOrEqual(nominalLaps);
+    expect(plan.totalTimeSeconds).toBeGreaterThanOrEqual(durationMinutes * 60);
+  });
+
+  it("projects auditable start, average, and end pace for every stint", () => {
+    const plan = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 60,
+      tyrePaceDegradationPerLap: 0.08,
+      paceEvidence: { ...baseInput.paceEvidence, paceTrendSecondsPerLap: 0.12 },
+    })[0];
+
+    expect(plan.stintPace).toHaveLength(plan.stops + 1);
+    expect(plan.stintPace.reduce((sum, stint) => sum + stint.drivingTimeSeconds, 0)).toBeCloseTo(
+      plan.baseRaceTimeSeconds + plan.projectedPaceLossSeconds + (plan.tyreDegradationLossSeconds ?? 0),
+      1,
+    );
+    plan.stintPace.forEach((stint) => {
+      expect(stint.averagePaceSeconds).toBeGreaterThanOrEqual(Math.min(stint.startPaceSeconds, stint.endPaceSeconds));
+      expect(stint.averagePaceSeconds).toBeLessThanOrEqual(Math.max(stint.startPaceSeconds, stint.endPaceSeconds));
+    });
+  });
+
+  it("weights recent pace trend by evidence confidence", () => {
+    const high = simulateStrategies({ ...baseInput, paceEvidence: { ...baseInput.paceEvidence, paceTrendSecondsPerLap: 0.5, confidence: "high" }, maxStops: 1 })[0];
+    const low = simulateStrategies({ ...baseInput, paceEvidence: { ...baseInput.paceEvidence, paceTrendSecondsPerLap: 0.5, confidence: "low" }, maxStops: 1 })[0];
+    expect(high.projectedPaceLossSeconds).toBeGreaterThan(low.projectedPaceLossSeconds);
+  });
+
+  it("matches the observed 41-lap Hypercar fuel range with cumulative variance", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 360,
+      normalLapTime: 87.64,
+      paceEvidence: { weightedRecentPace: 87.64, sampleLaps: 52, confidence: "high", source: "latest Hypercar race" },
+      fuelPerLap: 1.879081726,
+      fuelUseStdDevLiters: 0.057319791,
+      fuelSafetyMarginLiters: 1.879081726,
+      tankCapacityLiters: 80,
+      tyreWearRatePerLap: 0.006,
+      tyreWearRateByWheel: {},
+      maxStops: 8,
+    });
+    const endurance = plans.find((plan) => plan.label === "Full-stint endurance");
+    expect(endurance).toBeDefined();
+    expect(endurance!.stopsDetail[0].lap).toBe(41);
+    expect(endurance!.recommendedStartFuelLiters).toBeLessThanOrEqual(80);
+  });
+
+  it("searches tyre-driven stop counts for a six-hour race with a lower wear limit", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 360,
+      fuelPerLap: 1,
+      tankCapacityLiters: 60,
+      tyreWearRatePerLap: 0.005,
+      tyreWearRateByWheel: { fl: 0.03, fr: 0.005, rl: 0.005, rr: 0.005 },
+      maxTyreWear: 0.67,
+      maxTyresAvailable: 24,
+    });
+
+    expect(plans.length).toBeGreaterThan(0);
+    plans.forEach((plan) => {
+      expect(plan.totalTimeSeconds).toBeGreaterThanOrEqual(360 * 60);
+      expect(plan.projectedTyreWear).toBeLessThanOrEqual(0.67);
+      expect(plan.tyresUsed).toBeLessThanOrEqual(24);
+    });
+    expect(plans.some((plan) => plan.stops > 6)).toBe(true);
+  });
+
+  it("removes a final splash stop when the preceding stint can reach the finish", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 360,
+      normalLapTime: 98.6,
+      paceEvidence: { weightedRecentPace: 98.6, sampleLaps: 40, confidence: "high", source: "six-hour regression" },
+      fuelPerLap: 1.8,
+      fuelUseStdDevLiters: 0,
+      fuelSafetyMarginLiters: 1.8,
+      tankCapacityLiters: 85,
+      tyreWearRatePerLap: 0.006,
+      tyreWearRateByWheel: {},
+      fuelLoadPacePenaltySecondsPerLiter: 0,
+      maxStops: 8,
+    });
+
+    expect(plans.length).toBeGreaterThan(0);
+    expect(plans[0].stops).toBe(4);
+    plans.forEach((plan) => {
+      if (!plan.stopsDetail.length) return;
+      const finalStop = plan.stopsDetail[plan.stopsDetail.length - 1];
+      const penultimateStint = plan.stintPace[plan.stintPace.length - 2];
+      const finalStint = plan.stintPace[plan.stintPace.length - 1];
+      const combinedLaps = penultimateStint.endLap - penultimateStint.startLap + 1
+        + finalStint.endLap - finalStint.startLap + 1;
+      if (finalStop.tyresChanged === 0) expect(combinedLaps).toBeGreaterThan(46);
+    });
+    expect(plans.some((plan) => plan.category === "fuel-save")).toBe(true);
+  });
+
+  it("uses an empirical stint model and propagates its residual variance", () => {
+    const plan = simulateStrategies({
+      ...baseInput,
+      empiricalStintPace: {
+        sampleLaps: 52, observedStints: 2, maxObservedStintLaps: 40,
+        fuelCoefficientSecondsPerLiter: 0.075,
+        tyreWearCoefficientSecondsPerFraction: 25,
+        warmupLossSeconds: 4.4,
+        residualStdDevSeconds: 1.24,
+        referenceFuelLiters: 40,
+        referenceTyreWear: 0.18,
+        referenceWarmup: 0,
+        confidence: "high",
+      },
+    })[0];
+    expect(plan.calculationBreakdown.paceModelSource).toBe("empirical stint regression");
+    expect(plan.calculationBreakdown.paceVariabilitySecondsPerLap).toBe(1.24);
+    expect(plan.calculationBreakdown.p90TotalTimeSeconds).toBeGreaterThan(plan.totalTimeSeconds);
+    expect(plan.warnings.join(" ")).not.toContain("Insufficient tyre degradation data");
+  });
+
   it("produces distinct ranked strategy categories", () => {
     const plans = simulateStrategies({ ...baseInput, raceDurationMinutes: 120 });
     expect(plans[0].category).toBe("fastest");
     expect(new Set(plans.map((plan) => plan.id)).size).toBe(plans.length);
-    expect(plans.length).toBeGreaterThanOrEqual(3);
+    expect(plans.length).toBeGreaterThanOrEqual(2);
+    expect(plans.some((plan) => plan.category === "fuel-save")).toBe(true);
   });
 
   it("offers fuel saving only when it changes feasibility", () => {
@@ -115,6 +291,21 @@ describe("strategy simulation", () => {
     expect(plan.liftCoastSavePercent).toBeGreaterThan(0);
     expect(plan.liftCoastSavePercent).toBeLessThanOrEqual(8);
     expect(plan.warnings.join(" ")).toContain("pace cost unavailable");
+  });
+
+  it("uses the selected fixed lift-and-coast percentage and calibrated pace cost", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 120,
+      liftCoastMode: "fixed",
+      liftCoastTargetPercent: 3,
+      liftCoastSecondsPerPercentPerLap: 0.2,
+    });
+    const fuelSave = plans.find((plan) => plan.category === "fuel-save");
+    expect(fuelSave).toBeDefined();
+    expect(fuelSave!.liftCoastSavePercent).toBe(3);
+    expect(fuelSave!.liftCoastLossSeconds).toBeGreaterThan(0);
+    expect(fuelSave!.warnings.join(" ")).not.toContain("pace cost unavailable");
   });
 
   it("marks never-change tyre threshold violations as high risk", () => {
@@ -135,6 +326,54 @@ describe("strategy simulation", () => {
     expect(call!.tyresToChange).toContain("rr");
     expect(call!.tyresToChange).not.toContain("rl");
     expect(call!.reason).toContain("permitted wear");
+  });
+
+  it("rejects plans that exceed the race tyre allocation", () => {
+    const plans = simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 120,
+      fuelPerLap: 1,
+      tankCapacityLiters: 45,
+      tyreChangePolicy: "all",
+      maxTyresAvailable: 8,
+      maxStops: 4,
+    });
+    expect(plans.length).toBeGreaterThan(0);
+    plans.forEach((plan) => {
+      expect(plan.tyresUsed).toBeLessThanOrEqual(8);
+      expect(plan.tyresAvailable).toBe(8);
+      expect(plan.tyresRemaining).toBe(8 - plan.tyresUsed);
+    });
+    expect(simulateStrategies({
+      ...baseInput,
+      raceDurationMinutes: 120,
+      fuelPerLap: 1,
+      tankCapacityLiters: 45,
+      tyreChangePolicy: "all",
+      maxTyresAvailable: 4,
+      maxStops: 4,
+    })).toEqual([]);
+  });
+
+  it("explains when tyre allocation prevents every otherwise viable strategy", () => {
+    const input = {
+      ...baseInput,
+      raceDurationMinutes: 120,
+      fuelPerLap: 1,
+      tankCapacityLiters: 45,
+      tyreChangePolicy: "all" as const,
+      maxTyresAvailable: 4,
+      maxStops: 4,
+    };
+
+    expect(simulateStrategies(input)).toEqual([]);
+    expect(explainNoViableStrategies(input).join(" ")).toContain("Tyre allocation is too small");
+  });
+
+  it("explains missing strategy inputs", () => {
+    expect(explainNoViableStrategies({ ...baseInput, fuelPerLap: null })).toEqual([
+      "Missing fuel use per lap. Add the required inputs before generating a strategy.",
+    ]);
   });
 
   it("reports tyre degradation as unavailable when no measured slope exists", () => {

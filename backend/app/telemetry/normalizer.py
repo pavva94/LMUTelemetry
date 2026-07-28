@@ -22,6 +22,19 @@ def kelvin_to_celsius(value: float | None) -> float | None:
     return value - 273.15 if value > 170 else value
 
 
+def lmu_brake_temperature_c(value: Any) -> float | None:
+    """Normalize LMU's brake-temperature channel to Celsius.
+
+    The bundled interface header labels mBrakeTemp as Celsius, but current LMU
+    builds expose an absolute/Kelvin value (for example, about 738 for 465 C in
+    the in-game tyre panel).
+    """
+    raw = safe_float(value)
+    if raw is None or raw <= 273.15:
+        return None
+    return raw - 273.15
+
+
 def vector_speed_kph(vector: Any) -> float | None:
     try:
         x = float(getattr(vector, "x") if hasattr(vector, "x") else vector[0])
@@ -156,6 +169,7 @@ def normalize_lmu_snapshot(raw: Any) -> TelemetrySnapshot:
     _apply_player_gap_context(player, competitors)
     session = SessionState(
         track_name=decode_c_string(attr(scoring, "mTrackName", default="")),
+        track_length_m=safe_float(attr(scoring, "mLapDist", default=None)),
         session_type=session_type_name(attr(scoring, "mSession", default="Race")),
         game_phase=str(attr(scoring, "mGamePhase", default="unknown")),
         current_time=safe_float(attr(scoring, "mCurrentET", default=None)),
@@ -171,6 +185,7 @@ def normalize_lmu_snapshot(raw: Any) -> TelemetrySnapshot:
         ambient_temp_c=kelvin_to_celsius(safe_float(attr(scoring, "mAmbientTemp", default=None))),
         track_temp_c=kelvin_to_celsius(safe_float(attr(scoring, "mTrackTemp", default=None))),
         avg_wetness=safe_float(attr(scoring, "mAvgPathWetness", default=None)),
+        track_grip=safe_float(attr(scoring, "mTrackGripLevel", default=None)),
         cloud_coverage=safe_float(attr(scoring, "mCloudiness", default=None)),
     )
     return TelemetrySnapshot(
@@ -201,10 +216,11 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
     lap_start = safe_float(attr(telemetry, "mLapStartET", default=None))
     current_lap_time = elapsed - lap_start if elapsed is not None and lap_start is not None and elapsed >= lap_start else None
 
-    battery_fraction = safe_float(attr(telemetry, "mBatteryChargeFraction", default=None))
+    battery_fraction = bounded_fraction(safe_float(attr(telemetry, "mBatteryChargeFraction", default=None)))
     state_of_charge = safe_float(attr(telemetry, "mStateOfCharge", default=None))
     virtual_energy = bounded_fraction(safe_float(attr(telemetry, "mVirtualEnergy", default=None)))
     regen_kw = safe_float(attr(telemetry, "mRegen", default=None))
+    motor_torque_nm = safe_float(attr(telemetry, "mElectricBoostMotorTorque", default=None))
     motor_state = motor_state_name(attr(telemetry, "mElectricBoostMotorState", default=None))
     return PlayerState(
         vehicle_id=attr(vehicle, "mID", "mVehicleID", default=0),
@@ -248,10 +264,10 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         tc_max=attr(telemetry, "mTCMax", default=None),
         tc_slip_setting=attr(telemetry, "mTCSlip", default=None),
         tc_cut_setting=attr(telemetry, "mTCCut", default=None),
-        brake_temp_fl=wheel_value(0, "mBrakeTemp"),
-        brake_temp_fr=wheel_value(1, "mBrakeTemp"),
-        brake_temp_rl=wheel_value(2, "mBrakeTemp"),
-        brake_temp_rr=wheel_value(3, "mBrakeTemp"),
+        brake_temp_fl=lmu_brake_temperature_c(wheel_value(0, "mBrakeTemp")),
+        brake_temp_fr=lmu_brake_temperature_c(wheel_value(1, "mBrakeTemp")),
+        brake_temp_rl=lmu_brake_temperature_c(wheel_value(2, "mBrakeTemp")),
+        brake_temp_rr=lmu_brake_temperature_c(wheel_value(3, "mBrakeTemp")),
         brake_pressure_fl=wheel_value(0, "mBrakePressure"),
         brake_pressure_fr=wheel_value(1, "mBrakePressure"),
         brake_pressure_rl=wheel_value(2, "mBrakePressure"),
@@ -279,7 +295,8 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         front_downforce=safe_float(attr(telemetry, "mFrontDownforce", default=None)),
         rear_downforce=safe_float(attr(telemetry, "mRearDownforce", default=None)),
         drag=safe_float(attr(telemetry, "mDrag", default=None)),
-        finish_status=finish_status_name(attr(telemetry, "mFinishStatus", default=None)),
+        primary_flag=attr(vehicle, "mFlag", default=None),
+        finish_status=finish_status_name(attr(vehicle, "mFinishStatus", default=attr(telemetry, "mFinishStatus", default=None))),
         track_limits_steps=attr(vehicle, "mCutTrackWarnings", default=None),
         lap_invalidated=bool(attr(vehicle, "mLapInvalidated", default=False)),
         gap_car_ahead=race_gap(attr(telemetry, "mTimeGapCarAhead", default=attr(vehicle, "mTimeBehindNext", default=None))),
@@ -288,9 +305,12 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         gap_place_behind=race_gap(attr(telemetry, "mTimeGapPlaceBehind", default=None)),
         tyre_state=tyres,
         hybrid_state=HybridState(
+            battery_charge_fraction=battery_fraction,
+            state_of_charge_percent=state_of_charge,
             battery_percent=state_of_charge if state_of_charge is not None else (battery_fraction * 100 if battery_fraction is not None else None),
             virtual_energy_fraction=virtual_energy,
             regen_kw=regen_kw,
+            motor_torque_nm=motor_torque_nm,
             motor_state=motor_state,
             regen_active=(regen_kw is not None and regen_kw > 0) or motor_state == "regeneration",
         ),
