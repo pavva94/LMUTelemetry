@@ -1,16 +1,16 @@
-<h1><img src="website/imgs/lmu-telemetry-icon.png" alt="LMU Race Center icon" width="32" height="32" align="center"> LMU Race Center</h1>
+<h1><img src="website/imgs/lmu-telemetry-icon.png" alt="LMU Telemetry icon" width="32" height="32" align="center"> LMU Telemetry</h1>
 
-[Official Website](https://www.pavesialessandro.com/LMUTelemetry/website/en/index.html) · [Download LMU Race Center for Windows](https://github.com/pavva94/LMUTelemetry/releases) [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A3A423RK3Y)
+[Official Website](https://www.pavesialessandro.com/LMUTelemetry/website/en/index.html) · [Download LMU Telemetry for Windows](https://github.com/pavva94/LMUTelemetry/releases) [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/A3A423RK3Y)
 
-LMU Race Center is a local-first telemetry, race-engineering, and strategy application for Le Mans Ultimate. It combines live shared-memory data with read-only analysis of LMU's native DuckDB telemetry files, providing race control, driver coaching, strategy planning, career statistics, and professional session reports in one Windows application.
+LMU Telemetry is a local-first telemetry, race-engineering, and strategy application for Le Mans Ultimate. It combines live shared-memory data with read-only analysis of LMU's native DuckDB telemetry files, providing race control, driver coaching, strategy planning, career statistics, and professional session reports in one Windows application.
 
-The main way to use LMU Race Center is the ready-to-run **Windows executable**. Users do not need to install Python, Node.js, or developer tools.
+The main way to use LMU Telemetry is the ready-to-run **Windows executable**. Users do not need to install Python, Node.js, or developer tools.
 
 ## Download And Run On Windows
 
-Download the latest version from the [LMU Race Center download page](https://github.com/pavva94/LMUTelemetry/releases). Each release provides two ways to run the same desktop application:
+Download the latest version from the [LMU Telemetry download page](https://github.com/pavva94/LMUTelemetry/releases). Each release provides two ways to run the same desktop application:
 
-- **Installer — `LMUTelemetry-Setup-<version>.exe`**: the recommended option for most users. Run the installer, then launch **LMU Race Center** from the Start menu or optional desktop shortcut.
+- **Installer — `LMUTelemetry-Setup-<version>.exe`**: the recommended option for most users. Run the installer, then launch **LMU Telemetry** from the Start menu or optional desktop shortcut.
 - **Portable — `LMUTelemetry-Windows-Portable-<version>.zip`**: extract the archive and run `LMUTelemetry.exe` directly. Nothing is installed.
 - **Checksums — `SHA256SUMS-<version>.txt`**: SHA-256 hashes for verifying the installer and portable download.
 
@@ -18,14 +18,14 @@ Download the latest version from the [LMU Race Center download page](https://git
 
 1. Download and run the installer, or extract the portable archive and open `LMUTelemetry.exe`.
 2. Start Le Mans Ultimate and enter an active session.
-3. LMU Race Center connects to the game's shared memory and begins showing and recording live data.
-4. To analyze existing LMU Race Center, open **User Profile**, select the folder containing the native LMU Race Center databases, and choose **Save and sync**.
+3. LMU Telemetry connects to the game's shared memory and begins showing and recording live data.
+4. To analyze existing LMU Telemetry, open **User Profile**, select the folder containing the native LMU Telemetry databases, and choose **Save and sync**.
 
 The executable includes the backend, frontend, desktop window, and LMU shared-memory integration. It starts its own private local service automatically; there is no server or command line for the user to configure. Closing the desktop window stops that service cleanly and finalizes the active recording.
 
 Visit the [official website](https://www.pavesialessandro.com/LMUTelemetry/website/en/index.html) for the product tour, feature overview, and screenshots.
 
-LMU Race Center stores telemetry, cached session metadata, generated reports, and settings on the local computer. It does not upload telemetry to an external service.
+LMU Telemetry stores telemetry, cached session metadata, generated reports, and settings on the local computer. It does not upload telemetry to an external service.
 
 ## Highlights
 
@@ -312,7 +312,7 @@ Confirm that LMU is running in an active session. For source development, verify
 
 ### Native LMU Sessions Do Not Appear
 
-Open **User Profile**, select the folder containing LMU Race Center databases, and choose **Save and sync**. The scan is recursive. Check that the folder exists and that the current Windows user can read it.
+Open **User Profile**, select the folder containing LMU Telemetry databases, and choose **Save and sync**. The scan is recursive. Check that the folder exists and that the current Windows user can read it.
 
 ### A Chart Or Metric Shows `--`
 
@@ -328,4 +328,4 @@ Make sure the configured data directory is writable. Packaged builds normally us
 
 ## Disclaimer
 
-LMU Race Center is an independent community project and is not affiliated with or endorsed by Studio 397 or Motorsport Games. Strategy outputs are estimates based on available telemetry and configured assumptions; validate them against event rules, current conditions, and in-game race control before use.
+LMU Telemetry is an independent community project and is not affiliated with or endorsed by Studio 397 or Motorsport Games. Strategy outputs are estimates based on available telemetry and configured assumptions; validate them against event rules, current conditions, and in-game race control before use.
