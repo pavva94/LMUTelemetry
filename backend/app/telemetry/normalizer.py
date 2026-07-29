@@ -102,6 +102,15 @@ def bounded_fraction(value: float | None) -> float | None:
     return max(0.0, min(1.0, value))
 
 
+def brake_bias_fraction(value: Any) -> float | None:
+    bias = safe_float(value)
+    if bias is None:
+        return None
+    if 1 < bias <= 100:
+        bias /= 100
+    return bias if 0 <= bias <= 1 else None
+
+
 def positive_channel(value: float | None, minimum: float = 0.0) -> float | None:
     return value if value is not None and value > minimum else None
 
@@ -272,6 +281,7 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         brake_pressure_fr=wheel_value(1, "mBrakePressure"),
         brake_pressure_rl=wheel_value(2, "mBrakePressure"),
         brake_pressure_rr=wheel_value(3, "mBrakePressure"),
+        brake_bias_rear=brake_bias_fraction(attr(telemetry, "mRearBrakeBias", default=None)),
         wheel_rot_speed_fl=wheel_value(0, "mRotation"),
         wheel_rot_speed_fr=wheel_value(1, "mRotation"),
         wheel_rot_speed_rl=wheel_value(2, "mRotation"),

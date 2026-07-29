@@ -8,7 +8,6 @@ import { LmuDuckdbReview } from "./pages/LmuDuckdbReview";
 import { PitWindow } from "./pages/PitWindow";
 import {
   CircleMap,
-  LapCompare,
   OneLapTiming,
   RaceHistory,
   SettingsPage,
@@ -25,7 +24,8 @@ export default function App() {
   const pageFromHash = (): PageKey => {
     const value = window.location.hash.replace(/^#\/?/, "");
     if (value === "race-simulation") return "planner";
-    return ["live", "profile", "circle-map", "lap-compare", "one-lap", "race-history", "xy-plotter", "settings", "planner", "race-prep", "lap-analysis", "pit", "review"].includes(value) ? value as PageKey : "live";
+    if (value === "lap-compare") return "race-history";
+    return ["live", "profile", "circle-map", "one-lap", "race-history", "xy-plotter", "settings", "planner", "race-prep", "lap-analysis", "pit", "review"].includes(value) ? value as PageKey : "live";
   };
   const [page, setPage] = useState<PageKey>(pageFromHash);
   useEffect(() => {
@@ -38,7 +38,7 @@ export default function App() {
     setPage(next);
   };
   const { data: telemetry, connected: telemetryConnected } = useTelemetrySocket();
-  const { strategy, recommendation, connected: strategyConnected } = useStrategySocket();
+  const { strategy, recommendation } = useStrategySocket();
   const [competitors, setCompetitors] = useState<CompetitorState[]>([]);
   useEffect(() => {
     const id = window.setInterval(() => void api.competitors().then(setCompetitors).catch(() => {}), 2000);
@@ -46,14 +46,13 @@ export default function App() {
   }, []);
   const currentCompetitors = telemetry?.competitors?.length ? telemetry.competitors : competitors;
   return (
-    <Layout page={page} setPage={navigate} connected={telemetryConnected || strategyConnected}>
+    <Layout page={page} setPage={navigate}>
       <ErrorBoundary>
         <div style={{ display: page === "live" ? "contents" : "none" }} aria-hidden={page !== "live"}>
           <LiveDashboard telemetry={telemetry} strategy={strategy} recommendation={recommendation} connected={telemetryConnected} competitors={currentCompetitors} />
         </div>
         {page === "profile" && <UserProfile />}
         {page === "circle-map" && <CircleMap telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
-        {page === "lap-compare" && <LapCompare telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "one-lap" && <OneLapTiming telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "race-history" && <RaceHistory telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}
         {page === "xy-plotter" && <XYPlotter telemetry={telemetry} strategy={strategy} competitors={currentCompetitors} />}

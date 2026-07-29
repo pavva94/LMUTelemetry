@@ -14,7 +14,7 @@ import {
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import { completedLapFuelUsed, currentLapFuelUsed } from "../lib/liveFuelHistory";
 import { environmentTrendDirection, trackWetnessState, type EnvironmentTrendDirection } from "../lib/environmentTrend";
-import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, type LapInputPoint, type LapInputTrace } from "../lib/lapInputTrace";
+import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, isCompleteLapInputTrace, type LapInputPoint, type LapInputTrace } from "../lib/lapInputTrace";
 import { isHypercarClass } from "../lib/vehicleClass";
 import { raceFlagState } from "../lib/raceFlagState";
 import { useT } from "../i18n/I18nProvider";
@@ -239,7 +239,9 @@ function useLapInputHistory(telemetry: TelemetrySnapshot | null) {
       if (!base.current) return { ...base, sessionId, current: { lap, invalidated: Boolean(player.lap_invalidated), points: [point] } };
       if (base.current.lap !== lap) {
         const completedTrace = { ...base.current, lapTime: player.last_lap_time };
-        const completed = completedTrace.points.length > 1 ? [...base.completed, completedTrace].slice(-8) : base.completed;
+        const completed = isCompleteLapInputTrace(completedTrace, telemetry?.session?.track_length_m)
+          ? [...base.completed, completedTrace].slice(-8)
+          : base.completed;
         return { sessionId, completed, current: { lap, invalidated: Boolean(player.lap_invalidated), points: [point] } };
       }
       const lastPoint = base.current.points[base.current.points.length - 1];
@@ -281,6 +283,9 @@ function RaceHeader({ telemetry, connected, averageLap }: { telemetry: Telemetry
   const currentLap = player?.lap_number ?? session?.current_lap;
   const hasRealLapLimit = finite(session?.max_laps) && session.max_laps > 0 && session.max_laps < 10_000 && (!finite(currentLap) || session.max_laps >= currentLap);
   const estimatedTotalLaps = hasRealLapLimit ? session?.max_laps : finite(currentLap) && finite(session?.time_remaining) && session.time_remaining > 0 && finite(averageLap) ? currentLap + Math.ceil(session.time_remaining / averageLap) : undefined;
+  const currentLapLabel = finite(currentLap) ? String(currentLap) : "--";
+  const estimatedTotalLapsLabel = finite(estimatedTotalLaps) ? `${hasRealLapLimit ? "" : "~"}${estimatedTotalLaps}` : "--";
+  const hasWideLapCount = currentLapLabel.length + estimatedTotalLapsLabel.length > 5;
   const position = player?.position ?? playerCar?.position;
   const classPosition = player?.class_position ?? playerCar?.class_position;
   const vehicle = player?.vehicle_model || player?.vehicle_name || carName(playerCar, t("liveDashboard.carUnavailable"));
@@ -297,7 +302,7 @@ function RaceHeader({ telemetry, connected, averageLap }: { telemetry: Telemetry
       <div className="race-core-grid">
         <div className="race-position-block">
           <div className="primary-race-number"><span>{t("liveDashboard.racePosition")}</span><strong>{finite(position) ? `P${position}` : "--"}</strong>{finite(classPosition) && <small>P{classPosition} {t("standings.class").toLowerCase()}</small>}</div>
-          <div className="primary-race-number session-lap-number"><span>{t("liveDashboard.sessionLaps")}</span><strong><b>{finite(currentLap) ? currentLap : "--"}</b><i>/</i><b>{finite(estimatedTotalLaps) ? `${hasRealLapLimit ? "" : "~"}${estimatedTotalLaps}` : "--"}</b></strong><small>{hasRealLapLimit ? t("liveDashboard.scheduledDistance") : t("liveDashboard.estimatedFromCleanPace")}</small></div>
+          <div className={`primary-race-number session-lap-number${hasWideLapCount ? " is-wide" : ""}`}><span>{t("liveDashboard.sessionLaps")}</span><strong><b>{currentLapLabel}</b><i>/</i><b>{estimatedTotalLapsLabel}</b></strong><small>{hasRealLapLimit ? t("liveDashboard.scheduledDistance") : t("liveDashboard.estimatedFromCleanPace")}</small></div>
         </div>
         <LapTiming player={player} playerCar={playerCar} averageLap={averageLap} />
         <div className={`race-flag-block ${activeFlag.tone}`}>
@@ -508,15 +513,25 @@ function TyreCard({ player }: { player?: PlayerState }) {
   const tyres = player?.tyre_state;
   const hasTyreData = tyreKeys.some((key) => finite(representativeTemp(tyres?.[`temp_${key}`])));
   const hasBrakeData = tyreKeys.some((key) => finite(player?.[brakeTempKeys[key]]));
+  const rearBrakeBias = finite(player?.brake_bias_rear) ? Math.max(0, Math.min(1, Number(player?.brake_bias_rear))) : undefined;
+  const frontBrakeBias = finite(rearBrakeBias) ? 1 - rearBrakeBias : undefined;
+  const hasBrakeBalance = finite(rearBrakeBias);
   return <section className="status-card tyre-card"><CardTitle icon={Thermometer} eyebrow={t("liveDashboard.condition")} title={t("liveDashboard.tyres")} />
-    {hasTyreData || hasBrakeData ? <div className="vehicle-tyres">{tyreKeys.map((key) => {
+    {hasTyreData || hasBrakeData || hasBrakeBalance ? <div className="vehicle-tyres">{tyreKeys.map((key) => {
       const temp = tyres?.[`temp_${key}`] as TyreTemps | undefined;
       const surfaceZones = [temp?.left_c, temp?.center_c, temp?.right_c];
       const carcassTemp = temp?.carcass_c;
       const wear = tyres?.[`wear_${key}`] as number | undefined;
       const brakeTemp = player?.[brakeTempKeys[key]];
       return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong>{finite(wear) && <span>{percent(wear)} {t("liveDashboard.life")}</span>}</header><div className="surface-temperature">{surfaceZones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div><div className="carcass-temperature" style={{ background: heatColour(carcassTemp) }}><span>{t("liveDashboard.carcass")}</span><strong>{finite(carcassTemp) ? `${Math.round(carcassTemp)}°C` : "--"}</strong></div><footer style={{ background: brakeHeatColour(brakeTemp) }}><span>{t("telemetry.brake")}</span><strong>{finite(brakeTemp) ? `${Math.round(brakeTemp)}°C` : "--"}</strong></footer></div>;
-    })}<div className="car-spine"><i /><span>{t("liveDashboard.front")}</span></div></div> : <EmptyState label={t("liveDashboard.tyreTempsUnavailable")} compact />}
+    })}<div className="brake-balance" aria-label={t("liveDashboard.brakeBalance")}>
+      <span>F</span>
+      <strong>{finite(frontBrakeBias) ? `${(frontBrakeBias * 100).toFixed(1)}%` : "--"}</strong>
+      <div className="brake-balance-scale" aria-hidden="true"><i style={{ height: `${(frontBrakeBias || 0) * 100}%` }} /><b style={{ height: `${(rearBrakeBias || 0) * 100}%` }} /></div>
+      <strong>{finite(rearBrakeBias) ? `${(rearBrakeBias * 100).toFixed(1)}%` : "--"}</strong>
+      <span>R</span>
+      <small>{t("liveDashboard.brakeBalanceShort")}</small>
+    </div></div> : <EmptyState label={t("liveDashboard.tyreTempsUnavailable")} compact />}
     {hasTyreData && <div className="heat-key"><span>{t("liveDashboard.cool")}</span><i /><span>{t("liveDashboard.hot")}</span></div>}
   </section>;
 }
@@ -653,8 +668,9 @@ function EmptyState({ label, compact = false }: { label: string; compact?: boole
 
 function LapInputComparison({ history, trackLength }: { history: LapInputHistory; trackLength?: number }) {
   const t = useT();
-  const last = history.completed[history.completed.length - 1];
-  const best = bestLapInputTrace(history.completed);
+  const completeTraces = useMemo(() => history.completed.filter((trace) => isCompleteLapInputTrace(trace, trackLength)), [history.completed, trackLength]);
+  const last = completeTraces[completeTraces.length - 1];
+  const best = bestLapInputTrace(completeTraces);
   const series = useMemo(() => [
     { id: "best", label: t("liveDashboard.bestLap"), colour: "#6ee7a8", trace: best },
     { id: "last", label: t("liveDashboard.lastLapTrace"), colour: "#55c7f7", trace: last },

@@ -3,7 +3,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 from app.telemetry.mock_collector import MockTelemetryCollector
-from app.telemetry.normalizer import _normalize_competitor, _normalize_tyres, completed_lap_time, kelvin_to_celsius, lmu_brake_temperature_c, normalize_lmu_snapshot, race_gap, session_type_name, tyre_wear_used_fraction, vector_speed_kph, yellow_flag_state_name
+from app.telemetry.normalizer import _normalize_competitor, _normalize_tyres, brake_bias_fraction, completed_lap_time, kelvin_to_celsius, lmu_brake_temperature_c, normalize_lmu_snapshot, race_gap, session_type_name, tyre_wear_used_fraction, vector_speed_kph, yellow_flag_state_name
 
 
 def test_mock_collector_emits_valid_snapshot() -> None:
@@ -14,6 +14,7 @@ def test_mock_collector_emits_valid_snapshot() -> None:
     assert snapshot.player.hybrid_state is not None
     assert snapshot.player.hybrid_state.battery_charge_fraction is not None
     assert snapshot.player.hybrid_state.motor_torque_nm is not None
+    assert snapshot.player.brake_bias_rear == 0.46
     assert snapshot.session.track_length_m == MockTelemetryCollector.TRACK_LENGTH_M
     assert next(car for car in snapshot.competitors if car.is_player).lap_distance is not None
     assert snapshot.competitors
@@ -31,6 +32,9 @@ def test_normalizer_helpers() -> None:
     assert race_gap(4.2) == 4.2
     assert round(tyre_wear_used_fraction(0.98) or 0, 3) == 0.02
     assert round(tyre_wear_used_fraction(92) or 0, 3) == 0.08
+    assert brake_bias_fraction(0.46) == 0.46
+    assert brake_bias_fraction(46) == 0.46
+    assert brake_bias_fraction(101) is None
 
 
 def test_session_type_name_maps_lmu_session_ranges() -> None:
@@ -53,7 +57,7 @@ def test_player_normalizer_exposes_primary_flag_and_scoring_finish_status() -> N
             scoringInfo=SimpleNamespace(mNumVehicles=1, mPlayerVehScoringId=0, mTrackName=b"Track", mSession=10, mGamePhase=8, mCurrentET=100.0, mEndET=100.0),
             vehScoringInfo=[SimpleNamespace(mID=1, mFlag=6, mFinishStatus=1, mVehicleName=b"Team", mVehicleClass=b"Hypercar")],
         ),
-        telemetry=SimpleNamespace(playerVehicleIdx=0, telemInfo=[SimpleNamespace(mVehicleModel=b"Car")]),
+        telemetry=SimpleNamespace(playerVehicleIdx=0, telemInfo=[SimpleNamespace(mVehicleModel=b"Car", mRearBrakeBias=0.47)]),
     )
 
     snapshot = normalize_lmu_snapshot(raw)
@@ -61,6 +65,7 @@ def test_player_normalizer_exposes_primary_flag_and_scoring_finish_status() -> N
     assert snapshot.player is not None
     assert snapshot.player.primary_flag == 6
     assert snapshot.player.finish_status == "finished"
+    assert snapshot.player.brake_bias_rear == 0.47
 
 
 def test_tyre_normalizer_ignores_zero_channels_and_reads_temperature_fallback() -> None:

@@ -114,6 +114,7 @@ class MockTelemetryCollector:
             fuel_capacity_liters=self._fuel_capacity,
             throttle=max(0.0, min(1.0, math.sin(lap_progress * math.pi) + random.uniform(-0.05, 0.05))),
             brake=0.0 if speed > 115 else 0.35,
+            brake_bias_rear=0.46,
             steering=math.sin(lap_progress * math.tau) * 0.25,
             wheel_rot_speed_fl=speed / 3.6 / 0.32,
             wheel_rot_speed_fr=speed / 3.6 / 0.32,

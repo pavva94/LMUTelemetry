@@ -98,6 +98,7 @@ class PlayerState(BaseModel):
     brake_pressure_fr: float | None = None
     brake_pressure_rl: float | None = None
     brake_pressure_rr: float | None = None
+    brake_bias_rear: float | None = None
     wheel_rot_speed_fl: float | None = None
     wheel_rot_speed_fr: float | None = None
     wheel_rot_speed_rl: float | None = None

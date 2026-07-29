@@ -53,9 +53,8 @@ Live Mode reads LMU shared memory and updates the application through WebSockets
 
 - **Live Dashboard**: session state, position, lap timing, speed, gear, RPM, throttle, brake, steering, tyre state, fuel projections, alerts, and either nearby cars or the full grid.
 - **Circle Map**: a simplified lap-progress map for traffic awareness when real circuit geometry is unavailable.
-- **Lap Stats**: valid-lap comparison, pace trends, fuel use, tyre degradation, top speed, and session-wide insights.
 - **Standings**: race and class order, leader gaps, relative gaps, pit state, and field spread.
-- **Session History**: stint detection and comparisons of pace, fuel, tyre wear, and top speed.
+- **Session History**: pace overview and trends, stint detection, lap records, fuel, tyre wear, top speed, and selectable lap comparisons for throttle, brake, and time delta by lap distance.
 - **X-Y Plotter**: configurable scatter plots for numeric live channels, including common engineering presets and summary statistics.
 - **Driver Coach**: live lap validation, reference-lap comparison, corner segmentation, braking/rotation/apex/exit findings, synchronized traces, and confidence information.
 - **Pit Window**: selected strategy timeline, alternative stop options, live pit-window guidance, pace evidence, model inputs, and calculation breakdowns.

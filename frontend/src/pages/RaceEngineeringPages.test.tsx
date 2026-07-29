@@ -21,6 +21,23 @@ describe("stint summary arithmetic", () => {
     expect(stint.summary.tyre_wear_delta).toBeCloseTo(0.0175);
   });
 
+  it("does not create pit-only stints from repeated menu pit samples", async () => {
+    const { buildStints } = await import("./RaceEngineeringPages");
+    const stints = buildStints([
+      { lap_number: 1, lap_time: 100, valid_lap: true, in_pit: false },
+      { lap_number: 2, lap_time: 140, valid_lap: false, in_pit: true },
+      { lap_number: 2, lap_time: null, valid_lap: false, in_pit: true },
+      { lap_number: 3, lap_time: 101, valid_lap: true, in_pit: false },
+      { lap_number: 4, lap_time: 145, valid_lap: false, in_pit: true },
+      { lap_number: 4, lap_time: null, valid_lap: false, in_pit: true },
+    ]);
+
+    expect(stints).toHaveLength(2);
+    expect(stints.map((stint) => stint.number)).toEqual([1, 2]);
+    expect(stints.map((stint) => stint.summary.lap_count)).toEqual([1, 1]);
+    expect(stints.map((stint) => stint.summary.detected_lap_count)).toEqual([2, 2]);
+  });
+
   it("finds the fastest pace window only across consecutive valid laps", async () => {
     const { bestConsecutivePace } = await import("./RaceEngineeringPages");
     const rows = [

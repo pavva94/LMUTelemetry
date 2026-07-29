@@ -29,6 +29,23 @@ export function appendLapInputPoint(points: LapInputPoint[], point: LapInputPoin
   return [...points, point].slice(-2_000);
 }
 
+export function isCompleteLapInputTrace(trace?: LapInputTrace, trackLength?: number) {
+  if (!trace || trace.points.length < 2 || trace.lapTime == null || !Number.isFinite(trace.lapTime) || trace.lapTime <= 20 || trace.lapTime > 1_200) {
+    return false;
+  }
+  const distances = trace.points.map((point) => point.distance).filter(Number.isFinite);
+  if (distances.length < 2) return false;
+  const firstDistance = Math.min(...distances);
+  const lastDistance = Math.max(...distances);
+  if (trackLength != null && Number.isFinite(trackLength) && trackLength > 0) {
+    const startTolerance = Math.max(100, trackLength * 0.05);
+    return firstDistance <= startTolerance
+      && lastDistance >= trackLength * 0.9
+      && lastDistance - firstDistance >= trackLength * 0.85;
+  }
+  return firstDistance <= 100 && lastDistance - firstDistance >= 500;
+}
+
 export function bestLapInputTrace(traces: LapInputTrace[]) {
   return traces
     .filter((trace) => !trace.invalidated && trace.points.length > 1 && trace.lapTime != null && Number.isFinite(trace.lapTime) && trace.lapTime > 20)

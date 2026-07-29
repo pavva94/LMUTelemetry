@@ -7,11 +7,9 @@ import {
   FileText,
   Microscope,
   Gauge,
-  GitCompare,
   History,
   LineChart,
   Settings,
-  Signal,
   Timer,
   UserRound,
 } from "lucide-react";
@@ -20,7 +18,6 @@ import { useT } from "../i18n/I18nProvider";
 const liveItems = [
   ["live", "navigation.liveDashboard", Gauge],
   ["circle-map", "navigation.circleMap", CircleDot],
-  ["lap-compare", "navigation.lapStats", GitCompare],
   ["one-lap", "navigation.standings", Timer],
   ["race-history", "navigation.sessionHistory", History],
   ["xy-plotter", "navigation.xyPlotter", LineChart],
@@ -50,22 +47,6 @@ const items = [...liveItems, ...planItems, ...profileItems] as const;
 export type PageKey = (typeof items)[number][0];
 type ModeKey = (typeof modes)[number][0];
 
-const pageDescriptions: Record<PageKey, string> = {
-  live: "navigation.descriptions.live",
-  "circle-map": "navigation.descriptions.circleMap",
-  "lap-compare": "navigation.descriptions.lapCompare",
-  "one-lap": "navigation.descriptions.standings",
-  "race-history": "navigation.descriptions.raceHistory",
-  "xy-plotter": "navigation.descriptions.xyPlotter",
-  planner: "navigation.descriptions.planner",
-  "race-prep": "navigation.descriptions.racePrep",
-  "lap-analysis": "navigation.descriptions.lapAnalysis",
-  pit: "navigation.descriptions.pit",
-  settings: "navigation.descriptions.settings",
-  profile: "navigation.descriptions.profile",
-  review: "navigation.descriptions.review",
-};
-
 const firstPageByMode: Record<ModeKey, PageKey> = {
   live: "live",
   plan: "planner",
@@ -79,24 +60,16 @@ function modeForPage(page: PageKey) {
 export function Layout({
   page,
   setPage,
-  connected,
   children,
 }: {
   page: PageKey;
   setPage: (page: PageKey) => void;
-  connected: boolean;
   children: React.ReactNode;
 }) {
   const t = useT();
   const activeMode = modeForPage(page);
-  const [, modeLabelKey, modeDescriptionKey, ActiveModeIcon, activeItems] = activeMode;
-  const activePage = items.find(([key]) => key === page);
+  const [, modeLabelKey, , , activeItems] = activeMode;
   const modeLabel = t(modeLabelKey);
-  const modeDescription = t(modeDescriptionKey);
-  const activePageLabel = activePage?.[1] ? t(activePage[1]) : t("common.dashboard");
-  const isOfflineMode = activeMode[0] === "profile" || activeMode[0] === "plan";
-  const statusText = isOfflineMode ? t("common.offlineAnalysis") : connected ? t("common.liveSocket") : t("common.reconnecting");
-  const statusClass = isOfflineMode ? "blue" : connected ? "green" : "red";
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -135,17 +108,6 @@ export function Layout({
         </nav>
       </aside>
       <main className="main">
-        <header className="topbar">
-          <div className="topbar-title">
-            <span className="mode-flag"><ActiveModeIcon size={16} /> {modeLabel}</span>
-            <strong>{activePageLabel}</strong>
-            <span className="topbar-description">{t(pageDescriptions[page])}</span>
-          </div>
-          <div className="topbar-status" aria-label={`Current mode: ${modeDescription}`}>
-            <span className={`socket-light ${statusClass}`} aria-hidden="true" />
-            <span className={`badge ${statusClass}`}><Signal size={13} />{statusText}</span>
-          </div>
-        </header>
         {children}
       </main>
     </div>

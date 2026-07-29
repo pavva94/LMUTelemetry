@@ -1,4 +1,5 @@
 ﻿import { useMemo, useState } from "react";
+import { PageSection } from "../components/PageSection";
 import { SectionTitle } from "../components/SectionTitle";
 import { StatusBadge } from "../components/StatusBadge";
 import { useT } from "../i18n/I18nProvider";
@@ -343,6 +344,7 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
 
   return (
     <div className="page grid pit-window-page">
+      <PageSection number="01" title={t("pitWindow.liveOptions")} description={t("pitWindow.liveOptionsHelp")}>
       <section className="card span-12 pit-strategy-visualization">
         <SectionTitle title={t("pitWindow.livePitStrategyVisualization")} help={t("pitWindow.livePitStrategyHelp")} />
         <LiveStrategyTimeline plan={selectedPlan} currentLap={absoluteCurrentLap} />
@@ -367,7 +369,9 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
           <div className="empty-state"><strong>{t("pitWindow.noLiveStrategy")}</strong><span>{t("pitWindow.noLiveStrategyPitCallDetail")}</span></div>
         )}
       </section>
+      </PageSection>
 
+      <PageSection number="02" title={t("pitWindow.livePitWindow")} description={t("pitWindow.livePitWindowHelp")}>
       <section className="card span-5">
         <SectionTitle title={t("pitWindow.livePitWindow")} help={t("pitWindow.livePitWindowHelp")} />
         <div className="metric"><span className="label">{t("pitWindow.earliest")}</span><span className="value">{t("telemetry.lap")} {pit?.earliest_viable_pit_lap ?? "--"}</span></div>
@@ -388,7 +392,9 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
           <div><span className="label">{t("pitWindow.paceModelLabel")}</span><strong>{formatRaceTime(paceEvidence.weightedRecentPace)}</strong><span className="subvalue">{paceEvidence.source}</span></div>
         </div>
       </section>
+      </PageSection>
 
+      <PageSection number="03" title={t("pitWindow.paceModel")} description={t("pitWindow.paceModelHelp")}>
       <section className="card span-12">
         <SectionTitle title={t("pitWindow.paceModel")} help={t("pitWindow.paceModelHelp")} />
         <div className="analysis-value-grid">
@@ -418,12 +424,14 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
           <div><span className="label">{t("pitWindow.trafficRisk")}</span><strong>{text(pit?.traffic_risk_after_stop)}</strong><span className="subvalue">{t("pitWindow.rejoin", { position: pit?.projected_rejoin_position ?? "--" })}</span></div>
         </div>
       </section>
+      </PageSection>
 
       {selectedPlan && (
-        <section className="card span-12">
-          <SectionTitle title={t("pitWindow.liveCalculationBreakdown")} help={t("pitWindow.liveCalculationBreakdownHelp")} />
-          <div className="table-wrap">
-            <table>
+        <PageSection number="04" title={t("pitWindow.liveCalculationBreakdown")} description={t("pitWindow.liveCalculationBreakdownHelp")}>
+          <section className="card span-12">
+            <SectionTitle title={t("pitWindow.liveCalculationBreakdown")} help={t("pitWindow.liveCalculationBreakdownHelp")} />
+            <div className="table-wrap">
+              <table>
               <thead><tr><th>{t("pitWindow.input")}</th><th>{t("pitWindow.value")}</th><th>{t("pitWindow.usedFor")}</th></tr></thead>
               <tbody>
                 <tr><td>{t("pitWindow.weightedPace")}</td><td>{formatRaceTime(selectedPlan.calculationBreakdown.simulationPaceSeconds)}</td><td>{t("pitWindow.weightedPaceUse")}</td></tr>
@@ -439,9 +447,10 @@ export function PitWindow({ strategy, telemetry }: { strategy: StrategyState | n
                 <tr><td>{t("pitWindow.fuelAtFinish")}</td><td>{fmt(selectedPlan.finishFuelRemainingLiters, 1, " L")}</td><td>{t("pitWindow.finishFuelUse")}</td></tr>
                 <tr><td>{t("pitWindow.confidence")}</td><td>{selectedPlan.confidence}</td><td>{t("pitWindow.finishFuelUse")}</td></tr>
               </tbody>
-            </table>
-          </div>
-        </section>
+              </table>
+            </div>
+          </section>
+        </PageSection>
       )}
 
     </div>

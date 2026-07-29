@@ -14,6 +14,7 @@ import {
 } from "recharts";
 import { api } from "../api/client";
 import { CompetitorTable } from "../components/CompetitorTable";
+import { PageSection } from "../components/PageSection";
 import { SectionTitle } from "../components/SectionTitle";
 import { useI18n } from "../i18n/I18nProvider";
 import { buildLapInputChartData, buildLapTimeDeltaData, type LapInputTrace } from "../lib/lapInputTrace";
@@ -441,18 +442,23 @@ function numericSampleFields(samples: Field[]) {
 }
 
 export function buildStints(laps: Field[]) {
-  const stints: Array<{ number: number; rows: Field[]; summary: Field }> = [];
+  const groups: Field[][] = [];
   let current: Field[] = [];
   laps.forEach((lap) => {
-    if (current.length && lap.in_pit === true) {
-      stints.push({ number: stints.length + 1, rows: current, summary: {} });
+    if (lap.in_pit === true) {
+      if (current.length) {
+        current.push(lap);
+        groups.push(current);
+      }
       current = [];
+      return;
     }
     current.push(lap);
   });
-  if (current.length) stints.push({ number: stints.length + 1, rows: current, summary: {} });
-  return stints.map((stint) => {
-    const rows = stint.rows;
+  if (current.length) groups.push(current);
+  const meaningfulGroups = groups.filter((rows) => validPaceRows(rows).length > 0);
+  return meaningfulGroups.map((rows, index) => {
+    const number = index + 1;
     const paceRows = validPaceRows(rows);
     const fuelValues = paceRows.map((row) => toFiniteNumber(row.fuel_used)).filter((value): value is number => value != null && value >= 0);
     const fuelUsed = fuelValues.reduce((sum, value) => sum + value, 0);
@@ -464,7 +470,7 @@ export function buildStints(laps: Field[]) {
       return wheelDeltas.length ? avgNumbers(wheelDeltas) : fallback != null && fallback > 0 && fallback < 0.2 ? fallback : null;
     }).filter((value): value is number => value != null);
     const summary = {
-      stint_number: stint.number,
+      stint_number: number,
       start_lap: rows[0]?.lap_number,
       end_lap: rows[rows.length - 1]?.lap_number,
       lap_count: paceRows.length,
@@ -476,7 +482,7 @@ export function buildStints(laps: Field[]) {
       fuel_per_lap: fuelValues.length ? fuelUsed / fuelValues.length : null,
       tyre_wear_delta: avgNumbers(tyreWearDeltas),
     };
-    return { ...stint, summary };
+    return { number, rows, summary };
   });
 }
 
@@ -619,8 +625,9 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
   };
   return (
     <div className="page grid">
+      <PageSection number="01" title="Track Position" description="Live car positions around the lap, with the player's immediate gaps and current race context.">
       <section className="card span-8">
-        <SectionTitle title="Circle Map" help="Places cars around a simplified lap circle by track progress. Use it to understand nearby traffic without needing real track geometry." />
+        <SectionTitle title="Cars Around The Lap" help="Places cars around a simplified lap circle by track progress. Use it to understand nearby traffic without needing real track geometry." />
         <div className="circle-map">
           {cars.slice(0, 48).map((car, index) => {
             const angle = (normalizedProgress(car, cars) * Math.PI * 2) - Math.PI / 2;
@@ -652,6 +659,8 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
         <Metric label="Cars on track" value={carsOnTrack.length || "--"} sub={`${cars.length - carsOnTrack.length} in pits filtered`} />
         <Metric label="Warnings" value={player?.gap_car_behind != null && player.gap_car_behind < 1 ? "Close car behind" : "Clear"} />
       </section>
+      </PageSection>
+      <PageSection number="02" title="Field Detail" description="The complete circulating order with gaps, laps, and pace references for every car on track.">
       <section className="card span-12">
         <SectionTitle title="Cars On Track" help="Lists cars currently circulating and filters out pit-lane cars. Gaps are relative to the player when LMU exposes enough timing data." />
         {carsOnTrack.length ? (
@@ -680,8 +689,11 @@ export function CircleMap({ telemetry, competitors, strategy }: EngineeringProps
           </div>
         ) : <EmptyState detail="No cars are currently marked as on track." />}
       </section>
+      </PageSection>
+      <PageSection number="03" title="Nearby Battles" description="Focused pace and gap context for the traffic immediately ahead of and behind the player.">
       <section className="card span-6"><SectionTitle title="Cars Ahead" help="Shows immediate traffic targets. Compare last laps and gaps to decide whether to attack, save, or wait." /><CompetitorRows competitors={cars.filter((c) => !c.is_player).slice(0, 3)} /></section>
       <section className="card span-6"><SectionTitle title="Cars Behind" help="Shows pressure from behind. A faster car behind may require defensive positioning or earlier traffic planning." /><CompetitorRows competitors={cars.filter((c) => !c.is_player).slice(3, 6)} /></section>
+      </PageSection>
     </div>
   );
 }
@@ -755,7 +767,7 @@ function LapInputComparison({ review, laps }: { review: SessionReview | null; la
   return (
     <section className="card span-12">
       <div className="section-toolbar">
-        <SectionTitle title="Throttle And Brake By Lap Distance" help="Overlays throttle and brake through one normalized lap. The fastest and second-fastest valid laps from the current stint load automatically; choose any valid laps to compare braking points, releases, coasting, and throttle application." />
+        <SectionTitle title="Throttle And Brake By Lap Distance" help="Overlays throttle and brake through one normalized lap. The fastest and second-fastest valid laps from the session load automatically; choose any valid laps to compare braking points, releases, coasting, and throttle application." />
         <div className="control-row">
           <label><span className="label">Lap A</span><select value={lapA} onChange={(event) => setLapA(event.target.value)} disabled={!lapOptions.length}>{lapOptions.map((lap) => <option key={`a-${String(lap.lap_number)}`} value={String(lap.lap_number)}>{lapLabel(lap)}</option>)}</select></label>
           <label><span className="label">Lap B</span><select value={lapB} onChange={(event) => setLapB(event.target.value)} disabled={!lapOptions.length}>{lapOptions.map((lap) => <option key={`b-${String(lap.lap_number)}`} value={String(lap.lap_number)}>{lapLabel(lap)}</option>)}</select></label>
@@ -796,8 +808,7 @@ function LapInputComparison({ review, laps }: { review: SessionReview | null; la
   );
 }
 
-export function LapCompare({ telemetry }: EngineeringProps) {
-  const { review } = useSessionReview();
+function PaceOverview({ telemetry, review }: { telemetry: TelemetrySnapshot | null; review: SessionReview | null }) {
   const laps = validPaceRows((review?.laps || []) as Field[]);
   const fastestLapTime = minField(laps, "lap_time");
   const slowestLapTime = maxField(laps, "lap_time");
@@ -827,7 +838,8 @@ export function LapCompare({ telemetry }: EngineeringProps) {
       : "Tyre wear per lap is not showing a strong trend yet.",
   ];
   return (
-    <div className="page grid">
+    <>
+      <PageSection number="01" title="Pace Overview" description="Headline statistics from clean, valid laps in the current live session.">
       <section className="card span-12">
         <SectionTitle title="Valid Lap Comparison" help="Compares every valid lap in the current live session. Invalid laps, pit laps, and timing outliers are filtered out before charts and insights are calculated." />
         <div className="header-grid">
@@ -842,18 +854,25 @@ export function LapCompare({ telemetry }: EngineeringProps) {
           <Metric label="Current lap" value={text(telemetry?.player?.lap_number)} />
         </div>
       </section>
+      </PageSection>
+      <PageSection number="02" title="Session Trends" description="Pace evolution, engineering context, and the main findings from the valid-lap set.">
       <section className="card span-8"><SectionTitle title="Lap Time Trend" help="Shows valid lap pace over the session. Use the shape to separate warm-up, consistency, traffic, and degradation." /><BasicLineChart data={laps} lines={[["lap_time", "#e6b450"]]} /></section>
       <section className="card span-4"><SectionTitle title="Insights" help="Summarizes the session-wide comparison. These notes use filtered valid laps, so bad timing samples do not dominate the story." /><div className="insight-list">{insights.map((item) => <p key={item}>{item}</p>)}</div></section>
       <section className="card span-6"><SectionTitle title="Fuel And Tyre Trend" help="Compares consumption and tyre wear across valid laps. Rising wear with slower laps points toward degradation; stable wear with slower laps often points to traffic or mistakes." /><BasicLineChart data={laps} lines={[["fuel_used", "#6dd6ff"], ["tyre_wear_delta", "#ff8c69"]]} /></section>
       <section className="card span-6"><SectionTitle title="Pace And Speed" help="Compares lap time against top speed. If top speed is stable while lap time grows, losses are likely in corners, traffic, or traction rather than straight-line pace." /><BasicLineChart data={laps} lines={[["lap_time", "#e6b450"], ["top_speed", "#69d28f"]]} /></section>
-      <section className="card span-12"><SectionTitle title="Valid Lap Table" help="Lists the laps included in this comparison after invalid, pit, and outlier filtering." /><LapTable rows={laps} /></section>
-      <LapInputComparison review={review} laps={laps} />
-    </div>
+      </PageSection>
+    </>
   );
 }
 
 export function OneLapTiming({ competitors }: EngineeringProps) {
-  return <div className="page grid standings-page"><CompetitorTable competitors={competitors} /></div>;
+  return (
+    <div className="page grid standings-page">
+      <PageSection number="01" title="Session Classification" description="The complete live running order with class filtering, searchable drivers, lap pace, and pit impact.">
+        <CompetitorTable competitors={competitors} />
+      </PageSection>
+    </div>
+  );
 }
 export function FieldSpread({ telemetry, competitors }: EngineeringProps) {
   const cars = competitors.length ? competitors : telemetry?.competitors || [];
@@ -907,9 +926,12 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
   const average = avgField(stints.map((stint) => stint.summary), "average_lap");
   const selected = stints.find((stint) => stint.number === selectedStint) || stints[0];
   const rows = selected?.rows || sampleLapRows(review);
+  const validStintLaps = validPaceRows(rows);
   const summary = selected?.summary || {};
   return (
     <div className="page grid">
+      <PaceOverview telemetry={telemetry} review={review} />
+      <PageSection number="03" title="Session History" description="Headline stint count, completed laps, fuel use, and the runs recorded during the current session.">
       <section className="card span-12">
         <SectionTitle title="Stint History" help="Summarizes each run between pit stops. Compare stint length, pace, fuel use, tyre change, and top speed to understand the session." />
         <div className="header-grid">
@@ -921,17 +943,23 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
           <Metric label="Current lap" value={text(telemetry?.player?.lap_number)} />
         </div>
       </section>
+      </PageSection>
+      <PageSection number="04" title="Stint Breakdown" description="Every detected run between pit stops, with controls for choosing the stint to inspect.">
       <section className="card span-12">
         <SectionTitle title="Stint Summary" help="Lists all detected stints. Telemetry pit entries start a new stint, and returning to the main menu starts a new session." />
         {stints.length ? <StintSummaryTable stints={stints} /> : <EmptyState detail="Complete laps and pit cycles will populate the stint history." />}
       </section>
       <section className="card span-12"><SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits come from telemetry pit entries, and returning to the main menu starts a new session." /><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<span className="muted">Stints split only on pit entry or a new session.</span></div></section>
+      </PageSection>
+      <PageSection number="05" title="Selected Stint Analysis" description="Pace, fuel, tyre behavior, and lap-level evidence for the selected stint.">
       <section className="card span-3"><SectionTitle title="Summary" help="Condenses clean-lap stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Valid / detected laps" value={`${text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} / ${text(summary.detected_lap_count ?? summary.lap_count)}`} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Clean-lap fuel used" value={fmt(summary.fuel_used as number, 2, " L")} /></section>
       <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes eligible lap-to-lap wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Avg wear / valid lap" value={pct(summary.tyre_wear_delta as number)} /><Metric label="Model wear rate" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
       <section className="card span-4"><SectionTitle title="Lap time" help="Shows lap-time evolution across the selected stint, isolated from fuel and tyre scales so pace changes are easier to read." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"]]} height={240} /></section>
       <section className="card span-4"><SectionTitle title="Fuel used" help="Shows fuel consumed on each lap of the selected stint. Compare consistent laps to identify consumption changes or anomalous readings." /><BasicLineChart data={rows} lines={[["fuel_used", "#6dd6ff"]]} height={240} /></section>
       <section className="card span-4"><SectionTitle title="Tyre wear delta" help="Shows the lap-to-lap tyre wear change for the selected stint, independently scaled to make degradation trends visible." /><BasicLineChart data={rows} lines={[["tyre_wear_delta", "#ff8c69"]]} height={240} /></section>
       <section className="card span-12"><SectionTitle title="Stint Lap Table" help="Shows every lap in the selected stint. Sort the story by lap time, fuel used, and events before changing setup assumptions." /><LapTable rows={rows} /></section>
+      <LapInputComparison review={review} laps={validStintLaps} />
+      </PageSection>
     </div>
   );
 }
@@ -967,7 +995,18 @@ function EventList({ review }: { review: SessionReview | null }) {
 
 function LapTable({ rows }: { rows: Field[] }) {
   if (!rows.length) return <EmptyState />;
-  return <div className="table-wrap"><table><thead><tr><th>Lap</th><th>Lap time</th><th>Start</th><th>End</th><th>Fuel used</th><th>Tyre wear delta</th><th>Top speed</th><th>Samples</th><th>Valid</th><th>Notes</th></tr></thead><tbody>{rows.map((row, index) => <tr key={index}><td>{text(row.lap_number)}</td><td>{lapTime(row.lap_time as number)}</td><td>{formatRaceTime(row.start_time as number)}</td><td>{formatRaceTime(row.end_time as number)}</td><td>{fmt(row.fuel_used as number, 2, " L")}</td><td>{pct(row.tyre_wear_delta as number)}</td><td>{fmt((row.top_speed ?? row.speed_kph) as number, 0, " km/h")}</td><td>{text(row.sample_count)}</td><td>{row.valid_lap === false ? "Invalid" : "Valid/unknown"}</td><td>{row.in_pit === true ? "Pit entry" : text(row.event)}</td></tr>)}</tbody></table></div>;
+  const bestLapTime = minField(rows, "lap_time");
+  return <div className="table-wrap"><table><thead><tr><th>Lap</th><th>Lap time</th><th>Delta to previous</th><th>Delta to best</th><th>Fuel used</th><th>Tyre wear delta</th><th>Top speed</th><th>Samples</th><th>Valid</th><th>Notes</th></tr></thead><tbody>{rows.map((row, index) => {
+    const lapTimeSeconds = Number(row.lap_time);
+    const previousLapTime = index > 0 ? Number(rows[index - 1].lap_time) : null;
+    const deltaToPrevious = Number.isFinite(lapTimeSeconds) && previousLapTime != null && Number.isFinite(previousLapTime)
+      ? lapTimeSeconds - previousLapTime
+      : null;
+    const deltaToBest = Number.isFinite(lapTimeSeconds) && bestLapTime != null
+      ? lapTimeSeconds - bestLapTime
+      : null;
+    return <tr key={index}><td>{text(row.lap_number)}</td><td>{lapTime(row.lap_time as number)}</td><td>{signedPaceDelta(deltaToPrevious)}</td><td>{signedPaceDelta(deltaToBest)}</td><td>{fmt(row.fuel_used as number, 2, " L")}</td><td>{pct(row.tyre_wear_delta as number)}</td><td>{fmt((row.top_speed ?? row.speed_kph) as number, 0, " km/h")}</td><td>{text(row.sample_count)}</td><td>{row.valid_lap === false ? "Invalid" : "Valid/unknown"}</td><td>{row.in_pit === true ? "Pit entry" : text(row.event)}</td></tr>;
+  })}</tbody></table></div>;
 }
 
 export function OpponentStats({ competitors }: EngineeringProps) {

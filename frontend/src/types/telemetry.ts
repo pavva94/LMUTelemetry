@@ -89,6 +89,7 @@ export type PlayerState = {
   brake_pressure_fr?: number;
   brake_pressure_rl?: number;
   brake_pressure_rr?: number;
+  brake_bias_rear?: number;
   wheel_rot_speed_fl?: number;
   wheel_rot_speed_fr?: number;
   wheel_rot_speed_rl?: number;

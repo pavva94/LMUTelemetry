@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, buildLapTimeDeltaData, type LapInputTrace } from "./lapInputTrace";
+import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, buildLapTimeDeltaData, isCompleteLapInputTrace, type LapInputTrace } from "./lapInputTrace";
 
 describe("lap input traces", () => {
   it("replaces stationary samples and keeps moving samples", () => {
@@ -15,6 +15,27 @@ describe("lap input traces", () => {
       { lap: 3, lapTime: 91, points: [{ distance: 0, throttle: 1, brake: 0 }, { distance: 100, throttle: 1, brake: 0 }] },
     ];
     expect(bestLapInputTrace(traces)?.lap).toBe(3);
+  });
+
+  it("only accepts officially timed traces covering a complete lap", () => {
+    const complete: LapInputTrace = {
+      lap: 3,
+      lapTime: 91,
+      points: [
+        { distance: 20, throttle: 1, brake: 0 },
+        { distance: 2_500, throttle: 0.5, brake: 0 },
+        { distance: 4_800, throttle: 0, brake: 1 },
+      ],
+    };
+    const joinedMidLap: LapInputTrace = {
+      ...complete,
+      lap: 4,
+      points: complete.points.map((point) => ({ ...point, distance: point.distance + 1_000 })),
+    };
+
+    expect(isCompleteLapInputTrace(complete, 5_000)).toBe(true);
+    expect(isCompleteLapInputTrace(joinedMidLap, 5_000)).toBe(false);
+    expect(isCompleteLapInputTrace({ ...complete, lapTime: undefined }, 5_000)).toBe(false);
   });
 
   it("aligns each lap by track-distance percentage", () => {
