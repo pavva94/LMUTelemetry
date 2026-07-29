@@ -15,8 +15,10 @@ import {
 } from "recharts";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import { completedLapFuelUsed, currentLapFuelUsed } from "../lib/liveFuelHistory";
+import { completedLapDuration } from "../lib/liveLapTiming";
 import { environmentTrendDirection, trackWetnessState, type EnvironmentTrendDirection } from "../lib/environmentTrend";
 import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, isCompleteLapInputTrace, type LapInputPoint, type LapInputTrace } from "../lib/lapInputTrace";
+import { brakeHeatColour } from "../lib/brakeTemperature";
 import { isHypercarClass } from "../lib/vehicleClass";
 import { raceFlagState } from "../lib/raceFlagState";
 import { useT } from "../i18n/I18nProvider";
@@ -83,7 +85,7 @@ type StoredLiveHistory = {
   laps: LapSample[];
   positions: PositionRow[];
   previous: { lap?: number; lapStartFuel?: number; observedFromBoundary?: boolean; session?: string };
-  paceHistory?: Record<string, { laps: number[]; dirtyLaps: number[]; lastObservedLap?: number; lastPitstops?: number; lastCountLapFlag?: number; lastInvalidated?: boolean; lastUnderYellow?: boolean; wasInPits?: boolean }>;
+  paceHistory?: Record<string, { laps: number[]; dirtyLaps: number[]; lastObservedLap?: number; lastPitstops?: number; lastCountLapFlag?: number; lastInvalidated?: boolean; lastUnderYellow?: boolean; wasInPits?: boolean; lastLapStartTime?: number; lastCompletedLapTime?: number }>;
   inputTraces?: LapInputTrace[];
   activeInputTrace?: LapInputTrace;
   gridMode?: "nearby" | "full";
@@ -337,7 +339,7 @@ function LapTiming({ player, playerCar, averageLap }: { player?: PlayerState; pl
   );
 }
 
-type OpponentPaceHistory = Record<number, { laps: number[]; dirtyLaps: Set<number>; lastObservedLap?: number; lastPitstops?: number; lastCountLapFlag?: number; lastInvalidated?: boolean; lastUnderYellow?: boolean; wasInPits?: boolean }>;
+type OpponentPaceHistory = Record<number, { laps: number[]; dirtyLaps: Set<number>; lastObservedLap?: number; lastPitstops?: number; lastCountLapFlag?: number; lastInvalidated?: boolean; lastUnderYellow?: boolean; wasInPits?: boolean; lastLapStartTime?: number; lastCompletedLapTime?: number }>;
 
 function restorePaceHistory(sessionId?: string): OpponentPaceHistory {
   const stored = readStoredHistory(sessionId)?.paceHistory || {};
@@ -359,7 +361,10 @@ function useOpponentPaceHistory(cars: CompetitorState[], playerInvalidated: bool
       if (!finite(lap)) return;
       const row = history.current[car.vehicle_id] || { laps: [], dirtyLaps: new Set<number>() };
       const completedLap = lap > 0 ? lap - 1 : undefined;
-      const lapAdvanced = finite(row.lastObservedLap) && lap > row.lastObservedLap;
+      const previousObservedLap = row.lastObservedLap;
+      const lapAdvanced = finite(previousObservedLap) && lap > previousObservedLap;
+      const latestDuration = completedLapDuration(row.lastLapStartTime, car.lap_start_time);
+      if (finite(latestDuration)) row.lastCompletedLapTime = latestDuration;
       if (car.in_pits) {
         row.dirtyLaps.add(lap);
         if (finite(completedLap)) row.dirtyLaps.add(completedLap);
@@ -381,6 +386,7 @@ function useOpponentPaceHistory(cars: CompetitorState[], playerInvalidated: bool
       row.lastInvalidated = car.is_player ? playerInvalidated : false;
       row.lastUnderYellow = underYellow;
       row.wasInPits = Boolean(car.in_pits);
+      row.lastLapStartTime = car.lap_start_time;
       history.current[car.vehicle_id] = row;
     });
     if (changed) setRevision((current) => current + 1);
@@ -400,6 +406,10 @@ function rollingPace(history: OpponentPaceHistory, car: CompetitorState | undefi
 function cleanAveragePace(history: OpponentPaceHistory, car: CompetitorState | undefined) {
   const laps = car ? history[car.vehicle_id]?.laps || [] : [];
   return average(laps);
+}
+
+function latestCompletedLap(history: OpponentPaceHistory, car: CompetitorState) {
+  return history[car.vehicle_id]?.lastCompletedLapTime ?? car.last_lap_time;
 }
 
 function paceDeltaText(value?: number) {
@@ -472,7 +482,7 @@ function NearbyStandings({ mergedCars, paceHistory, telemetry }: { mergedCars: C
           <td className={driverPaceClass} title={finite(delta3) ? delta3 > 0 ? t("liveDashboard.gainingThree") : t("liveDashboard.losingThree") : t("liveDashboard.threeUnavailable")}><div className="driver-cell"><strong>{car.is_player ? t("common.you") : car.driver_name || `${t("standings.car")} ${car.vehicle_id}`}</strong><small>{carName(car, t("liveDashboard.carUnavailable"))}</small></div></td>
           {classes.length > 0 && <td><span className="car-class-label">{car.vehicle_class?.trim() || "--"}</span></td>}
           <td>{car.total_laps ?? car.current_lap ?? "--"}</td>
-          <td>{lapTime(car.last_lap_time)}</td>
+          <td>{lapTime(latestCompletedLap(paceHistory, car))}</td>
           <td className="best-lap-column">{lapTime(car.best_lap_time)}</td>
           <td>{lapTime(pace3)}</td>
           <td>{lapTime(pace7)}</td>
@@ -534,22 +544,12 @@ function heatColour(value?: number) {
   return `hsl(${hue} 72% 48%)`;
 }
 
-function brakeHeatColour(value?: number) {
-  if (!finite(value)) return "#24313d";
-  if (value < 200) return "#2d78d6";
-  if (value < 400) return "#24a7c7";
-  if (value <= 600) return "#34a96b";
-  if (value <= 700) return "#e6b450";
-  if (value <= 800) return "#f28c3a";
-  return "#e65353";
-}
-
 function tyreLifeColour(value?: number) {
   if (!finite(value)) return "var(--muted)";
   return `hsl(${Math.max(0, Math.min(1, value)) * 120} 72% 48%)`;
 }
 
-function TyreCard({ player }: { player?: PlayerState }) {
+function TyreCard({ player, vehicleClass }: { player?: PlayerState; vehicleClass?: string }) {
   const t = useT();
   const tyres = player?.tyre_state;
   const hasTyreData = tyreKeys.some((key) => finite(representativeTemp(tyres?.[`temp_${key}`])));
@@ -562,7 +562,7 @@ function TyreCard({ player }: { player?: PlayerState }) {
       const surfaceZones = [temp?.left_c, temp?.center_c, temp?.right_c];
       const carcassTemp = temp?.carcass_c;
       const brakeTemp = player?.[brakeTempKeys[key]];
-      return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong></header><div className="surface-temperature">{surfaceZones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div><div className="carcass-temperature" style={{ background: heatColour(carcassTemp) }}><span>{t("liveDashboard.carcass")}</span><strong>{finite(carcassTemp) ? `${Math.round(carcassTemp)}°C` : "--"}</strong></div><footer style={{ background: brakeHeatColour(brakeTemp) }}><span>{t("telemetry.brake")}</span><strong>{finite(brakeTemp) ? `${Math.round(brakeTemp)}°C` : "--"}</strong></footer></div>;
+      return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong></header><div className="surface-temperature">{surfaceZones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div><div className="carcass-temperature" style={{ background: heatColour(carcassTemp) }}><span>{t("liveDashboard.carcass")}</span><strong>{finite(carcassTemp) ? `${Math.round(carcassTemp)}°C` : "--"}</strong></div><footer style={{ background: brakeHeatColour(brakeTemp, vehicleClass) }}><span>{t("telemetry.brake")}</span><strong>{finite(brakeTemp) ? `${Math.round(brakeTemp)}°C` : "--"}</strong></footer></div>;
     })}<div className="tyre-wear-map" aria-label={t("liveDashboard.tyreLife")}>
       <small>{t("liveDashboard.tyreLife")}</small>
       {tyreKeys.map((key) => {
@@ -631,7 +631,7 @@ function EnvironmentCard({ telemetry }: { telemetry: TelemetrySnapshot | null })
       const direction = environmentTrendDirection(samples.map((sample) => sample[metric.key]), metric.deadband);
       return <div className="environment-metric" key={metric.key}><span>{metric.label}</span><strong>{metric.display}</strong><EnvironmentTrend direction={direction} /></div>;
     })}</div> : <EmptyState label={t("liveDashboard.environmentUnavailable")} compact />}
-    {environment && <div className="wetness-summary"><div><span>{t("liveDashboard.averagePathWetness")}</span><strong>{wetnessState === "unavailable" ? "--" : t(`liveDashboard.wetness${wetnessState[0].toUpperCase()}${wetnessState.slice(1)}`)}</strong><small>{finite(environment.avg_wetness) ? `${Math.round(environment.avg_wetness * 100)}%` : "--"}</small></div><p><span><b>0.00–0.05</b>{t("liveDashboard.wetnessDry")}</span><span><b>0.05–0.20</b>{t("liveDashboard.wetnessSlightlyDamp")}</span><span><b>0.20–0.50</b>{t("liveDashboard.wetnessWet")}</span><span><b>0.50–0.80</b>{t("liveDashboard.wetnessVeryWet")}</span><span><b>0.80–1.00</b>{t("liveDashboard.wetnessSaturated")}</span></p></div>}
+    {environment && <div className="wetness-summary"><div><span className="wetness-summary-label">{t("liveDashboard.averagePathWetness")}</span><strong>{wetnessState === "unavailable" ? "--" : t(`liveDashboard.wetness${wetnessState[0].toUpperCase()}${wetnessState.slice(1)}`)}</strong><small>{finite(environment.avg_wetness) ? `${Math.round(environment.avg_wetness * 100)}%` : "--"}</small></div><p><span><b>0.00–0.05</b>{t("liveDashboard.wetnessDry")}</span><span><b>0.05–0.20</b>{t("liveDashboard.wetnessSlightlyDamp")}</span><span><b>0.20–0.50</b>{t("liveDashboard.wetnessWet")}</span><span><b>0.50–0.80</b>{t("liveDashboard.wetnessVeryWet")}</span><span><b>0.80–1.00</b>{t("liveDashboard.wetnessSaturated")}</span></p></div>}
   </section>;
 }
 
@@ -784,7 +784,7 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected, 
     <NearbyStandings mergedCars={mergedCompetitors} paceHistory={paceHistory} telemetry={telemetry} />
     <div className="live-status-row">
       <InputsCard telemetry={telemetry} />
-      <TyreCard player={telemetry?.player} />
+      <TyreCard player={telemetry?.player} vehicleClass={playerClass} />
       <EnvironmentCard telemetry={telemetry} />
       <FuelCard telemetry={telemetry} strategy={strategy} isHypercar={isHypercar} />
       <AlertsCard telemetry={telemetry} recommendation={recommendation} />
