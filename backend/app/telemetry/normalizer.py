@@ -236,6 +236,8 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         steering_wheel_range_deg = safe_float(attr(telemetry, "mVisualSteeringWheelRange", default=None))
     if steering_wheel_range_deg is not None and steering_wheel_range_deg <= 0:
         steering_wheel_range_deg = None
+    local_velocity = attr(telemetry, "mLocalVel", default=None)
+    local_rotation = attr(telemetry, "mLocalRot", default=None)
     return PlayerState(
         vehicle_id=attr(vehicle, "mID", "mVehicleID", default=0),
         vehicle_name=decode_c_string(attr(vehicle, "mVehicleName", default="")),
@@ -253,6 +255,9 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         g_force_lat=accel_g("x"),
         g_force_long=accel_g("z"),
         g_force_vert=accel_g("y"),
+        local_velocity_x=safe_float(attr(local_velocity, "x", default=None)),
+        local_velocity_z=safe_float(attr(local_velocity, "z", default=None)),
+        yaw_rate=safe_float(attr(local_rotation, "y", default=None)),
         gear=attr(telemetry, "mGear", default=None),
         rpm=safe_float(attr(telemetry, "mEngineRPM", default=None)),
         max_rpm=safe_float(attr(telemetry, "mEngineMaxRPM", default=None)),
@@ -401,6 +406,7 @@ def _normalize_competitor(vehicle: Any, telemetry: Any, is_player: bool) -> Comp
         class_position=attr(vehicle, "mClassPosition", default=None),
         total_laps=attr(vehicle, "mTotalLaps", default=None),
         lap_distance=safe_float(attr(vehicle, "mLapDist", default=None)),
+        lap_start_time=safe_float(attr(vehicle, "mLapStartET", default=None)),
         best_lap_time=completed_lap_time(attr(vehicle, "mBestLapTime", default=None)),
         last_lap_time=completed_lap_time(attr(vehicle, "mLastLapTime", default=None)),
         estimated_lap_time=completed_lap_time(attr(vehicle, "mEstimatedLapTime", default=None)),

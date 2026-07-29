@@ -65,6 +65,9 @@ class PlayerState(BaseModel):
     g_force_lat: float | None = None
     g_force_long: float | None = None
     g_force_vert: float | None = None
+    local_velocity_x: float | None = None
+    local_velocity_z: float | None = None
+    yaw_rate: float | None = None
     gear: int | None = None
     rpm: float | None = None
     max_rpm: float | None = None
@@ -171,6 +174,7 @@ class CompetitorState(BaseModel):
     class_position: int | None = None
     total_laps: int | None = None
     lap_distance: float | None = None
+    lap_start_time: float | None = None
     best_lap_time: float | None = None
     last_lap_time: float | None = None
     estimated_lap_time: float | None = None

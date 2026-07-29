@@ -152,6 +152,7 @@ def test_competitor_normalizer_filters_placeholder_lap_times() -> None:
         mBestLapTime=1.0,
         mLastLapTime=0.0,
         mEstimatedLapTime=96.4,
+        mLapStartET=123.5,
         mCountLapFlag=2,
     )
 
@@ -160,6 +161,7 @@ def test_competitor_normalizer_filters_placeholder_lap_times() -> None:
     assert competitor.best_lap_time is None
     assert competitor.last_lap_time is None
     assert competitor.estimated_lap_time == 96.4
+    assert competitor.lap_start_time == 123.5
     assert competitor.count_lap_flag == 2
 
 

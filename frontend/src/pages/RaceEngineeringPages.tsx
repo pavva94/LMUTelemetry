@@ -25,6 +25,8 @@ import type { SessionReview } from "../types/session";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 import type { CompetitorState, PlayerState, TelemetrySnapshot, TyreState, TyreTemps } from "../types/telemetry";
 
+export { XYPlotter } from "./XYPlotter";
+
 type EngineeringProps = {
   telemetry: TelemetrySnapshot | null;
   strategy: StrategyState | null;
@@ -1030,42 +1032,6 @@ export function OpponentStats({ competitors }: EngineeringProps) {
       <section className="card span-4"><h2>Pace</h2><Metric label="Last 5 laps" value="Live history pending" /><Metric label="Average stint pace" value="--" /><Metric label="Consistency" value="--" /><Metric label="Current pace" value={lapTime(selected?.estimated_lap_time)} /></section>
       <section className="card span-4"><h2>Strategy</h2><Metric label="Fuel fraction" value={pct(selected?.fuel_fraction)} /><Metric label="Tyre wear" value="Unavailable" /><Metric label="Last pit lap" value={text(selected?.last_pit_lap)} /><Metric label="Current stint lap" value={text(selected?.current_stint_lap)} /></section>
       <section className="card span-12"><h2>Opponent Tyres And Brakes</h2><EmptyState detail="Per-wheel opponent tyre and brake channels are not available from the current data source." /></section>
-    </div>
-  );
-}
-
-export function XYPlotter({ telemetry }: EngineeringProps) {
-  const { review } = useSessionReview();
-  const [xKey, setXKey] = useState("lap_number");
-  const [yKey, setYKey] = useState("speed_kph");
-  const samples = sampleWithLive(review, telemetry, 600);
-  const options = numericSampleFields(samples);
-  const stats = useMemo(() => {
-    const values = samples.map((sample) => Number(sample[yKey])).filter((value) => Number.isFinite(value));
-    const avg = values.reduce((sum, value) => sum + value, 0) / Math.max(values.length, 1);
-    const variance = values.reduce((sum, value) => sum + (value - avg) ** 2, 0) / Math.max(values.length, 1);
-    return { min: Math.min(...values), max: Math.max(...values), avg, sd: Math.sqrt(variance), count: values.length };
-  }, [samples, yKey]);
-  useEffect(() => {
-    if (options.length && !options.includes(xKey)) setXKey(options[0]);
-    if (options.length && !options.includes(yKey)) setYKey(options.includes("speed_kph") ? "speed_kph" : options[0]);
-  }, [options, xKey, yKey]);
-  const presets: Array<[string, string, string]> = [
-    ["Speed vs time", "game_time", "speed_kph"],
-    ["Speed vs lap", "lap_number", "speed_kph"],
-    ["Brake vs lap", "lap_number", "brake"],
-    ["Throttle vs lap", "lap_number", "throttle"],
-    ["Steering vs lap", "lap_number", "steering"],
-    ["RPM vs lap", "lap_number", "rpm"],
-    ["Speed vs steering", "steering", "speed_kph"],
-    ["Fuel vs lap", "lap_number", "fuel_liters"],
-  ];
-  return (
-    <div className="page grid">
-      <section className="card span-12"><SectionTitle title="Data Selectors" help="Chooses numeric channels for custom plots. Put cause on X and response on Y to test setup or driving relationships." /><div className="input-grid"><select value={xKey} onChange={(e) => setXKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><select value={yKey} onChange={(e) => setYKey(e.target.value)}>{options.map((o) => <option key={o}>{o}</option>)}</select><input value={`${options.length} numeric fields available`} readOnly /><input value="Compare lap off" readOnly /></div></section>
-      <section className="card span-8"><SectionTitle title="Plot Area" help="Shows the selected relationship. Tight patterns indicate consistent behavior; wide scatter often points to traffic, mistakes, or changing conditions." />{samples.length ? <ResponsiveContainer width="100%" height={320}><ScatterChart><CartesianGrid stroke="#27313a" /><XAxis dataKey={xKey} name={xKey} stroke="#8896a3" tickFormatter={(value) => formatTelemetryValue(value, xKey)} /><YAxis dataKey={yKey} name={yKey} stroke="#8896a3" tickFormatter={(value) => formatTelemetryValue(value, yKey)} /><Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} formatter={chartValueFormatter} labelFormatter={(value) => formatTelemetryValue(value, xKey)} /><Scatter data={samples} fill="#e6b450" line /></ScatterChart></ResponsiveContainer> : <EmptyState detail="Choose fields after recorded samples are available." />}</section>
-      <section className="card span-4"><SectionTitle title="Stats" help="Summarizes the selected Y channel. Use spread and sample count to judge whether the plot is meaningful." /><Metric label="Min" value={Number.isFinite(stats.min) ? fmt(stats.min) : "--"} /><Metric label="Max" value={Number.isFinite(stats.max) ? fmt(stats.max) : "--"} /><Metric label="Average" value={fmt(stats.avg)} /><Metric label="Std dev" value={fmt(stats.sd)} /><Metric label="Samples" value={stats.count} /></section>
-      <section className="card span-12"><SectionTitle title="Preset Plots" help="Quickly loads common engineering relationships. Presets help validate braking, throttle, steering, fuel, and speed behavior." /><div className="control-row">{presets.filter(([, x, y]) => options.includes(x) && options.includes(y)).map(([label, x, y]) => <button key={label} onClick={() => { setXKey(x); setYKey(y); }}>{label}</button>)}</div></section>
     </div>
   );
 }

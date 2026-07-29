@@ -5,13 +5,14 @@ type Props = {
   title: string;
   description: string;
   children: ReactNode;
+  className?: string;
 };
 
-export function PageSection({ number, title, description, children }: Props) {
+export function PageSection({ number, title, description, children, className }: Props) {
   const id = `page-section-${number}-${title.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`;
 
   return (
-    <section className="report-section span-12" aria-labelledby={id}>
+    <section className={`report-section span-12${className ? ` ${className}` : ""}`} aria-labelledby={id}>
       <header className="report-section-heading">
         <span>{number}</span>
         <div>

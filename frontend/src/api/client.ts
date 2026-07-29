@@ -5,6 +5,7 @@ import type { DuckdbJobStatus, LmuDuckdbScanResponse, LmuDuckdbSettings, LmuDuck
 import type { LiveLapAnalysis } from "../types/liveLapAnalysis";
 import type { ProfileLap, ProfileLapResponse, ProfileOverview, ProfileSummary } from "../types/profile";
 import type { RaceSimulationResult } from "../types/raceSimulation";
+import type { XYPlotQuery, XYPlotResponse } from "../types/xyPlot";
 
 export const API_BASE = "";
 export const WS_BASE = `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}`;
@@ -35,6 +36,26 @@ export const api = {
   sessions: () => getJson<SavedSession[]>("/api/sessions"),
   review: (limit = REVIEW_SAMPLE_LIMIT) => getJson<SessionReview>(`/api/session/review?limit=${limit}`),
   reviewSession: (id: string, limit = REVIEW_SAMPLE_LIMIT) => getJson<SessionReview>(`/api/session/review/${encodeURIComponent(id)}?limit=${limit}`),
+  xyPlot: (id: string, query: XYPlotQuery) => {
+    const params = new URLSearchParams({
+      plot_id: query.plotId,
+      valid_only: String(query.validOnly ?? true),
+      color_by: query.colorBy || "speed",
+      trend: String(query.trend ?? false),
+      percentile_envelope: String(query.percentileEnvelope ?? false),
+      max_points: String(query.maxPoints ?? 5000),
+    });
+    if (query.xChannel) params.set("x_channel", query.xChannel);
+    if (query.yChannel) params.set("y_channel", query.yChannel);
+    if (query.laps?.length) params.set("laps", query.laps.join(","));
+    if (query.corners?.length) params.set("corners", query.corners.join(","));
+    if (query.speedMin != null) params.set("speed_min", String(query.speedMin));
+    if (query.speedMax != null) params.set("speed_max", String(query.speedMax));
+    if (query.compound) params.set("compound", query.compound);
+    if (query.fuelMin != null) params.set("fuel_min", String(query.fuelMin));
+    if (query.fuelMax != null) params.set("fuel_max", String(query.fuelMax));
+    return getJson<XYPlotResponse>(`/api/session/review/${encodeURIComponent(id)}/xy-plot?${params}`);
+  },
   sessionLapInputs: (id: string, lapA: string, lapB?: string, maxPoints = 2400) => {
     const params = new URLSearchParams({ lap_a: lapA, max_points: String(maxPoints) });
     if (lapB) params.set("lap_b", lapB);

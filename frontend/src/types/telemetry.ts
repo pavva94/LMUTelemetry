@@ -56,6 +56,9 @@ export type PlayerState = {
   g_force_lat?: number;
   g_force_long?: number;
   g_force_vert?: number;
+  local_velocity_x?: number;
+  local_velocity_z?: number;
+  yaw_rate?: number;
   gear?: number;
   rpm?: number;
   max_rpm?: number;
@@ -160,6 +163,7 @@ export type CompetitorState = {
   current_lap?: number;
   total_laps?: number;
   lap_distance?: number;
+  lap_start_time?: number;
   best_lap_time?: number;
   last_lap_time?: number;
   estimated_lap_time?: number;

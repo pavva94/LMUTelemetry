@@ -9,6 +9,7 @@ from sqlalchemy import delete, desc, func, select
 
 from app.db.database import SessionLocal
 from app.analysis.lap_quality import apply_lap_quality
+from app.analysis.xy_plot import build_xy_plot
 from app.db.models import LapSummaryModel, RecommendationModel, SessionAggregateModel, SessionModel, TelemetrySampleModel, UserLifetimeStatsModel
 from app.schemas.recommendations import RecommendationPayload, StrategyRecommendation
 from app.schemas.strategy import FuelState, PitWindowState, StrategyAssumptions, StrategyState, StintState, TyreStrategyState
@@ -141,8 +142,14 @@ class Repository:
                     last_lap_time=player.last_lap_time if player else None,
                     best_lap_time=player.best_lap_time if player else None,
                     speed_kph=player.speed_kph if player else None,
+                    g_force_lat=player.g_force_lat if player else None,
+                    g_force_long=player.g_force_long if player else None,
+                    local_velocity_x=player.local_velocity_x if player else None,
+                    local_velocity_z=player.local_velocity_z if player else None,
+                    yaw_rate=player.yaw_rate if player else None,
                     gear=player.gear if player else None,
                     rpm=player.rpm if player else None,
+                    engine_torque=player.engine_torque if player else None,
                     fuel_liters=player.fuel_liters if player else None,
                     fuel_capacity_liters=player.fuel_capacity_liters if player else None,
                     engine_oil_temp=player.engine_oil_temp if player else None,
@@ -154,6 +161,8 @@ class Repository:
                     throttle=player.throttle if player else None,
                     brake=player.brake if player else None,
                     steering=player.steering if player else None,
+                    steering_wheel_range_deg=player.steering_wheel_range_deg if player else None,
+                    lap_invalidated=player.lap_invalidated if player else None,
                     abs_active=player.abs_active if player else None,
                     tc_active=player.tc_active if player else None,
                     abs_setting=player.abs_setting if player else None,
@@ -170,6 +179,14 @@ class Repository:
                     brake_pressure_fr=player.brake_pressure_fr if player else None,
                     brake_pressure_rl=player.brake_pressure_rl if player else None,
                     brake_pressure_rr=player.brake_pressure_rr if player else None,
+                    wheel_rot_speed_fl=player.wheel_rot_speed_fl if player else None,
+                    wheel_rot_speed_fr=player.wheel_rot_speed_fr if player else None,
+                    wheel_rot_speed_rl=player.wheel_rot_speed_rl if player else None,
+                    wheel_rot_speed_rr=player.wheel_rot_speed_rr if player else None,
+                    wheel_ground_speed_fl=player.wheel_ground_speed_fl if player else None,
+                    wheel_ground_speed_fr=player.wheel_ground_speed_fr if player else None,
+                    wheel_ground_speed_rl=player.wheel_ground_speed_rl if player else None,
+                    wheel_ground_speed_rr=player.wheel_ground_speed_rr if player else None,
                     ride_height_fl=player.ride_height_fl if player else None,
                     ride_height_fr=player.ride_height_fr if player else None,
                     ride_height_rl=player.ride_height_rl if player else None,
@@ -196,6 +213,16 @@ class Repository:
                     tyre_temp_fr=tyre.temp_fr.center_c if tyre and tyre.temp_fr else None,
                     tyre_temp_rl=tyre.temp_rl.center_c if tyre and tyre.temp_rl else None,
                     tyre_temp_rr=tyre.temp_rr.center_c if tyre and tyre.temp_rr else None,
+                    tyre_temp_fl_left=tyre.temp_fl.left_c if tyre and tyre.temp_fl else None,
+                    tyre_temp_fl_right=tyre.temp_fl.right_c if tyre and tyre.temp_fl else None,
+                    tyre_temp_fr_left=tyre.temp_fr.left_c if tyre and tyre.temp_fr else None,
+                    tyre_temp_fr_right=tyre.temp_fr.right_c if tyre and tyre.temp_fr else None,
+                    tyre_temp_rl_left=tyre.temp_rl.left_c if tyre and tyre.temp_rl else None,
+                    tyre_temp_rl_right=tyre.temp_rl.right_c if tyre and tyre.temp_rl else None,
+                    tyre_temp_rr_left=tyre.temp_rr.left_c if tyre and tyre.temp_rr else None,
+                    tyre_temp_rr_right=tyre.temp_rr.right_c if tyre and tyre.temp_rr else None,
+                    tyre_compound_front=tyre.compound_front if tyre else None,
+                    tyre_compound_rear=tyre.compound_rear if tyre else None,
                     track_temp=env.track_temp_c if env else None,
                     ambient_temp=env.ambient_temp_c if env else None,
                     rain=env.raining if env else None,
@@ -870,6 +897,54 @@ class Repository:
             }
             self._review_cache = {cache_key: result}
             return result
+
+    def xy_plot(
+        self,
+        session_id: str,
+        *,
+        plot_id: str,
+        x_channel: str | None = None,
+        y_channel: str | None = None,
+        filters: dict | None = None,
+        color_by: str = "speed",
+        include_trend: bool = False,
+        include_envelope: bool = False,
+        max_points: int = 5000,
+    ) -> dict:
+        with SessionLocal() as db:
+            session = db.get(SessionModel, session_id)
+            if not session or not session.is_saved:
+                return {
+                    "plot_id": plot_id,
+                    "available": False,
+                    "missing_requirements": ["saved session"],
+                    "warnings": ["Session is unavailable."],
+                    "points": [],
+                    "trend": [],
+                    "envelope": [],
+                    "stats": {"min": None, "max": None, "average": None, "std_dev": None, "count": 0},
+                }
+            samples = db.scalars(
+                select(TelemetrySampleModel)
+                .where(TelemetrySampleModel.session_id == session_id)
+                .order_by(TelemetrySampleModel.id.asc())
+            ).all()
+        rows = [self._row_dict(sample) for sample in samples]
+        laps = self._build_laps(samples)
+        result = build_xy_plot(
+            rows,
+            laps,
+            plot_id=plot_id,
+            x_channel=x_channel,
+            y_channel=y_channel,
+            filters=filters,
+            color_by=color_by,
+            include_trend=include_trend,
+            include_envelope=include_envelope,
+            max_points=max_points,
+        )
+        result["session"] = self._row_dict(session)
+        return result
 
     def lap_input_trace(self, session_id: str, lap_numbers: list[int], max_points: int = 2400) -> dict:
         selected = list(dict.fromkeys(number for number in lap_numbers if number >= 0))[:2]
