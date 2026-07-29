@@ -7,6 +7,8 @@ import {
   LineChart,
   ReferenceLine,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
@@ -483,12 +485,46 @@ function NearbyStandings({ mergedCars, paceHistory, telemetry }: { mergedCars: C
   );
 }
 
-function InputsCard({ player }: { player?: PlayerState }) {
+function InputsCard({ telemetry }: { telemetry: TelemetrySnapshot | null }) {
   const t = useT();
+  const player = telemetry?.player;
   const controls = [{ label: t("telemetry.throttle"), value: player?.throttle, colour: "#6ee7a8" }, { label: t("telemetry.brake"), value: player?.brake, colour: "#ff6f68" }];
+  const steering = finite(player?.steering) ? Math.max(-1, Math.min(1, player.steering)) : undefined;
+  const steeringDegrees = finite(steering) && finite(player?.steering_wheel_range_deg)
+    ? steering * player.steering_wheel_range_deg / 2
+    : undefined;
+  const hasGForce = finite(player?.g_force_lat) || finite(player?.g_force_long);
+  const lateralG = finite(player?.g_force_lat) ? player.g_force_lat : 0;
+  const longitudinalG = finite(player?.g_force_long) ? player.g_force_long : 0;
+  const combinedG = Math.hypot(lateralG, longitudinalG);
+  const gPlotLimit = Math.max(2, Math.ceil(combinedG * 2) / 2);
   return <section className="status-card input-card"><CardTitle icon={Gauge} eyebrow={t("liveDashboard.control")} title={t("liveDashboard.inputs")} />
     <div className="input-gauges">{controls.map((control) => <div key={control.label}><div className="vertical-gauge"><i style={{ height: `${Math.max(0, Math.min(100, (control.value || 0) * 100))}%`, background: control.colour }} /></div><strong>{percent(control.value)}</strong><span>{control.label}</span></div>)}</div>
-    {finite(player?.steering) && <div className="steering-line"><i style={{ left: `${50 + Math.max(-.5, Math.min(.5, player.steering)) * 100}%` }} /><span>{t("telemetry.steering")}</span></div>}
+    {finite(steering) && <div
+      className="steering-line"
+      role="img"
+      aria-label={`${t("telemetry.steering")} ${finite(steeringDegrees) ? `${Math.round(steeringDegrees)} degrees` : ""}`}
+    >
+      <i style={{ left: `${50 + Math.max(-.5, Math.min(.5, steering)) * 100}%` }} />
+      <div><span>{t("telemetry.steering")}</span><strong>{finite(steeringDegrees) ? `${Math.round(steeringDegrees)}°` : "--°"}</strong></div>
+    </div>}
+    {hasGForce && <div className="g-force-live" aria-label={t("liveDashboard.gForce")}>
+      <div className="g-force-heading"><span>{t("liveDashboard.gForce")}</span><strong>{t("liveDashboard.combinedG")} {fmt(combinedG, 2, " g")}</strong></div>
+      <div className="g-force-plot">
+        <span className="g-force-axis-label axis-lateral">{t("liveDashboard.lateralG")}</span>
+        <span className="g-force-axis-label axis-longitudinal">{t("liveDashboard.longitudinalG")}</span>
+        <ResponsiveContainer width="100%" height="100%">
+          <ScatterChart margin={{ top: 9, right: 9, bottom: 9, left: 9 }}>
+            <XAxis type="number" dataKey="x" domain={[-gPlotLimit, gPlotLimit]} hide />
+            <YAxis type="number" dataKey="y" domain={[-gPlotLimit, gPlotLimit]} hide />
+            <ReferenceLine x={0} stroke="#46525d" strokeDasharray="2 3" />
+            <ReferenceLine y={0} stroke="#46525d" strokeDasharray="2 3" />
+            <Scatter data={[{ x: lateralG, y: longitudinalG }]} fill="#6dd6ff" isAnimationActive={false} shape="circle" />
+          </ScatterChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="g-force-values"><b className="lateral">{t("liveDashboard.lateralG")} {fmt(player?.g_force_lat, 2, " g")}</b><b className="longitudinal">{t("liveDashboard.longitudinalG")} {fmt(player?.g_force_long, 2, " g")}</b></div>
+    </div>}
   </section>;
 }
 
@@ -508,29 +544,35 @@ function brakeHeatColour(value?: number) {
   return "#e65353";
 }
 
+function tyreLifeColour(value?: number) {
+  if (!finite(value)) return "var(--muted)";
+  return `hsl(${Math.max(0, Math.min(1, value)) * 120} 72% 48%)`;
+}
+
 function TyreCard({ player }: { player?: PlayerState }) {
   const t = useT();
   const tyres = player?.tyre_state;
   const hasTyreData = tyreKeys.some((key) => finite(representativeTemp(tyres?.[`temp_${key}`])));
   const hasBrakeData = tyreKeys.some((key) => finite(player?.[brakeTempKeys[key]]));
-  const rearBrakeBias = finite(player?.brake_bias_rear) ? Math.max(0, Math.min(1, Number(player?.brake_bias_rear))) : undefined;
-  const frontBrakeBias = finite(rearBrakeBias) ? 1 - rearBrakeBias : undefined;
-  const hasBrakeBalance = finite(rearBrakeBias);
+  const wearValues = tyreKeys.map((key) => tyres?.[`wear_${key}`] as number | undefined).filter(finite);
+  const hasWearData = wearValues.length > 0 || finite(tyres?.average_wear);
   return <section className="status-card tyre-card"><CardTitle icon={Thermometer} eyebrow={t("liveDashboard.condition")} title={t("liveDashboard.tyres")} />
-    {hasTyreData || hasBrakeData || hasBrakeBalance ? <div className="vehicle-tyres">{tyreKeys.map((key) => {
+    {hasTyreData || hasBrakeData || hasWearData ? <div className="vehicle-tyres">{tyreKeys.map((key) => {
       const temp = tyres?.[`temp_${key}`] as TyreTemps | undefined;
       const surfaceZones = [temp?.left_c, temp?.center_c, temp?.right_c];
       const carcassTemp = temp?.carcass_c;
-      const wear = tyres?.[`wear_${key}`] as number | undefined;
       const brakeTemp = player?.[brakeTempKeys[key]];
-      return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong>{finite(wear) && <span>{percent(wear)} {t("liveDashboard.life")}</span>}</header><div className="surface-temperature">{surfaceZones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div><div className="carcass-temperature" style={{ background: heatColour(carcassTemp) }}><span>{t("liveDashboard.carcass")}</span><strong>{finite(carcassTemp) ? `${Math.round(carcassTemp)}°C` : "--"}</strong></div><footer style={{ background: brakeHeatColour(brakeTemp) }}><span>{t("telemetry.brake")}</span><strong>{finite(brakeTemp) ? `${Math.round(brakeTemp)}°C` : "--"}</strong></footer></div>;
-    })}<div className="brake-balance" aria-label={t("liveDashboard.brakeBalance")}>
-      <span>F</span>
-      <strong>{finite(frontBrakeBias) ? `${(frontBrakeBias * 100).toFixed(1)}%` : "--"}</strong>
-      <div className="brake-balance-scale" aria-hidden="true"><i style={{ height: `${(frontBrakeBias || 0) * 100}%` }} /><b style={{ height: `${(rearBrakeBias || 0) * 100}%` }} /></div>
-      <strong>{finite(rearBrakeBias) ? `${(rearBrakeBias * 100).toFixed(1)}%` : "--"}</strong>
-      <span>R</span>
-      <small>{t("liveDashboard.brakeBalanceShort")}</small>
+      return <div className={`visual-tyre tyre-${key}`} key={key}><header><strong>{tyreLabels[key]}</strong></header><div className="surface-temperature">{surfaceZones.map((value, index) => <span key={index} style={{ background: heatColour(value) }}>{finite(value) ? Math.round(value) : "--"}°</span>)}</div><div className="carcass-temperature" style={{ background: heatColour(carcassTemp) }}><span>{t("liveDashboard.carcass")}</span><strong>{finite(carcassTemp) ? `${Math.round(carcassTemp)}°C` : "--"}</strong></div><footer style={{ background: brakeHeatColour(brakeTemp) }}><span>{t("telemetry.brake")}</span><strong>{finite(brakeTemp) ? `${Math.round(brakeTemp)}°C` : "--"}</strong></footer></div>;
+    })}<div className="tyre-wear-map" aria-label={t("liveDashboard.tyreLife")}>
+      <small>{t("liveDashboard.tyreLife")}</small>
+      {tyreKeys.map((key) => {
+        const wear = tyres?.[`wear_${key}`] as number | undefined;
+        const remainingLife = finite(wear) ? 1 - Math.max(0, Math.min(1, wear)) : undefined;
+        return <div className={`tyre-wear-wheel tyre-wear-${key}`} key={key} style={{ background: tyreLifeColour(remainingLife) }} aria-label={`${tyreLabels[key]}: ${percent(remainingLife)}`}>
+          <b>{tyreLabels[key]}</b>
+          <strong>{percent(remainingLife)}</strong>
+        </div>;
+      })}
     </div></div> : <EmptyState label={t("liveDashboard.tyreTempsUnavailable")} compact />}
     {hasTyreData && <div className="heat-key"><span>{t("liveDashboard.cool")}</span><i /><span>{t("liveDashboard.hot")}</span></div>}
   </section>;
@@ -593,24 +635,15 @@ function EnvironmentCard({ telemetry }: { telemetry: TelemetrySnapshot | null })
   </section>;
 }
 
-function HypercarEnergyCard({ player }: { player?: PlayerState }) {
-  const t = useT();
-  const hybrid = player?.hybrid_state;
-  const batteryFraction = hybrid?.battery_charge_fraction ?? (finite(hybrid?.battery_percent) ? hybrid.battery_percent / 100 : undefined);
-  const metrics = [
-    { label: t("liveDashboard.batteryChargeFraction"), value: finite(batteryFraction) ? `${Math.round(batteryFraction * 100)}%` : "--" },
-    { label: t("liveDashboard.stateOfCharge"), value: fmt(hybrid?.state_of_charge_percent ?? hybrid?.battery_percent, 1, "%") },
-    { label: t("liveDashboard.regenerationPower"), value: fmt(hybrid?.regen_kw, 1, " kW") },
-    { label: t("liveDashboard.boostMotorTorque"), value: fmt(hybrid?.motor_torque_nm, 1, " Nm") },
-  ];
-  return <section className="status-card energy-card"><CardTitle icon={BatteryCharging} eyebrow={t("liveDashboard.hybridSystem")} title={t("liveDashboard.energy")} />
-    <div className="energy-metrics">{metrics.map((metric) => <div className="energy-metric" key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong></div>)}</div>
-  </section>;
-}
-
-function FuelCard({ telemetry, strategy }: { telemetry: TelemetrySnapshot | null; strategy: StrategyState | null }) {
+function FuelCard({ telemetry, strategy, isHypercar }: { telemetry: TelemetrySnapshot | null; strategy: StrategyState | null; isHypercar: boolean }) {
   const t = useT();
   const player = telemetry?.player;
+  const hybrid = player?.hybrid_state;
+  const batteryFraction = hybrid?.battery_charge_fraction ?? (finite(hybrid?.battery_percent) ? hybrid.battery_percent / 100 : undefined);
+  const hybridMetrics = [
+    { label: t("liveDashboard.batteryChargeFraction"), value: finite(batteryFraction) ? `${Math.round(batteryFraction * 100)}%` : "--" },
+    { label: t("liveDashboard.stateOfCharge"), value: fmt(hybrid?.state_of_charge_percent ?? hybrid?.battery_percent, 1, "%") },
+  ];
   const fuel = strategy?.fuel;
   const energy = strategy?.energy;
   const tyres = strategy?.tyres;
@@ -636,6 +669,7 @@ function FuelCard({ telemetry, strategy }: { telemetry: TelemetrySnapshot | null
   return <section className="status-card fuel-card"><CardTitle icon={Fuel} eyebrow={t("liveDashboard.strategy")} title={t("liveDashboard.fuelPit")} />
     <div className="strategy-live-values"><div className="fuel-primary"><strong>{fmt(player?.fuel_liters, 1)}</strong><span>{t("liveDashboard.litresNow")}</span></div><div><span>{t("liveDashboard.virtualEnergy")}</span><strong>{finite(energy?.current_virtual_energy_fraction) ? percent(energy.current_virtual_energy_fraction) : "--"}</strong></div><div><span>{t("liveDashboard.fuelEnergyRatio")}</span><strong>{finite(energy?.fuel_to_virtual_energy_ratio) ? energy.fuel_to_virtual_energy_ratio.toFixed(2) : "--"}</strong></div></div>
     <div className="resource-rates"><span>{t("liveDashboard.fuelUseShort")} <b>{fmt(fuel?.fuel_per_lap_liters, 2, " L/lap")}</b></span><span>{t("liveDashboard.energyUseShort")} <b>{finite(energy?.virtual_energy_per_lap) ? percent(energy.virtual_energy_per_lap) : "--"} / {t("telemetry.lap").toLowerCase()}</b></span></div>
+    {isHypercar && <div className="strategy-hybrid-panel"><div className="strategy-hybrid-title"><BatteryCharging size={15} /><span>{t("liveDashboard.hybridSystem")}</span></div><div className="energy-metrics">{hybridMetrics.map((metric) => <div className="energy-metric" key={metric.label}><span>{metric.label}</span><strong>{metric.value}</strong></div>)}</div></div>}
     <div className={`pit-call ${noStopNeeded ? "safe" : finite(pitLap) ? "action" : "unknown"}`}><span>{noStopNeeded ? t("liveDashboard.noStopRequired") : finite(pitLap) ? t("liveDashboard.estimatedPitLap") : t("liveDashboard.pitEstimate")}</span><strong>{noStopNeeded ? t("liveDashboard.runToFinish") : finite(pitLap) ? t("liveDashboard.lapWithTrigger", { lap: Math.round(pitLap), trigger }) : t("liveDashboard.needMoreCleanLaps")}</strong></div>
     {finite(lapsToPit) && !noStopNeeded && <div className="stint-projection"><div className="projection-axis"><span>{t("liveDashboard.nowLap", { lap: currentLap ?? "--" })}</span><i><b style={{ width: "100%" }} /></i><span>{t("liveDashboard.pitLapShort", { lap: pitLap ?? "--" })}</span></div><div className="projection-values"><div><span>{t("liveDashboard.fuelAtStop")}</span><strong>{fmt(fuelAtPit, 1, " L")}</strong><small>{t("liveDashboard.fromRate", { rate: fmt(fuel?.fuel_per_lap_liters, 2, " L/lap") })}</small></div><div><span>{t("liveDashboard.energyAtStop")}</span><strong>{finite(energyAtPit) ? percent(energyAtPit) : "--"}</strong><small>{t("liveDashboard.refillToFull")}</small></div><div><span>{t("liveDashboard.tyreWearAtStop")}</span><strong>{finite(wearAtPit) ? percent(wearAtPit) : "--"}</strong><small>+{finite(tyres?.wear_rate_per_lap) ? percent(tyres.wear_rate_per_lap) : "--"} / {t("telemetry.lap").toLowerCase()}</small></div></div></div>}
     {finite(lapsToPit) && !noStopNeeded && <div className="projected-corner-wear">{tyreKeys.map((key) => <span key={key}><b>{tyreLabels[key]}</b>{percent(projectedCornerWear(key))}</span>)}</div>}
@@ -748,12 +782,11 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected, 
   return <div className="page live-dashboard">
     <RaceHeader telemetry={telemetry} connected={connected} averageLap={averageLap} />
     <NearbyStandings mergedCars={mergedCompetitors} paceHistory={paceHistory} telemetry={telemetry} />
-    <div className={`live-status-row ${isHypercar ? "has-hybrid" : ""}`}>
-      <InputsCard player={telemetry?.player} />
-      {isHypercar && <HypercarEnergyCard player={telemetry?.player} />}
+    <div className="live-status-row">
+      <InputsCard telemetry={telemetry} />
       <TyreCard player={telemetry?.player} />
       <EnvironmentCard telemetry={telemetry} />
-      <FuelCard telemetry={telemetry} strategy={strategy} />
+      <FuelCard telemetry={telemetry} strategy={strategy} isHypercar={isHypercar} />
       <AlertsCard telemetry={telemetry} recommendation={recommendation} />
     </div>
     <LapInputComparison history={lapInputHistory} trackLength={telemetry?.session?.track_length_m} />

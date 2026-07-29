@@ -15,6 +15,7 @@ def test_mock_collector_emits_valid_snapshot() -> None:
     assert snapshot.player.hybrid_state.battery_charge_fraction is not None
     assert snapshot.player.hybrid_state.motor_torque_nm is not None
     assert snapshot.player.brake_bias_rear == 0.46
+    assert snapshot.player.steering_wheel_range_deg == 540.0
     assert snapshot.session.track_length_m == MockTelemetryCollector.TRACK_LENGTH_M
     assert next(car for car in snapshot.competitors if car.is_player).lap_distance is not None
     assert snapshot.competitors
@@ -66,6 +67,29 @@ def test_player_normalizer_exposes_primary_flag_and_scoring_finish_status() -> N
     assert snapshot.player.primary_flag == 6
     assert snapshot.player.finish_status == "finished"
     assert snapshot.player.brake_bias_rear == 0.47
+
+
+def test_player_normalizer_exposes_physical_steering_wheel_range() -> None:
+    raw = SimpleNamespace(
+        scoring=SimpleNamespace(
+            scoringInfo=SimpleNamespace(mNumVehicles=1, mPlayerVehScoringId=0),
+            vehScoringInfo=[SimpleNamespace(mID=1)],
+        ),
+        telemetry=SimpleNamespace(
+            playerVehicleIdx=0,
+            telemInfo=[SimpleNamespace(
+                mUnfilteredSteering=0.25,
+                mPhysicalSteeringWheelRange=540.0,
+                mVisualSteeringWheelRange=360.0,
+            )],
+        ),
+    )
+
+    snapshot = normalize_lmu_snapshot(raw)
+
+    assert snapshot.player is not None
+    assert snapshot.player.steering == 0.25
+    assert snapshot.player.steering_wheel_range_deg == 540.0
 
 
 def test_tyre_normalizer_ignores_zero_channels_and_reads_temperature_fallback() -> None:

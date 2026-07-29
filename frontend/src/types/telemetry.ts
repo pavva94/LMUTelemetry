@@ -71,6 +71,7 @@ export type PlayerState = {
   throttle?: number;
   brake?: number;
   steering?: number;
+  steering_wheel_range_deg?: number;
   clutch?: number;
   speed_limiter?: boolean;
   abs_active?: boolean;

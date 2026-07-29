@@ -231,6 +231,11 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
     regen_kw = safe_float(attr(telemetry, "mRegen", default=None))
     motor_torque_nm = safe_float(attr(telemetry, "mElectricBoostMotorTorque", default=None))
     motor_state = motor_state_name(attr(telemetry, "mElectricBoostMotorState", default=None))
+    steering_wheel_range_deg = safe_float(attr(telemetry, "mPhysicalSteeringWheelRange", default=None))
+    if steering_wheel_range_deg is None or steering_wheel_range_deg <= 0:
+        steering_wheel_range_deg = safe_float(attr(telemetry, "mVisualSteeringWheelRange", default=None))
+    if steering_wheel_range_deg is not None and steering_wheel_range_deg <= 0:
+        steering_wheel_range_deg = None
     return PlayerState(
         vehicle_id=attr(vehicle, "mID", "mVehicleID", default=0),
         vehicle_name=decode_c_string(attr(vehicle, "mVehicleName", default="")),
@@ -263,6 +268,7 @@ def _normalize_player(vehicle: Any, telemetry: Any) -> PlayerState | None:
         throttle=safe_float(attr(telemetry, "mUnfilteredThrottle", "mThrottle", default=None)),
         brake=safe_float(attr(telemetry, "mUnfilteredBrake", "mBrake", default=None)),
         steering=safe_float(attr(telemetry, "mUnfilteredSteering", "mSteering", default=None)),
+        steering_wheel_range_deg=steering_wheel_range_deg,
         clutch=safe_float(attr(telemetry, "mUnfilteredClutch", "mClutch", default=None)),
         speed_limiter=bool(attr(telemetry, "mSpeedLimiter", default=False)),
         abs_active=bool(attr(telemetry, "mABSActive", default=False)),

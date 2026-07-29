@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { PageSection } from "../components/PageSection";
@@ -9,6 +9,7 @@ import { PerformanceReportDialog } from "../components/PerformanceReportDialog";
 import { useI18n } from "../i18n/I18nProvider";
 import { translateLegacyText } from "../i18n/legacyText";
 import { duckdbSessionLabel, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
+import { buildLapBoundaries } from "../lib/chartLapBoundaries";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { buildRacePrepReport, type RacePrepReport as RacePrepReportModel, type Wheel } from "../lib/racePrepReport";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
@@ -42,10 +43,11 @@ function hasLineData(data: Array<Record<string, unknown>>, lines: string[]) {
   return data.some((row) => lines.some((key) => Number.isFinite(Number(row[key]))));
 }
 
-function SessionChart({ data, xKey, lines, height = 260 }: { data: Array<Record<string, unknown>>; xKey: string; lines: Array<[string, string]>; height?: number }) {
+function SessionChart({ data, xKey, lines, height = 260, showLapBoundaries = false }: { data: Array<Record<string, unknown>>; xKey: string; lines: Array<[string, string]>; height?: number; showLapBoundaries?: boolean }) {
   if (!data.length || !hasLineData(data, lines.map(([key]) => key))) return <EmptyState detail="This chart needs channels that are not available in the selected session." />;
   const yTimeAxis = lines.some(([key]) => isRaceTimeField(key));
   const xTimeAxis = isRaceTimeField(xKey);
+  const lapBoundaries = showLapBoundaries ? buildLapBoundaries(data, xKey) : [];
   return (
     <ResponsiveContainer width="100%" height={height}>
       <LineChart data={data}>
@@ -54,6 +56,16 @@ function SessionChart({ data, xKey, lines, height = 260 }: { data: Array<Record<
         <YAxis stroke="#8896a3" tickFormatter={(value) => yTimeAxis ? formatTelemetryValue(value, lines[0]?.[0] || "") : String(value)} />
         <Tooltip contentStyle={{ background: "#141a20", border: "1px solid #27313a" }} labelFormatter={(value) => xTimeAxis ? chartLabelFormatter(value, xKey) : String(value)} formatter={chartValueFormatter} />
         <Legend />
+        {lapBoundaries.map((boundary) => (
+          <ReferenceLine
+            key={`lap-${boundary.lap}-${boundary.x}`}
+            x={boundary.x}
+            stroke="#65737f"
+            strokeDasharray="3 4"
+            strokeOpacity={0.8}
+            label={boundary.showLabel ? { value: `L${boundary.lap}`, position: "insideTopRight", fill: "#a9b5bf", fontSize: 10 } : undefined}
+          />
+        ))}
         {lines.map(([key, color]) => <Line key={key} dataKey={key} stroke={color} dot={key.includes("marker") ? { r: 4 } : false} connectNulls />)}
       </LineChart>
     </ResponsiveContainer>
@@ -419,7 +431,7 @@ function FuelAnalysis({ report }: { report: RacePrepReportModel }) {
     </section>
     <section className="card span-6">
       <SectionTitle title="Fuel Level Over Time" help="Shows live fuel level from raw samples when available." />
-      <SessionChart data={report.charts.samples} xKey="game_time" lines={[["fuel_liters", "#6dd6ff"]]} />
+      <SessionChart data={report.charts.samples} xKey="game_time" lines={[["fuel_liters", "#6dd6ff"]]} showLapBoundaries />
     </section>
     <section className="card span-6">
       <SectionTitle title="Fuel Used Per Lap" help="Shows observed lap consumption. Large variation should be explained before setting a race fuel target." />
@@ -447,15 +459,15 @@ function DriverInputs({ report }: { report: RacePrepReportModel }) {
     <>
       <section className="card span-6">
         <SectionTitle title="Driver Inputs" help="Shows throttle, brake, and steering over time. This is the first place to look for consistency, coasting, and over-driving." />
-        <SessionChart data={report.charts.samples} xKey="game_time" lines={[["throttle", "#69d28f"], ["brake", "#ff6961"], ["steering", "#c7a8ff"]]} />
+        <SessionChart data={report.charts.samples} xKey="game_time" lines={[["throttle", "#69d28f"], ["brake", "#ff6961"], ["steering", "#c7a8ff"]]} showLapBoundaries />
       </section>
       <section className="card span-6">
         <SectionTitle title="Speed And RPM" help="Shows powertrain and speed behavior over the session." />
-        <SessionChart data={report.charts.samples} xKey="game_time" lines={[["speed_kph", "#6dd6ff"], ["rpm", "#e6b450"]]} />
+        <SessionChart data={report.charts.samples} xKey="game_time" lines={[["speed_kph", "#6dd6ff"], ["rpm", "#e6b450"]]} showLapBoundaries />
       </section>
       <section className="card span-12">
         <SectionTitle title="G-Force" help="Shows lateral and longitudinal acceleration if the selected recording includes those channels." />
-        <SessionChart data={report.charts.samples} xKey="game_time" lines={[["g_force_lat", "#6dd6ff"], ["g_force_long", "#ff8c69"], ["g_force_vert", "#91e48f"]]} height={220} />
+        <SessionChart data={report.charts.samples} xKey="game_time" lines={[["g_force_lat", "#6dd6ff"], ["g_force_long", "#ff8c69"], ["g_force_vert", "#91e48f"]]} height={220} showLapBoundaries />
       </section>
     </>
   );
@@ -468,7 +480,7 @@ function PowertrainAndSurface({ report }: { report: RacePrepReportModel }) {
     <>
       <section className="card span-6">
         <SectionTitle title="Radiator Temperatures" help="Shows engine oil and water temperatures when the selected live or saved session exposes them." />
-        <SessionChart data={data} xKey={xKey} lines={[["engine_oil_temp", "#e6b450"], ["engine_water_temp", "#6dd6ff"]]} height={220} />
+        <SessionChart data={data} xKey={xKey} lines={[["engine_oil_temp", "#e6b450"], ["engine_water_temp", "#6dd6ff"]]} height={220} showLapBoundaries={xKey === "game_time"} />
         <div className="header-grid">
           <Metric label="Oil avg / max" value={`${fmt(report.powertrain.oilTemp.average, 1, " C")} / ${fmt(report.powertrain.oilTemp.max, 1, " C")}`} />
           <Metric label="Water avg / max" value={`${fmt(report.powertrain.waterTemp.average, 1, " C")} / ${fmt(report.powertrain.waterTemp.max, 1, " C")}`} />
@@ -501,7 +513,7 @@ function TyreWear({ report }: { report: RacePrepReportModel }) {
           </tbody>
         </table>
       </div>
-      <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={wheels.map((wheel, index) => [`tyre_wear_${wheel}`, chartColors[index]]) as Array<[string, string]>} height={240} />
+      <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={wheels.map((wheel, index) => [`tyre_wear_${wheel}`, chartColors[index]]) as Array<[string, string]>} height={240} showLapBoundaries={report.charts.samples.length > 0} />
       <div className="header-grid">
         <Metric label="Most worn" value={report.tyres.mostWorn ? wheelLabels[report.tyres.mostWorn] : "--"} />
         <Metric label="Rear-front balance" value={fmt(report.tyres.frontRearBalance, 4)} />
@@ -546,11 +558,11 @@ function TyreTempPressure({ report }: { report: RacePrepReportModel }) {
       </section>
       <section className="card span-6">
         <SectionTitle title="Tyre Temperatures" help="Shows tyre temperature trend by wheel." />
-        <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={wheels.map((wheel, index) => [`tyre_temp_${wheel}`, chartColors[index]]) as Array<[string, string]>} height={220} />
+        <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={wheels.map((wheel, index) => [`tyre_temp_${wheel}`, chartColors[index]]) as Array<[string, string]>} height={220} showLapBoundaries={report.charts.samples.length > 0} />
       </section>
       <section className="card span-6">
         <SectionTitle title="Tyre Pressures" help="Shows tyre pressure trend by wheel." />
-        <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={wheels.map((wheel, index) => [`tyre_pressure_${wheel}`, chartColors[index]]) as Array<[string, string]>} height={220} />
+        <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={wheels.map((wheel, index) => [`tyre_pressure_${wheel}`, chartColors[index]]) as Array<[string, string]>} height={220} showLapBoundaries={report.charts.samples.length > 0} />
       </section>
     </>
   );
@@ -561,11 +573,11 @@ function BrakePlatform({ report }: { report: RacePrepReportModel }) {
     <>
       <section className="card span-6">
         <SectionTitle title="Brake Temperatures" help="Shows brake temperature by wheel. Persistent corner spread can indicate bias, cooling, lockups, or track loading." />
-        <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={wheels.map((wheel, index) => [`brake_temp_${wheel}`, chartColors[index]]) as Array<[string, string]>} />
+        <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={wheels.map((wheel, index) => [`brake_temp_${wheel}`, chartColors[index]]) as Array<[string, string]>} showLapBoundaries={report.charts.samples.length > 0} />
       </section>
       <section className="card span-6">
         <SectionTitle title="Ride Height And Platform" help="Shows ride height by wheel plus front/rear platform channels when available." />
-        <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={[...wheels.map((wheel, index) => [`ride_height_${wheel}`, chartColors[index]] as [string, string]), ["front_ride_height", "#ff7da7"], ["rear_ride_height", "#ffffff"]]} />
+        <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={[...wheels.map((wheel, index) => [`ride_height_${wheel}`, chartColors[index]] as [string, string]), ["front_ride_height", "#ff7da7"], ["rear_ride_height", "#ffffff"]]} showLapBoundaries={report.charts.samples.length > 0} />
       </section>
     </>
   );
@@ -576,7 +588,7 @@ function EnvironmentEvents({ report }: { report: RacePrepReportModel }) {
     <>
       <section className="card span-6">
         <SectionTitle title="Environment Trend" help="Shows track and ambient conditions over time when available." />
-        <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={[["track_temp", "#ff8c69"], ["ambient_temp", "#6dd6ff"]]} />
+        <SessionChart data={report.charts.samples.length ? report.charts.samples : report.charts.laps} xKey={report.charts.samples.length ? "game_time" : "lap"} lines={[["track_temp", "#ff8c69"], ["ambient_temp", "#6dd6ff"]]} showLapBoundaries={report.charts.samples.length > 0} />
       </section>
       <section className="card span-6">
         <SectionTitle title="Events Timeline" help="Lists pit and recommendation events in session order." />

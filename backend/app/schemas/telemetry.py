@@ -80,6 +80,7 @@ class PlayerState(BaseModel):
     throttle: float | None = None
     brake: float | None = None
     steering: float | None = None
+    steering_wheel_range_deg: float | None = None
     clutch: float | None = None
     speed_limiter: bool | None = None
     abs_active: bool | None = None

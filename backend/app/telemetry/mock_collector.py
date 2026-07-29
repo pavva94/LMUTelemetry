@@ -116,6 +116,7 @@ class MockTelemetryCollector:
             brake=0.0 if speed > 115 else 0.35,
             brake_bias_rear=0.46,
             steering=math.sin(lap_progress * math.tau) * 0.25,
+            steering_wheel_range_deg=540.0,
             wheel_rot_speed_fl=speed / 3.6 / 0.32,
             wheel_rot_speed_fr=speed / 3.6 / 0.32,
             wheel_rot_speed_rl=(speed / 3.6 / 0.32) * (1.0 + (0.13 if lap_progress > 0.55 and lap_progress < 0.72 else 0.0)),
