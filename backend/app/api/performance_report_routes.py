@@ -17,7 +17,9 @@ generator = SessionReportGenerator(repository)
 
 class GenerateRequest(BaseModel):
     language: str = Field(default="en", pattern="^(en|it)$")
-    detail_level: str = Field(default="concise", pattern="^(concise|detailed)$")
+    # Accepted when regenerating legacy reports; generation below normalizes
+    # every request to the single comprehensive format.
+    detail_level: str = Field(default="detailed", pattern="^(concise|detailed)$")
     include_charts: bool = True
     anonymize_driver: bool = False
     title: str | None = Field(default=None, max_length=160)
@@ -26,7 +28,10 @@ class GenerateRequest(BaseModel):
     notes: str | None = Field(default=None, max_length=2000)
 
     def configuration(self) -> ReportConfiguration:
-        return ReportConfiguration(**self.model_dump())
+        values = self.model_dump()
+        values["detail_level"] = "detailed"
+        values["include_charts"] = True
+        return ReportConfiguration(**values)
 
 
 @router.post("/sessions/{session_id}/jobs", status_code=202)

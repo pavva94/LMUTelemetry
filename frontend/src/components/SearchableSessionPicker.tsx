@@ -9,6 +9,8 @@ type Props = {
   onSelect: (value: string) => void;
   liveLabel?: string;
   liveDescription?: string;
+  includeLive?: boolean;
+  emptyLabel?: string;
   status?: string;
   searchPlaceholder?: string;
   searchAriaLabel?: string;
@@ -22,6 +24,8 @@ export function SearchableSessionPicker({
   onSelect,
   liveLabel = "Live/current session",
   liveDescription = "Use the active telemetry session",
+  includeLive = true,
+  emptyLabel = "Select a saved session",
   status,
   searchPlaceholder = "Search track, car, session type, date, or laps",
   searchAriaLabel = "Search sessions",
@@ -33,10 +37,14 @@ export function SearchableSessionPicker({
   const searchRef = useRef<HTMLInputElement>(null);
   const listboxId = useId();
   const selectedSession = sessions.find((session) => session.id === selectedId);
-  const selectedLabel = selectedId === liveValue || !selectedSession ? liveLabel : duckdbSessionLabel(selectedSession);
+  const selectedLabel = selectedSession
+    ? duckdbSessionLabel(selectedSession)
+    : includeLive && selectedId === liveValue
+      ? liveLabel
+      : emptyLabel;
   const visibleSessions = useMemo(
-    () => filterDuckdbSessions(sessions, search, selectedId === liveValue ? undefined : selectedId),
-    [search, selectedId, sessions, liveValue],
+    () => filterDuckdbSessions(sessions, search, includeLive && selectedId === liveValue ? undefined : selectedId),
+    [includeLive, search, selectedId, sessions, liveValue],
   );
 
   const close = () => {
@@ -86,10 +94,12 @@ export function SearchableSessionPicker({
             aria-label={searchAriaLabel}
           />
           <div className="searchable-session-options" id={listboxId} role="listbox" aria-label={listAriaLabel}>
-            <button type="button" className="searchable-session-option" role="option" aria-selected={selectedId === liveValue} onClick={() => select(liveValue)}>
-              <strong>{liveLabel}</strong>
-              <small>{liveDescription}</small>
-            </button>
+            {includeLive && (
+              <button type="button" className="searchable-session-option" role="option" aria-selected={selectedId === liveValue} onClick={() => select(liveValue)}>
+                <strong>{liveLabel}</strong>
+                <small>{liveDescription}</small>
+              </button>
+            )}
             {visibleSessions.map((session) => (
               <button type="button" className="searchable-session-option" role="option" aria-selected={session.id === selectedId} onClick={() => select(session.id)} key={session.id}>
                 <span>{duckdbSessionLabel(session)}</span>

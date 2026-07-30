@@ -753,15 +753,34 @@ function LapInputComparison({ review, laps }: { review: SessionReview | null; la
   }, [sessionId, lapA, lapB]);
 
   const selectedLaps = Array.from(new Set([lapA, lapB].filter(Boolean)));
+  const physicalTrackLength = useMemo(() => Math.max(
+    0,
+    ...(payload?.points || []).map((point) => Number(point.lap_distance)).filter((distance) => Number.isFinite(distance)),
+  ), [payload]);
+  const traceTrackLength = physicalTrackLength > 1 ? physicalTrackLength : 1;
   const selectedTraces = useMemo(() => selectedLaps.map((lap) => {
+    const lapSummary = lapOptions.find((option) => String(option.lap_number ?? "") === lap);
+    const officialLapTime = Number(lapSummary?.lap_time);
     const points = (payload?.points || [])
       .filter((point) => String(point.lap_number ?? "") === lap)
-      .map((point) => ({ distance: Number(point.progress), throttle: inputFraction(point.throttle), brake: inputFraction(point.brake), elapsedTime: Number(point.elapsed_time) }))
+      .map((point) => ({
+        distance: physicalTrackLength > 1 ? Number(point.lap_distance) : Number(point.progress),
+        throttle: inputFraction(point.throttle),
+        brake: inputFraction(point.brake),
+        elapsedTime: Number(point.elapsed_time),
+      }))
       .filter((point): point is { distance: number; throttle: number; brake: number; elapsedTime: number } => Number.isFinite(point.distance) && point.throttle != null && point.brake != null && Number.isFinite(point.elapsedTime));
-    return { id: `lap${lap}`, trace: { lap: Number(lap), points } as LapInputTrace };
-  }), [payload, lapA, lapB]);
-  const chartData = useMemo(() => buildLapInputChartData(selectedTraces, 1), [selectedTraces]);
-  const deltaData = useMemo(() => buildLapTimeDeltaData(selectedTraces[0]?.trace, selectedTraces[1]?.trace), [selectedTraces]);
+    return {
+      id: `lap${lap}`,
+      trace: {
+        lap: Number(lap),
+        lapTime: Number.isFinite(officialLapTime) && officialLapTime > 0 ? officialLapTime : undefined,
+        points,
+      } as LapInputTrace,
+    };
+  }), [payload, lapA, lapB, lapOptions, physicalTrackLength]);
+  const chartData = useMemo(() => buildLapInputChartData(selectedTraces, traceTrackLength), [selectedTraces, traceTrackLength]);
+  const deltaData = useMemo(() => buildLapTimeDeltaData(selectedTraces[0]?.trace, selectedTraces[1]?.trace, traceTrackLength), [selectedTraces, traceTrackLength]);
   const hasInputs = chartData.some((row) => selectedLaps.some((lap) => row[`lap${lap}Throttle`] != null || row[`lap${lap}Brake`] != null));
   const colors = ["#6dd6ff", "#e6b450"];
   const lapLabel = (lap: Field) => `Lap ${text(lap.lap_number)} · ${lapTime(Number(lap.lap_time))}`;
@@ -949,6 +968,7 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
       <PageSection number="04" title="Stint Breakdown" description="Every detected run between pit stops, with controls for choosing the stint to inspect.">
       <section className="card span-12 stint-selector-card">
         <SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits come from telemetry pit entries, and returning to the main menu starts a new session." />
+        <p className="stint-selector-note">Stints split only on pit entry or a new session.</p>
         <div className="stint-selector-control" role="group" aria-label="Select stint to inspect">
           {stints.length ? stints.map((stint) => {
             const active = selected?.number === stint.number;
@@ -970,7 +990,6 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
               <strong>Current</strong>
             </button>
           )}
-          <span className="stint-selector-note">Stints split only on pit entry or a new session.</span>
         </div>
       </section>
       <section className="card span-12">

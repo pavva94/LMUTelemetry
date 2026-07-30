@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
@@ -33,6 +33,15 @@ const chartColors = ["#6dd6ff", "#e6b450", "#91e48f", "#ff8c69", "#c7a8ff", "#ff
 
 function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return <div className="metric compact"><span className="label">{label}</span><span className="value">{value}</span>{sub && <span className="subvalue">{sub}</span>}</div>;
+}
+
+function SessionSummaryGroup({ eyebrow, title, tone, children }: { eyebrow: string; title: string; tone: "cyan" | "amber" | "green" | "purple"; children: ReactNode }) {
+  return (
+    <section className={`session-summary-group session-summary-group-${tone}`}>
+      <header><span>{eyebrow}</span><h3>{title}</h3></header>
+      <div className="session-summary-metrics">{children}</div>
+    </section>
+  );
 }
 
 function EmptyState({ detail }: { detail: string }) {
@@ -155,7 +164,7 @@ export function RacePrepReport({ strategy }: Props) {
             />
             <span className="subvalue">{selected === "current" ? "Using the current live session" : "Using a saved session"}</span>
           </div>
-          <div className="report-primary-actions"><span className="badge blue">{status}</span><button className="primary" onClick={() => setReportDialogOpen(true)} disabled={selected === "current" || !review?.session} title={selected === "current" ? "Select an imported historical session to generate a PDF" : undefined}>Generate Performance Report</button></div>
+          <div className="report-primary-actions"><span className="badge blue">{status}</span><button className="primary performance-report-button" onClick={() => setReportDialogOpen(true)} disabled={selected === "current" || !review?.session} title={selected === "current" ? "Select an imported historical session to generate a PDF" : undefined}>Generate Performance Report</button></div>
         </div>
       </section>
 
@@ -181,27 +190,47 @@ export function RacePrepReport({ strategy }: Props) {
 
 function SessionOverview({ report }: { report: RacePrepReportModel }) {
   return (
-    <section className="card span-12">
-      <SectionTitle title="Session Overview" help="Summarizes the selected telemetry session so the rest of the report has context." />
-      <div className="header-grid">
-        <Metric label="Track" value={text(report.session.track)} />
-        <Metric label="Car" value={text(report.session.car)} />
-        <Metric label="Session" value={text(report.session.sessionType)} />
-        <Metric label="Date" value={dateText(report.session.dateTime)} />
-        <Metric label="Laps completed" value={report.session.totalLaps} sub={`${report.session.validLaps} valid`} />
-        <Metric label="Valid lap ratio" value={fmt(report.coverage.validLapRatio != null ? report.coverage.validLapRatio * 100 : null, 0, "%")} />
-        <Metric label="Samples" value={report.coverage.sampleCount} />
-        <Metric label="Best lap" value={formatRaceTime(report.pace.bestLap)} />
-        <Metric label="Average lap" value={formatRaceTime(report.pace.averageLap)} />
-        <Metric label="Median lap" value={formatRaceTime(report.pace.medianLap)} />
-        <Metric label="Duration" value={formatDuration(report.session.duration)} />
-        <Metric label="Distance" value={fmt(report.session.totalDistanceKm, 2, " km")} />
-        <Metric label="Top speed" value={fmt(report.session.topSpeed, 0, " km/h")} />
-        <Metric label="Pit laps" value={report.session.pitLaps} />
-        <Metric label="Track temp" value={fmt(report.session.trackTemp, 1, " C")} />
-        <Metric label="Ambient temp" value={fmt(report.session.ambientTemp, 1, " C")} />
+    <section className="session-overview-card span-12">
+      <header className="session-overview-identity">
+        <div>
+          <span>Selected telemetry session</span>
+          <h3>{text(report.session.sessionType)} · {text(report.session.track)} · {text(report.session.car)}</h3>
+          <p>{dateText(report.session.dateTime)} · {formatDuration(report.session.duration)} recorded</p>
+        </div>
+        <div className="session-identity-tags">
+          <span><small>Track</small>{text(report.session.track)}</span>
+          <span><small>Session</small>{text(report.session.sessionType)}</span>
+          <span><small>Car</small>{text(report.session.car)}</span>
+        </div>
+      </header>
+      <div className="session-summary-groups">
+        <SessionSummaryGroup eyebrow="Data quality" title="Run Coverage" tone="cyan">
+          <Metric label="Completed laps" value={report.session.totalLaps} />
+          <Metric label="Valid laps" value={report.session.validLaps} />
+          <Metric label="Valid ratio" value={fmt(report.coverage.validLapRatio != null ? report.coverage.validLapRatio * 100 : null, 0, "%")} />
+          <Metric label="Samples" value={report.coverage.sampleCount} />
+        </SessionSummaryGroup>
+        <SessionSummaryGroup eyebrow="Performance" title="Pace Reference" tone="amber">
+          <Metric label="Best lap" value={formatRaceTime(report.pace.bestLap)} />
+          <Metric label="Average lap" value={formatRaceTime(report.pace.averageLap)} />
+          <Metric label="Median lap" value={formatRaceTime(report.pace.medianLap)} />
+          <Metric label="Top speed" value={fmt(report.session.topSpeed, 0, " km/h")} />
+        </SessionSummaryGroup>
+        <SessionSummaryGroup eyebrow="Session scale" title="Distance & Activity" tone="green">
+          <Metric label="Duration" value={formatDuration(report.session.duration)} />
+          <Metric label="Distance" value={fmt(report.session.totalDistanceKm, 2, " km")} />
+          <Metric label="Pit laps" value={report.session.pitLaps} />
+        </SessionSummaryGroup>
+        <SessionSummaryGroup eyebrow="Environment" title="Track Conditions" tone="purple">
+          <Metric label="Track temp" value={fmt(report.session.trackTemp, 1, " °C")} />
+          <Metric label="Ambient temp" value={fmt(report.session.ambientTemp, 1, " °C")} />
+          <Metric label="Channel groups" value={report.coverage.channelGroups.length} />
+        </SessionSummaryGroup>
       </div>
-      <ChannelBadges labels={report.coverage.channelGroups} />
+      <div className="session-overview-support">
+        <span>Available telemetry</span>
+        <ChannelBadges labels={report.coverage.channelGroups} />
+      </div>
     </section>
   );
 }

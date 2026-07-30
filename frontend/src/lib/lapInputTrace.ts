@@ -96,10 +96,27 @@ export function sampleLapGForcePoints(trace?: LapInputTrace, maxPoints = 72): GF
   });
 }
 
-function elapsedAtDistance(points: LapInputPoint[], distance: number) {
-  const timed = points
+function timedLapPoints(trace: LapInputTrace, trackLength: number) {
+  const timed = trace.points
     .filter((point) => Number.isFinite(point.distance) && point.elapsedTime != null && Number.isFinite(point.elapsedTime))
     .sort((left, right) => left.distance - right.distance);
+  const lapTime = trace.lapTime;
+  if (lapTime == null || !Number.isFinite(lapTime) || lapTime <= 0) return timed;
+
+  const monotonic: LapInputPoint[] = [{ distance: 0, throttle: 0, brake: 0, elapsedTime: 0 }];
+  for (const point of timed) {
+    const elapsedTime = point.elapsedTime as number;
+    const previous = monotonic[monotonic.length - 1];
+    if (point.distance <= previous.distance || point.distance >= trackLength) continue;
+    if (elapsedTime < (previous.elapsedTime as number) || elapsedTime >= lapTime) continue;
+    monotonic.push(point);
+  }
+  monotonic.push({ distance: trackLength, throttle: 0, brake: 0, elapsedTime: lapTime });
+  return monotonic;
+}
+
+function elapsedAtDistance(trace: LapInputTrace, distance: number, trackLength: number) {
+  const timed = timedLapPoints(trace, trackLength);
   if (!timed.length || distance < timed[0].distance || distance > timed[timed.length - 1].distance) return null;
   const upperIndex = timed.findIndex((point) => point.distance >= distance);
   if (upperIndex <= 0) return timed[0].elapsedTime as number;
@@ -117,8 +134,8 @@ export function buildLapTimeDeltaData(reference?: LapInputTrace, comparison?: La
   const rows: LapTimeDeltaRow[] = [];
   for (let bucket = 0; bucket <= 200; bucket += 1) {
     const distance = trackLength * bucket / 200;
-    const referenceTime = elapsedAtDistance(reference.points, distance);
-    const comparisonTime = elapsedAtDistance(comparison.points, distance);
+    const referenceTime = elapsedAtDistance(reference, distance, trackLength);
+    const comparisonTime = elapsedAtDistance(comparison, distance, trackLength);
     if (referenceTime != null && comparisonTime != null) rows.push({ progress: bucket / 2, delta: comparisonTime - referenceTime });
   }
   return rows;

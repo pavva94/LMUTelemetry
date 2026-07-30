@@ -48,11 +48,11 @@ describe("lap input traces", () => {
   });
 
   it("interpolates comparison-minus-reference time delta over lap distance", () => {
-    const reference: LapInputTrace = { lap: 1, points: [
+    const reference: LapInputTrace = { lap: 1, lapTime: 90, points: [
       { distance: 0, throttle: 1, brake: 0, elapsedTime: 0 },
       { distance: 1, throttle: 1, brake: 0, elapsedTime: 90 },
     ] };
-    const comparison: LapInputTrace = { lap: 2, points: [
+    const comparison: LapInputTrace = { lap: 2, lapTime: 92, points: [
       { distance: 0, throttle: 1, brake: 0, elapsedTime: 0 },
       { distance: 0.5, throttle: 1, brake: 0, elapsedTime: 46 },
       { distance: 1, throttle: 1, brake: 0, elapsedTime: 92 },
@@ -62,6 +62,38 @@ describe("lap input traces", () => {
     expect(rows[0]).toEqual({ progress: 0, delta: 0 });
     expect(rows[100]).toEqual({ progress: 50, delta: 1 });
     expect(rows[200]).toEqual({ progress: 100, delta: 2 });
+  });
+
+  it("anchors the finish delta to the official lap-time difference", () => {
+    const reference: LapInputTrace = { lap: 3, lapTime: 95.298, points: [
+      { distance: 0, throttle: 1, brake: 0, elapsedTime: 0.2 },
+      { distance: 950, throttle: 1, brake: 0, elapsedTime: 94.1 },
+    ] };
+    const comparison: LapInputTrace = { lap: 1, lapTime: 95.373, points: [
+      { distance: 0, throttle: 1, brake: 0, elapsedTime: 0.1 },
+      { distance: 950, throttle: 1, brake: 0, elapsedTime: 94.8 },
+    ] };
+
+    const rows = buildLapTimeDeltaData(reference, comparison, 1_000);
+    expect(rows[0]).toEqual({ progress: 0, delta: 0 });
+    expect(rows[200].progress).toBe(100);
+    expect(rows[200].delta).toBeCloseTo(0.075);
+  });
+
+  it("ignores elapsed-time resets inside a completed lap", () => {
+    const reference: LapInputTrace = { lap: 3, lapTime: 90, points: [
+      { distance: 0, throttle: 1, brake: 0, elapsedTime: 0 },
+      { distance: 980, throttle: 1, brake: 0, elapsedTime: 89 },
+      { distance: 990, throttle: 1, brake: 0, elapsedTime: 0.1 },
+    ] };
+    const comparison: LapInputTrace = { lap: 1, lapTime: 90.03, points: [
+      { distance: 0, throttle: 1, brake: 0, elapsedTime: 0 },
+      { distance: 980, throttle: 1, brake: 0, elapsedTime: 89.02 },
+    ] };
+
+    const rows = buildLapTimeDeltaData(reference, comparison, 1_000);
+    expect(rows[198].delta).toBeLessThan(0.1);
+    expect(rows[200].delta).toBeCloseTo(0.03);
   });
 
   it("keeps a representative bounded sample of G-force history", () => {

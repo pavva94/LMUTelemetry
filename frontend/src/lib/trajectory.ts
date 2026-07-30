@@ -15,6 +15,45 @@ export type GpsPoint = {
 
 export type TrackSegment = { from: GpsPoint; to: GpsPoint; color: string; delta: number | null };
 
+type LapSummary = {
+  lap_number?: number | string | null;
+  lap_time?: number | string | null;
+  in_pit?: boolean | number | string | null;
+  valid_lap?: boolean | number | string | null;
+};
+
+const DELTA_COLOR_STOPS: Array<{ delta: number; rgb: [number, number, number] }> = [
+  { delta: -1.5, rgb: [7, 81, 46] },
+  { delta: -0.75, rgb: [12, 127, 72] },
+  { delta: -0.3, rgb: [32, 173, 104] },
+  { delta: -0.1, rgb: [85, 202, 136] },
+  { delta: -0.05, rgb: [104, 198, 164] },
+  { delta: 0, rgb: [95, 159, 255] },
+  { delta: 0.05, rgb: [212, 155, 169] },
+  { delta: 0.1, rgb: [255, 138, 127] },
+  { delta: 0.3, rgb: [239, 91, 85] },
+  { delta: 0.75, rgb: [200, 50, 67] },
+  { delta: 1.5, rgb: [115, 19, 41] },
+];
+
+function isTruthyTelemetryFlag(value: LapSummary["in_pit"]) {
+  return value === true || value === 1 || (typeof value === "string" && ["true", "1", "yes"].includes(value.toLowerCase()));
+}
+
+export function selectFastestLapNumbers(laps: LapSummary[], limit = 2) {
+  return laps
+    .map((lap) => ({
+      lap: String(lap.lap_number ?? ""),
+      time: Number(lap.lap_time),
+      inPit: isTruthyTelemetryFlag(lap.in_pit),
+      invalid: lap.valid_lap != null && !isTruthyTelemetryFlag(lap.valid_lap),
+    }))
+    .filter((lap) => lap.lap && Number.isFinite(lap.time) && lap.time > 0 && !lap.inPit && !lap.invalid)
+    .sort((a, b) => a.time - b.time)
+    .slice(0, limit)
+    .map((lap) => lap.lap);
+}
+
 function nearestByProgress(points: GpsPoint[], target: GpsPoint) {
   if (!points.length) return null;
   return points.reduce((best, point) => Math.abs(point.progress - target.progress) < Math.abs(best.progress - target.progress) ? point : best, points[0]);
@@ -49,10 +88,19 @@ export function lapElapsed(point: GpsPoint, lapStart: number | null) {
   return point.time != null && lapStart != null ? point.time - lapStart : null;
 }
 
-function deltaColor(delta: number | null) {
-  if (delta == null || !Number.isFinite(delta)) return "#6fa8ff";
-  if (Math.abs(delta) <= 0.05) return "#6fa8ff";
-  return delta < 0 ? "#69d28f" : "#ff6961";
+export function deltaColor(delta: number | null) {
+  if (delta == null || !Number.isFinite(delta)) return "#5f9fff";
+  const value = Math.max(DELTA_COLOR_STOPS[0].delta, Math.min(DELTA_COLOR_STOPS[DELTA_COLOR_STOPS.length - 1].delta, delta));
+  const upperIndex = DELTA_COLOR_STOPS.findIndex((stop) => stop.delta >= value);
+  if (upperIndex <= 0) {
+    const [r, g, b] = DELTA_COLOR_STOPS[0].rgb;
+    return `rgb(${r}, ${g}, ${b})`;
+  }
+  const lower = DELTA_COLOR_STOPS[upperIndex - 1];
+  const upper = DELTA_COLOR_STOPS[upperIndex];
+  const mix = (value - lower.delta) / (upper.delta - lower.delta);
+  const [r, g, b] = lower.rgb.map((channel, index) => Math.round(channel + (upper.rgb[index] - channel) * mix));
+  return `rgb(${r}, ${g}, ${b})`;
 }
 
 export function deltaSegments(primary: GpsPoint[], comparison: GpsPoint[]): TrackSegment[] {

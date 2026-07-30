@@ -91,39 +91,37 @@ class PdfReportRenderer:
             lambda pdf, page, total: self._executive(pdf, page, total, analysis, narrative),
             lambda pdf, page, total: self._quality(pdf, page, total, analysis, narrative),
             lambda pdf, page, total: self._timeline(pdf, page, total, analysis, config),
+            lambda pdf, page, total: self._laps_and_stints(pdf, page, total, analysis, config),
+            lambda pdf, page, total: self._fuel_tyres(pdf, page, total, analysis, config),
+            lambda pdf, page, total: self._systems(pdf, page, total, analysis, config),
+            lambda pdf, page, total: self._best_and_compare(pdf, page, total, analysis),
+            lambda pdf, page, total: self._best_lap_inputs(pdf, page, total, analysis),
+            lambda pdf, page, total: self._pits_traffic_corners(pdf, page, total, analysis),
             lambda pdf, page, total: self._session_specific(pdf, page, total, analysis, narrative),
-            lambda pdf, page, total: self._recommendations(pdf, page, total, analysis, config, narrative),
         ]
-        if config.include_charts:
-            pages.insert(4, lambda pdf, page, total: self._best_lap_inputs(pdf, page, total, analysis))
-        lap_chunk_size = 23 if config.detail_level == "detailed" else 34
+        for index in range(0, len(analysis.xy_plots), 2):
+            plots = analysis.xy_plots[index:index + 2]
+            pages.append((lambda rows: (lambda pdf, page, total: self._xy_plot_page(pdf, page, total, rows)))(plots))
+        lap_chunk_size = 23
         lap_pages = [
             (lambda rows: (lambda pdf, page, total: self._lap_table(pdf, page, total, analysis, rows, config)))(analysis.lap_table[index:index + lap_chunk_size])
             for index in range(0, len(analysis.lap_table), lap_chunk_size)
         ]
-        pages[-1:-1] = lap_pages
-        if config.detail_level == "detailed":
-            pages[4:4] = [
-                lambda pdf, page, total: self._laps_and_stints(pdf, page, total, analysis, config),
-                lambda pdf, page, total: self._fuel_tyres(pdf, page, total, analysis, config),
-                lambda pdf, page, total: self._systems(pdf, page, total, analysis, config),
-                lambda pdf, page, total: self._best_and_compare(pdf, page, total, analysis),
-                lambda pdf, page, total: self._pits_traffic_corners(pdf, page, total, analysis),
-            ]
-            channel_rows = analysis.channels or [{"channel": "No channel manifest available", "usage": "unavailable"}]
-            appendix_pages = [
-                (lambda rows: (lambda pdf, page, total: self._channel_appendix(pdf, page, total, rows)))(channel_rows[index:index + 51])
-                for index in range(0, len(channel_rows), 51)
-            ]
-            event_rows = analysis.events or []
-            if event_rows:
-                for index in range(0, len(event_rows), 10):
-                    chunk = event_rows[index:index + 10]
-                    last = index + 10 >= len(event_rows)
-                    appendix_pages.append((lambda rows, include_definitions: (lambda pdf, page, total: self._event_appendix(pdf, page, total, analysis, rows, include_definitions)))(chunk, last))
-            else:
-                appendix_pages.append(lambda pdf, page, total: self._event_appendix(pdf, page, total, analysis, [], True))
-            pages[-1:-1] = appendix_pages
+        pages.extend(lap_pages)
+        channel_rows = analysis.channels or [{"channel": "No channel manifest available", "usage": "unavailable"}]
+        pages.extend(
+            (lambda rows: (lambda pdf, page, total: self._channel_appendix(pdf, page, total, rows)))(channel_rows[index:index + 51])
+            for index in range(0, len(channel_rows), 51)
+        )
+        event_rows = analysis.events or []
+        if event_rows:
+            for index in range(0, len(event_rows), 10):
+                chunk = event_rows[index:index + 10]
+                last = index + 10 >= len(event_rows)
+                pages.append((lambda rows, include_definitions: (lambda pdf, page, total: self._event_appendix(pdf, page, total, analysis, rows, include_definitions)))(chunk, last))
+        else:
+            pages.append(lambda pdf, page, total: self._event_appendix(pdf, page, total, analysis, [], True))
+        pages.append(lambda pdf, page, total: self._recommendations(pdf, page, total, analysis, config, narrative))
         with PdfPages(output, metadata={"Title": config.title or narrative.report_title(analysis), "Author": "LMU Telemetry", "Subject": f"{analysis.session_type.title()} telemetry performance analysis", "Keywords": "LMU telemetry motorsport performance"}) as pdf:
             for index, page_builder in enumerate(pages, 1):
                 page_builder(pdf, index, len(pages))
@@ -214,28 +212,21 @@ class PdfReportRenderer:
         fig = self._figure(pdf, page, total, "Session timeline", landscape=True)
         fig.text(.06, .88, "Session Timeline", fontsize=20, weight="bold", color=NAVY)
         ax = fig.add_axes([.08, .18, .84, .58])
-        if c.include_charts:
-            self.charts.lap_time(ax, a)
-        else:
-            ax.axis("off"); ax.text(.5, .5, "Charts excluded by report configuration", ha="center", va="center")
+        self.charts.lap_time(ax, a)
         pdf.savefig(fig); plt.close(fig)
 
     def _laps_and_stints(self, pdf, page, total, a, c):
         fig = self._figure(pdf, page, total, "Lap and stint analysis", landscape=True)
         fig.text(.06, .88, "Lap & Stint Analysis", fontsize=20, weight="bold", color=NAVY)
         ax = fig.add_axes([.07, .16, .42, .60]); ax2 = fig.add_axes([.55, .16, .38, .60])
-        if c.include_charts:
-            self.charts.lap_time(ax, a); self.charts.stints(ax2, a)
-        else:
-            ax.axis("off"); ax2.axis("off")
+        self.charts.lap_time(ax, a); self.charts.stints(ax2, a)
         pdf.savefig(fig); plt.close(fig)
 
     def _fuel_tyres(self, pdf, page, total, a, c):
         fig = self._figure(pdf, page, total, "Fuel and tyre analysis", landscape=True)
         fig.text(.06, .88, "Fuel & Tyre Analysis", fontsize=20, weight="bold", color=NAVY)
         ax = fig.add_axes([.07, .17, .42, .57])
-        if c.include_charts: self.charts.fuel(ax, a)
-        else: ax.axis("off")
+        self.charts.fuel(ax, a)
         fuel = a.fuel; tyre = a.tyre
         text = f"Fuel median: {self._table_value(fuel.get('median_per_lap'),3)} L/lap\nFuel effect: {self._table_value(fuel.get('lap_time_effect_seconds_per_liter'),4)} s/L ({fuel.get('confidence')})\n{fuel.get('effect_note')}\n\nTyre degradation: {self._table_value(tyre.get('degradation_seconds_per_lap'),3)} s/lap ({tyre.get('confidence')})\n{tyre.get('degradation_note')}"
         fig.text(.55, .70, _wrap(text, 55), fontsize=10, color=NAVY, va="top", linespacing=1.5)
@@ -297,6 +288,73 @@ class PdfReportRenderer:
             ax.axis("off"); ax.text(.5, .5, "Best-lap throttle/brake trace unavailable", ha="center", va="center")
         pdf.savefig(fig); plt.close(fig)
 
+    def _xy_plot_page(self, pdf, page, total, plots):
+        fig = self._figure(pdf, page, total, "X-Y telemetry plots", landscape=True)
+        fig.text(.05, .89, "Available X-Y Telemetry Plots", fontsize=18, weight="bold", color=NAVY)
+        fig.text(.05, .845, "Plots use valid, non-pit laps and are included only when the required recorded channels produce data.", fontsize=7.5, color=GREY)
+        positions = ([.07, .18, .86, .56],) if len(plots) == 1 else ([.06, .20, .40, .53], [.55, .20, .40, .53])
+        palette = (BLUE, RED, "#16a34a", "#d69e2e", "#7c3aed", "#0891b2", "#be185d", "#4d7c0f")
+        for plot_index, (plot, position) in enumerate(zip(plots, positions)):
+            ax = fig.add_axes(position)
+            points = plot.get("points") or []
+            grouped: dict[str, list[dict[str, Any]]] = {}
+            for point in points:
+                grouped.setdefault(str(point.get("series") or "Data"), []).append(point)
+            if len(grouped) == 1:
+                group = next(iter(grouped.values()))
+                speeds = [point.get("speed") for point in group]
+                if group and all(isinstance(value, (int, float)) for value in speeds):
+                    scatter = ax.scatter(
+                        [point["x"] for point in group],
+                        [point["y"] for point in group],
+                        c=speeds,
+                        cmap="viridis",
+                        s=6,
+                        alpha=.45,
+                        linewidths=0,
+                    )
+                    colorbar = fig.colorbar(scatter, ax=ax, fraction=.035, pad=.02)
+                    colorbar.set_label("Speed (km/h)", fontsize=6)
+                    colorbar.ax.tick_params(labelsize=6)
+                else:
+                    ax.scatter([point["x"] for point in group], [point["y"] for point in group], color=BLUE, s=6, alpha=.45, linewidths=0)
+            else:
+                for series_index, (name, group) in enumerate(grouped.items()):
+                    ax.scatter(
+                        [point["x"] for point in group],
+                        [point["y"] for point in group],
+                        color=palette[series_index % len(palette)],
+                        s=6,
+                        alpha=.45,
+                        linewidths=0,
+                        label=name,
+                    )
+                ax.legend(fontsize=6, markerscale=1.8, loc="best")
+            axes = plot.get("axes") or {}
+            x_axis, y_axis = axes.get("x") or {}, axes.get("y") or {}
+            x_label = f"{x_axis.get('label') or 'X'}{f' ({x_axis.get('unit')})' if x_axis.get('unit') else ''}"
+            y_label = f"{y_axis.get('label') or 'Y'}{f' ({y_axis.get('unit')})' if y_axis.get('unit') else ''}"
+            ax.set_title(str(plot.get("title") or plot.get("plot_id") or "X-Y plot"), fontsize=10, weight="bold", color=NAVY)
+            ax.set_xlabel(x_label, fontsize=7); ax.set_ylabel(y_label, fontsize=7)
+            ax.tick_params(labelsize=6)
+            ax.grid(True, color=LIGHT, linewidth=.4, alpha=.8)
+            x_values = [point["x"] for point in points]
+            y_values = [point["y"] for point in points]
+            if x_values and min(x_values) <= 0 <= max(x_values):
+                ax.axvline(0, color=GREY, linewidth=.6)
+            if y_values and min(y_values) <= 0 <= max(y_values):
+                ax.axhline(0, color=GREY, linewidth=.6)
+            stats = plot.get("stats") or {}
+            summary = (
+                f"{stats.get('count', len(points))} source points · "
+                f"Y min {self._table_value(stats.get('min'), 3)} · "
+                f"max {self._table_value(stats.get('max'), 3)} · "
+                f"avg {self._table_value(stats.get('average'), 3)} · "
+                f"σ {self._table_value(stats.get('std_dev'), 3)}"
+            )
+            fig.text(position[0], .12 if len(plots) == 1 else .135, summary, fontsize=6.5, color=GREY)
+        pdf.savefig(fig); plt.close(fig)
+
     def _pits_traffic_corners(self, pdf, page, total, a):
         fig=self._figure(pdf,page,total,"Pit, traffic and event evidence")
         fig.text(.06,.91,"Pits, Traffic & Event Evidence",fontsize=20,weight="bold",color=NAVY)
@@ -331,7 +389,7 @@ class PdfReportRenderer:
         ax = fig.add_axes([.03,.08,.94,.73]); ax.axis("off")
         widths = [.035,.065,.045,.045,.15,.03,.04,.045,.045,.04,.042,.042,.045,.04,.042,.045,.055,.05]
         table = ax.table(cellText=data, colLabels=columns, colWidths=widths, loc="upper center", cellLoc="center")
-        table.auto_set_font_size(False); table.set_fontsize(5.4 if c.detail_level == "detailed" else 4.8); table.scale(1, 1.35 if c.detail_level == "detailed" else .82)
+        table.auto_set_font_size(False); table.set_fontsize(5.4); table.scale(1, 1.35)
         for (row_index, _column), cell in table.get_celld().items():
             cell.set_edgecolor(LIGHT); cell.set_linewidth(.35)
             if row_index == 0: cell.set_facecolor(NAVY); cell.get_text().set_color("white"); cell.get_text().set_weight("bold")
@@ -344,7 +402,7 @@ class PdfReportRenderer:
         ax = fig.add_axes([.06,.48,.39,.30])
         valid = [row.get("lap_time") for row in a.lap_table if row.get("lap_time") is not None and "valid representative" in str(row.get("classification"))]
         all_times = [row.get("lap_time") for row in a.lap_table if row.get("lap_time") is not None]
-        if c.include_charts and all_times:
+        if all_times:
             ax.hist(all_times, bins=min(12,max(4,len(all_times)//4)), alpha=.35, color=GREY, label="all timed")
             if valid: ax.hist(valid, bins=min(12,max(4,len(valid)//4)), alpha=.65, color=BLUE, label="representative")
             ax.axvline(a.lap.get("median_pace"),color=RED,linestyle="--",label="median"); ax.set_xlabel("Lap time (s)"); ax.set_ylabel("Laps"); ax.legend(fontsize=7)

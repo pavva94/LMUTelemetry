@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Callable
 
+from app.analysis.xy_plot import build_xy_plot
 from app.db.models import SessionPerformanceReportModel
 from app.reports.analyzers import SessionAnalysisPipeline
 from app.reports.models import ReportAnalysis, ReportConfiguration
@@ -16,12 +17,28 @@ from app.services import lmu_duckdb_repository
 
 
 Progress = Callable[[str, str, int, int, int], None]
-REPORT_VERSION = "1.0"
+REPORT_VERSION = "1.1"
+
+XY_PLOT_CATALOG = (
+    ("gg", "G-G Diagram", "Diagramma G-G"),
+    ("speed_binned_gg", "Speed-Binned G-G Diagram", "Diagramma G-G per velocità"),
+    ("brake_deceleration", "Brake Pressure vs Deceleration", "Pressione freno vs decelerazione"),
+    ("throttle_acceptance", "Throttle Acceptance", "Accettazione acceleratore"),
+    ("steering_work_lap_time", "Steering Work vs Lap Time", "Lavoro sterzo vs tempo sul giro"),
+    ("gear_chart", "Gear Chart", "Diagramma marce"),
+    ("curvature_consistency", "Curvature Consistency", "Coerenza curvatura"),
+    ("tyre_temperature_grip", "Tyre Temperature vs Grip", "Temperatura pneumatici vs aderenza"),
+    ("ride_height_speed", "Ride Height vs Speed", "Altezza da terra vs velocità"),
+    ("front_rear_ride_height", "Front Ride Height vs Rear Ride Height", "Altezza anteriore vs posteriore"),
+    ("sideslip_curvature", "Vehicle Sideslip vs Curvature", "Deriva veicolo vs curvatura"),
+    ("sideslip_phase", "Sideslip Phase Plane", "Piano di fase della deriva"),
+    ("engine_power", "Calculated Engine Power vs RPM", "Potenza motore calcolata vs RPM"),
+)
 
 
 class SessionDataLoader:
-    def load(self, session_id: str) -> dict:
-        return lmu_duckdb_repository.review_session(None, session_id, sample_limit=5000)
+    def load(self, session_id: str, sample_limit: int = 10000) -> dict:
+        return lmu_duckdb_repository.review_session(None, session_id, sample_limit=sample_limit)
 
 
 class SessionReportGenerator:
@@ -44,11 +61,34 @@ class SessionReportGenerator:
         )
         return self.repository.add(model)
 
+    @staticmethod
+    def _build_xy_plots(review: dict, language: str) -> list[dict]:
+        rows = review.get("telemetry_samples") or []
+        laps = review.get("laps") or []
+        plots: list[dict] = []
+        for plot_id, english_title, italian_title in XY_PLOT_CATALOG:
+            result = build_xy_plot(
+                rows,
+                laps,
+                plot_id=plot_id,
+                filters={"valid_only": True},
+                color_by="speed",
+                include_trend=False,
+                include_envelope=False,
+                max_points=2500,
+            )
+            if not result.get("available") or not result.get("points"):
+                continue
+            result["title"] = italian_title if language == "it" else english_title
+            plots.append(result)
+        return plots
+
     def generate(self, report_id: str, session_id: str, config: ReportConfiguration, progress: Progress) -> dict:
         stage = self.STAGES[0]
         self.repository.update(report_id, status="running")
         try:
             progress(stage, "Opening the indexed historical session", 0, 6, 5)
+            review: dict | None = None
             cached = self.repository.cached_analysis(session_id, REPORT_VERSION, SessionAnalysisPipeline.METHODOLOGY_VERSION)
             if cached:
                 analysis = ReportAnalysis.from_public(cached)
@@ -67,7 +107,10 @@ class SessionReportGenerator:
                 progress(stage, "Running robust pace, fuel, tyre, pit and position analysis", 3, 6, 56)
                 analysis = SessionAnalysisPipeline().analyze(review)
             stage = self.STAGES[4]
-            progress(stage, "Preparing only charts supported by available evidence", 4, 6, 74)
+            progress(stage, "Preparing every chart supported by available evidence", 4, 6, 74)
+            if review is None:
+                review = SessionDataLoader().load(session_id)
+            analysis.xy_plots = self._build_xy_plots(review, config.language)
             best_lap_number = analysis.lap.get("best_lap_number")
             if best_lap_number is not None:
                 try:

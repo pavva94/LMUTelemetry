@@ -10,7 +10,9 @@ Confidence = Literal["high", "medium", "low", "unavailable"]
 @dataclass
 class ReportConfiguration:
     language: Literal["en", "it"] = "en"
-    detail_level: Literal["concise", "detailed"] = "concise"
+    # Persisted for compatibility with existing report records. New reports
+    # always use the complete renderer.
+    detail_level: Literal["concise", "detailed"] = "detailed"
     include_charts: bool = True
     anonymize_driver: bool = False
     title: str | None = None
@@ -68,6 +70,7 @@ class ReportAnalysis:
     findings: list[Finding] = field(default_factory=list)
     recommendations: list[Recommendation] = field(default_factory=list)
     methodology: dict[str, Any] = field(default_factory=dict)
+    xy_plots: list[dict[str, Any]] = field(default_factory=list)
 
     def public(self) -> dict[str, Any]:
         return asdict(self)

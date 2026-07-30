@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { PageSection } from "../components/PageSection";
@@ -10,13 +11,12 @@ import { duckdbSessionParts } from "../lib/lmuDuckdbSession";
 import { toFiniteNumber } from "../lib/sessionAnalysis";
 import { chartLabelFormatter, chartValueFormatter, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceTime } from "../lib/timeFormat";
-import { deltaSegments, lapElapsed, nearestByProgress, pathSegments, pointDistance, type GpsPoint } from "../lib/trajectory";
+import { deltaSegments, lapElapsed, nearestByProgress, pathSegments, pointDistance, selectFastestLapNumbers, type GpsPoint } from "../lib/trajectory";
 import type { LmuDuckdbScanResponse, LmuDuckdbSession } from "../types/lmuDuckdb";
 import type { SessionReview as Review } from "../types/session";
 
 type Row = Record<string, number | string | boolean | null | undefined>;
 
-const DEFAULT_FOLDER = "G:\\SteamLibrary\\steamapps\\common\\Le Mans Ultimate\\UserData\\Telemetry";
 const SCAN_LIMIT = 250;
 
 const fmt = (value?: number | null, digits = 1, suffix = "") =>
@@ -221,12 +221,7 @@ function LatestValues({ rows, fields }: { rows: Row[]; fields: Array<[string, st
 
 function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; samples: Row[]; laps: Row[] }) {
   const fastestPair = useMemo(() => {
-    return laps
-      .map((lap) => ({ lap: String(lap.lap_number ?? ""), time: Number(lap.lap_time), inPit: Boolean(lap.in_pit) }))
-      .filter((lap) => lap.lap && Number.isFinite(lap.time) && lap.time > 0 && !lap.inPit)
-      .sort((a, b) => a.time - b.time)
-      .slice(0, 2)
-      .map((lap) => lap.lap);
+    return selectFastestLapNumbers(laps);
   }, [laps]);
   const lapOptions = useMemo(() => {
     const fromLaps = laps.map((lap) => String(lap.lap_number ?? "")).filter(Boolean);
@@ -456,9 +451,13 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
         ))}
         {trajectoryStatus && <span>{trajectoryStatus}</span>}
         <span>{mapData.count} GPS points</span>
-        <span className="gps-delta-key faster">Primary faster</span>
-        <span className="gps-delta-key similar">Similar</span>
-        <span className="gps-delta-key slower">Primary slower</span>
+        <div className="gps-delta-scale" aria-label="Time delta color scale from primary faster to primary slower">
+          <span>Primary faster</span>
+          <i aria-hidden="true" />
+          <span>Similar</span>
+          <i aria-hidden="true" />
+          <span>Primary slower</span>
+        </div>
       </div>
       <div className="gps-map-shell">
         <svg
@@ -616,15 +615,14 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
 
 export function LmuDuckdbReview() {
   const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
-  const [folder, setFolder] = useState(DEFAULT_FOLDER);
   const [sessions, setSessions] = useState<LmuDuckdbSession[]>([]);
-  const [selectedId, setSelectedId] = useState("current");
+  const [selectedId, setSelectedId] = useState("");
   const [review, setReview] = useState<Review | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
   const [currentOffset, setCurrentOffset] = useState(0);
   const [total, setTotal] = useState<number | null>(null);
-  const [status, setStatus] = useState("Paste the LMU telemetry folder and scan");
+  const [status, setStatus] = useState("Loading saved sessions");
   const [busy, setBusy] = useState(false);
   const [reviewLoading, setReviewLoading] = useState(false);
 
@@ -645,16 +643,16 @@ export function LmuDuckdbReview() {
       setCurrentOffset(payload.offset);
       setTotal(payload.total);
       setSelectedId((current) =>
-        current === "current" || payload.sessions.some((session) => session.id === current)
+        payload.sessions.some((session) => session.id === current)
           ? current
-          : payload.sessions[0]?.id || "current"
+          : payload.sessions[0]?.id || ""
       );
       const loaded = offset + payload.sessions.length;
       setStatus(payload.total ? `Showing ${offset + 1}-${loaded} of ${payload.total} saved sessions` : "No saved sessions found");
     } catch (exc) {
       if (!offset) {
         setSessions([]);
-        setSelectedId("current");
+        setSelectedId("");
       }
       setStatus(exc instanceof Error ? exc.message : String(exc));
     } finally {
@@ -662,51 +660,27 @@ export function LmuDuckdbReview() {
     }
   };
 
-  const useFolder = async () => {
-    if (!folder.trim()) return;
-    setBusy(true);
-    setStatus("Saving session folder");
-    try {
-      const settings = await api.saveLmuDuckdbSettings(folder.trim());
-      if (settings.folder_path) setFolder(settings.folder_path);
-      await loadPage(0);
-    } catch (exc) {
-      setStatus(exc instanceof Error ? exc.message : String(exc));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   useEffect(() => {
-    let mounted = true;
-    api.lmuDuckdbSettings()
-      .then((settings) => {
-        if (!mounted) return;
-        if (settings.folder_path) setFolder(settings.folder_path);
-        setStatus(settings.last_sync_status || "Sync the LMU telemetry folder from User Profile");
-        return loadPage(0);
-      })
-      .catch((exc) => mounted && setStatus(exc instanceof Error ? exc.message : String(exc)));
-    return () => {
-      mounted = false;
-    };
+    void loadPage(0);
   }, []);
 
   useEffect(() => {
+    if (!selectedId) {
+      setReview(null);
+      setReviewLoading(false);
+      return;
+    }
     let mounted = true;
     setReview(null);
     setReviewLoading(true);
-    setStatus(selectedId === "current" ? "Loading current live session" : "Loading selected session");
-    const request = selectedId === "current"
-      ? api.review(300)
-      : runDuckdbJob<Review>(() => api.startDuckdbReviewJob(selectedId, 300));
-    request
+    setStatus("Loading selected saved session");
+    runDuckdbJob<Review>(() => api.startDuckdbReviewJob(selectedId, 300))
       .then((data) => {
         if (!mounted) return;
         setReview(data);
         const extraWarnings = ((data as Review & { warnings?: string[] }).warnings || []);
         setWarnings((current) => Array.from(new Set([...current, ...extraWarnings])));
-        setStatus(selectedId === "current" ? "Current live session loaded" : "Session loaded");
+        setStatus("Saved session loaded");
       })
       .catch((exc) => mounted && setStatus(exc instanceof Error ? exc.message : String(exc)))
       .finally(() => {
@@ -717,7 +691,7 @@ export function LmuDuckdbReview() {
     };
   }, [selectedId]);
 
-  const selectedSession = ((selectedId === "current" ? review?.session : review?.session?.id === selectedId ? review.session : null) || sessions.find((session) => session.id === selectedId) || null) as LmuDuckdbSession | null;
+  const selectedSession = ((review?.session?.id === selectedId ? review.session : null) || sessions.find((session) => session.id === selectedId) || null) as LmuDuckdbSession | null;
   const selectedParts = duckdbSessionParts(selectedSession);
   const metadataRows = Object.entries(selectedSession?.metadata || {}).slice(0, 16);
   const samples = (review?.telemetry_samples || []) as Row[];
@@ -798,16 +772,15 @@ export function LmuDuckdbReview() {
     <div className="duckdb-workspace">
       <LoadingOverlay show={busy || reviewLoading} title={duckdbProgress?.phase || (reviewLoading ? "Loading session" : "Loading sessions")} detail={duckdbProgress?.message || (reviewLoading ? "Opening the selected session and preparing review charts." : "Loading saved telemetry sessions from the local index.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       <section className="duckdb-browser">
-        <SectionTitle title="Session Review" help="Read-only review of the current live session or saved Le Mans Ultimate sessions. Raw chart samples are loaded from the selected session on demand." />
-        <div className="duckdb-path-grid">
-          <label>Telemetry folder<input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder={DEFAULT_FOLDER} /></label>
+        <SectionTitle title="Session Review" help="Read-only review of saved Le Mans Ultimate sessions. The newest saved session opens by default; manage the telemetry folder and sync from User Profile." />
+        <div className="duckdb-review-toolbar">
           <div className="duckdb-session-picker-field">
-            <span className="label">Session</span>
+            <span className="label">Saved session</span>
             <SearchableSessionPicker
               sessions={sessions}
               selectedId={selectedId}
               liveValue="current"
-              liveLabel="Current live session"
+              includeLive={false}
               status={status}
               onSelect={setSelectedId}
               searchPlaceholder="Search type, track, car, date, file, or laps"
@@ -815,21 +788,34 @@ export function LmuDuckdbReview() {
               listAriaLabel="Review sessions"
             />
           </div>
-          <button disabled={busy || !folder.trim()} onClick={() => void useFolder()}>Use folder</button>
-          <button className="primary" disabled={busy} onClick={() => void loadPage(0)}>Refresh list</button>
-          <input value={status} readOnly />
+          <button className="primary duckdb-refresh-button" disabled={busy} onClick={() => void loadPage(0)}>
+            <RefreshCw size={16} aria-hidden="true" />
+            Refresh list
+          </button>
+          <span className="duckdb-list-status" role="status">{status}</span>
         </div>
         {warnings.map((warning) => <p className="analysis-warning" key={warning}>{warning}</p>)}
         <div className="duckdb-pager">
-          <button disabled={busy || currentOffset <= 0} onClick={() => void loadPage(Math.max(0, currentOffset - SCAN_LIMIT))}>Previous {SCAN_LIMIT}</button>
-          <button disabled={busy || nextOffset == null} onClick={() => nextOffset != null && void loadPage(nextOffset)}>Next {SCAN_LIMIT}</button>
+          <button aria-label={`Show previous ${SCAN_LIMIT} saved sessions`} disabled={busy || currentOffset <= 0} onClick={() => void loadPage(Math.max(0, currentOffset - SCAN_LIMIT))}>
+            <ChevronLeft size={17} aria-hidden="true" />
+            Previous
+          </button>
+          {total != null && (
+            <span className="duckdb-page-range">
+              <strong>{sessions.length ? `${currentOffset + 1}–${currentOffset + sessions.length}` : "0"}</strong>
+              <small>of {total} saved</small>
+            </span>
+          )}
+          <button aria-label={`Show next ${SCAN_LIMIT} saved sessions`} disabled={busy || nextOffset == null} onClick={() => nextOffset != null && void loadPage(nextOffset)}>
+            Next
+            <ChevronRight size={17} aria-hidden="true" />
+          </button>
         </div>
-        {total != null && <div className="muted duckdb-count">{sessions.length ? `${currentOffset + 1}-${currentOffset + sessions.length}` : "0"} of {total}</div>}
         {sessions.length ? (
           <div className="duckdb-selected-session">
             <strong>{sessionTitle(selectedSession)}</strong>
             <span>{text(selectedSession?.file_name)} / {dateText(selectedSession?.created_at)} / {fileSize(selectedSession?.file_size_bytes)}</span>
-            <small>{selectedId === "current" ? "Live/current source" : "Saved session source"}</small>
+            <small>Saved session source</small>
           </div>
         ) : <EmptyState detail="No sessions saved yet. Set and sync the LMU session folder from User Profile." />}
       </section>
@@ -982,7 +968,7 @@ export function LmuDuckdbReview() {
       </section>
       {available.gps && (
         <section className="card span-12">
-          <SectionTitle title="Lap Trajectory Compare" help="Compares two GPS lap traces from the selected session. Green means the primary lap reached that point sooner than the comparison lap, red means it was slower, and blue means the delta is very similar." />
+          <SectionTitle title="Lap Trajectory Compare" help="Compares the session's two fastest valid non-pit laps by default. Green means the primary lap reached that point sooner, red means it was slower, and blue means the delta is very similar; darker green or red indicates a larger time difference." />
           <LapTrajectoryMap sessionId={selectedId} samples={samples} laps={laps} />
         </section>
       )}
