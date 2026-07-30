@@ -3,6 +3,8 @@ export type LapInputPoint = {
   throttle: number;
   brake: number;
   elapsedTime?: number;
+  gForceLat?: number;
+  gForceLong?: number;
 };
 
 export type LapInputTrace = {
@@ -20,6 +22,12 @@ export type LapInputChartRow = {
 export type LapTimeDeltaRow = {
   progress: number;
   delta: number;
+};
+
+export type GForceScatterPoint = {
+  x: number;
+  y: number;
+  z: number;
 };
 
 export function appendLapInputPoint(points: LapInputPoint[], point: LapInputPoint) {
@@ -69,6 +77,23 @@ export function buildLapInputChartData(series: Array<{ id: string; trace?: LapIn
     });
   });
   return [...rows.values()].sort((left, right) => left.progress - right.progress);
+}
+
+export function sampleLapGForcePoints(trace?: LapInputTrace, maxPoints = 72): GForceScatterPoint[] {
+  if (!trace || maxPoints <= 0) return [];
+  const points = trace.points.filter((point) => Number.isFinite(point.gForceLat) && Number.isFinite(point.gForceLong));
+  if (maxPoints === 1 && points.length) {
+    const point = points[points.length - 1];
+    return [{ x: point.gForceLat as number, y: point.gForceLong as number, z: 12 }];
+  }
+  if (points.length <= maxPoints) {
+    return points.map((point) => ({ x: point.gForceLat as number, y: point.gForceLong as number, z: 12 }));
+  }
+  const step = (points.length - 1) / (maxPoints - 1);
+  return Array.from({ length: maxPoints }, (_, index) => {
+    const point = points[Math.round(index * step)];
+    return { x: point.gForceLat as number, y: point.gForceLong as number, z: 12 };
+  });
 }
 
 function elapsedAtDistance(points: LapInputPoint[], distance: number) {

@@ -2,10 +2,11 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { PageSection } from "../components/PageSection";
+import { SearchableSessionPicker } from "../components/SearchableSessionPicker";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
 import { useT } from "../i18n/I18nProvider";
-import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
+import { duckdbSessionParts } from "../lib/lmuDuckdbSession";
 import { average, median, standardDeviation, toFiniteNumber, validSessionLaps } from "../lib/sessionAnalysis";
 import { calibrateLiftCoast } from "../lib/liftCoastCalibration";
 import { calibrateStintPace } from "../lib/stintCalibration";
@@ -37,7 +38,7 @@ type FormState = {
 };
 
 type NumericFormKey = Exclude<keyof FormState, "race_start_new_tyres" | "lift_coast_mode">;
-type ModelSource = "live" | "session" | "history";
+type ModelSource = "live" | "session";
 type PaceBasis = "median" | "trimmed" | "percentile";
 
 type PlannerModel = {
@@ -226,7 +227,7 @@ function tyreChangeWearText(stop: StrategyCandidate["stopsDetail"][number]) {
     .join(" / ");
 }
 
-function seededForm(strategy: StrategyState | null, telemetry?: TelemetrySnapshot | null, current?: FormState): FormState {
+export function seededForm(strategy: StrategyState | null, telemetry?: TelemetrySnapshot | null, current?: FormState): FormState {
   const fallbackTank = positiveNumberFrom(current?.tank_capacity_liters, DEFAULT_TANK_CAPACITY_LITERS);
   const tank = positiveNumberFrom(telemetry?.player?.fuel_capacity_liters ?? strategy?.fuel.fuel_capacity_liters, fallbackTank);
   const assumptions = strategy?.assumptions || {};
@@ -241,7 +242,7 @@ function seededForm(strategy: StrategyState | null, telemetry?: TelemetrySnapsho
     refuel_seconds_per_5_liters: numberFrom(assumptions.refuel_seconds_per_5_liters, current?.refuel_seconds_per_5_liters ?? 1.2),
     max_tyre_wear: numberFrom(assumptions.max_tyre_wear, current?.max_tyre_wear ?? 0.75),
     max_tyres_available: numberFrom(assumptions.max_tyres_available, current?.max_tyres_available ?? 24),
-    lift_coast_mode: assumptions.lift_coast_mode === "fixed" || assumptions.lift_coast_mode === "inferred" ? assumptions.lift_coast_mode : current?.lift_coast_mode ?? "inferred",
+    lift_coast_mode: assumptions.lift_coast_mode === "fixed" || assumptions.lift_coast_mode === "inferred" ? assumptions.lift_coast_mode : current?.lift_coast_mode ?? "fixed",
     lift_coast_target_percent: numberFrom(assumptions.lift_coast_target_percent, current?.lift_coast_target_percent ?? 3),
     safety_car_pit_loss_seconds: numberFrom(assumptions.safety_car_pit_loss_seconds, current?.safety_car_pit_loss_seconds ?? 16),
     fuel_safety_margin_laps: numberFrom(assumptions.fuel_safety_margin_laps, current?.fuel_safety_margin_laps ?? 1),
@@ -637,10 +638,7 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   const [manualLapText, setManualLapText] = useState(() => formatTimeInput(seededForm(strategy, telemetry).normal_lap_time));
   const [sessions, setSessions] = useState<LmuDuckdbSession[]>([]);
   const [selectedSessionId, setSelectedSessionId] = useState("");
-  const [sessionSearch, setSessionSearch] = useState("");
   const [sessionReview, setSessionReview] = useState<SessionReview | null>(null);
-  const [historyReview, setHistoryReview] = useState<SessionReview | null>(null);
-  const [historyCount, setHistoryCount] = useState(0);
   const [paceBasis, setPaceBasis] = useState<PaceBasis>("median");
   const [safetyPolicy, setSafetyPolicy] = useState<"aggressive" | "balanced" | "conservative">("balanced");
   const [serviceModel, setServiceModel] = useState<"sequential" | "parallel">("sequential");
@@ -716,6 +714,16 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     setForm((current) => ({ ...current, [key]: value }));
   };
   const updateLapTime = (value: string) => {
+    if (!value.trim()) {
+      setDirtyFields((current) => {
+        const next = new Set(current);
+        next.delete("normal_lap_time");
+        return next;
+      });
+      setForm((current) => ({ ...current, normal_lap_time: activeModel.normalLapTime ?? current.normal_lap_time }));
+      setManualLapText(formatTimeInput(activeModel.normalLapTime));
+      return;
+    }
     setManualLapText(value);
     const seconds = parseRaceTimeInput(value);
     setDirtyFields((current) => new Set(current).add("normal_lap_time"));
@@ -723,13 +731,11 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
   };
   const liveModel = useMemo(() => modelFromLive(strategy, telemetry, form), [strategy, telemetry, form]);
   const selectedSession = sessions.find((session) => session.id === selectedSessionId);
-  const visibleSessions = useMemo(() => filterDuckdbSessions(sessions, sessionSearch, selectedSessionId), [sessionSearch, selectedSessionId, sessions]);
   const sessionModel = useMemo(() => {
     const parts = duckdbSessionParts(selectedSession);
     return modelFromSession(sessionReview, selectedSession ? `${parts.sessionType} - ${parts.track}` : "Saved session", form, paceBasis);
   }, [form, paceBasis, sessionReview, selectedSession]);
-  const historyModel = useMemo(() => modelFromSession(historyReview, `Comparable history · ${historyCount} sessions`, form, paceBasis), [form, historyCount, historyReview, paceBasis]);
-  const activeModel = modelSource === "history" && historyModel ? historyModel : modelSource === "session" && sessionModel ? sessionModel : liveModel;
+  const activeModel = modelSource === "session" && sessionModel ? sessionModel : liveModel;
 
   const applyModelToForm = (model: PlannerModel, clearDirty: boolean) => {
     setForm((current) => {
@@ -742,58 +748,6 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
     });
     if (clearDirty) setDirtyFields(new Set());
   };
-  const useLiveData = () => {
-    setModelSource("live");
-    const next = seededForm(strategy, telemetry, form);
-    setForm(next);
-    setManualLapText(formatTimeInput(next.normal_lap_time));
-    setDirtyFields(new Set());
-    appliedLiveModel.current = null;
-    setSourceStatus("Using live data directly");
-  };
-  const useSelectedSession = () => {
-    if (!sessionModel) {
-      setSourceStatus("Select a saved session with valid laps first");
-      return;
-    }
-    setModelSource("session");
-    applyModelToForm(sessionModel, false);
-    setSourceStatus(`Using ${sessionModel.label}`);
-  };
-  const useComparableHistory = async () => {
-    if (!selectedSession) {
-      setSourceStatus("Select a reference session before building comparable history");
-      return;
-    }
-    const track = (selectedSession.track_name || "").toLowerCase();
-    const car = (selectedSession.vehicle_name || selectedSession.vehicle_model || "").toLowerCase();
-    const comparable = sessions.filter((session) =>
-      (!track || (session.track_name || "").toLowerCase() === track) &&
-      (!car || (session.vehicle_name || session.vehicle_model || "").toLowerCase() === car)
-    ).slice(0, 8);
-    setSessionLoading(true);
-    setSourceStatus(`Loading ${comparable.length} comparable sessions`);
-    try {
-      const history = await runDuckdbJob<SessionReview & { session_count: number }>(() => api.startDuckdbHistoryJob(comparable.map((session) => session.id)));
-      setHistoryReview(history);
-      setHistoryCount(history.session_count);
-      setModelSource("history");
-      setSourceStatus(`Using ${history.session_count} comparable ${selectedSession.track_name || "track"} / ${selectedSession.vehicle_name || selectedSession.vehicle_model || "car"} sessions`);
-    } catch (error) {
-      setSourceStatus(error instanceof Error ? error.message : "Comparable history unavailable");
-    } finally {
-      setSessionLoading(false);
-    }
-  };
-  const resetMeasuredModel = () => {
-    setDirtyFields((current) => { const next = new Set(current); next.delete("normal_lap_time"); return next; });
-    if (activeModel.normalLapTime != null) {
-      setForm((current) => ({ ...current, normal_lap_time: activeModel.normalLapTime! }));
-      setManualLapText(formatTimeInput(activeModel.normalLapTime));
-    }
-    setSourceStatus("Manual pace override cleared");
-  };
-
   useEffect(() => {
     if (modelSource !== "session" || !selectedSessionId || !sessionModel) return;
     const signature = `${selectedSessionId}:${sessionModel.normalLapTime ?? ""}:${sessionModel.fuelPerLap ?? ""}`;
@@ -881,13 +835,13 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
           <p className="muted">Build a fuel, tyre, pace, and pit plan from measured telemetry. Every result below is tied to its source and constraints.</p>
         </div>
         <div className="strategy-source-identity">
-          <span className={`badge ${modelSource === "live" ? "green" : "blue"}`}>{modelSource === "live" ? "Live" : modelSource === "history" ? "Comparable history" : "Selected session"}</span>
+          <span className={`badge ${modelSource === "live" ? "green" : "blue"}`}>{modelSource === "live" ? "Live" : "Selected session"}</span>
           <strong>{modelSource === "live" ? `${telemetry?.session?.session_type || "Current session"} · ${telemetry?.session?.track_name || "Track unavailable"}` : activeModel.label}</strong>
           <span className="subvalue">{selectedSession?.vehicle_name || selectedSession?.vehicle_model || telemetry?.player?.vehicle_name || "Car unavailable"}</span>
           <span className="subvalue">{paceEvidence.foundLaps ?? paceEvidence.sampleLaps ?? 0} complete laps found · {paceEvidence.sampleLaps ?? 0} valid race-pace laps used</span>
         </div>
       </section>
-      <PageSection number="01" title="Race Plan" description="Set the race target, evidence source, fuel reserve, service timing, and tyre constraints.">
+      <PageSection number="01" title="Race Plan" description="Set the race target and evidence source. Open advanced settings only when you need to tune the model.">
       <section className="card span-12">
         <SectionTitle title={t("strategyPlanner.raceAssumptions")} help={t("strategyPlanner.raceAssumptionsHelp")} />
         <div className="strategy-assumption-layout">
@@ -918,68 +872,67 @@ export function StrategyPlanner({ strategy, telemetry }: { strategy: StrategySta
 
           <div className="strategy-assumption-groups">
             <fieldset className="strategy-assumption-group strategy-evidence-group">
-              <legend>Evidence source & pace</legend>
-              <label className="strategy-source-picker">
+              <legend>Evidence source</legend>
+              <div className="strategy-source-picker">
                 <span className="label">Reference session</span>
-                <input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search track, car, session type, or laps" />
-                <select value={selectedSessionId} onChange={(event) => setSelectedSessionId(event.target.value)}>
-                  <option value="">Live/current session</option>
-                  {visibleSessions.map((session) => <option key={session.id} value={session.id}>{duckdbSessionLabel(session)}</option>)}
-                </select>
-                <span className="subvalue">{sourceStatus}{sessionSearch.trim() ? ` - ${visibleSessions.length}/${sessions.length} matches` : ""}</span>
-              </label>
-              <label><span className="label">{t("strategyPlanner.paceBasis")}</span><select value={paceBasis} onChange={(event) => setPaceBasis(event.target.value as PaceBasis)}><option value="median">{t("strategyPlanner.medianValidLap")}</option><option value="trimmed">{t("strategyPlanner.trimmedMean")}</option><option value="percentile">{t("strategyPlanner.percentileRacePace")}</option></select><span className="subvalue">{t("strategyPlanner.calculatedFromReference")}</span></label>
-              <label><span className="label">Manual lap time</span><input value={manualLapText} onChange={(event) => updateLapTime(event.target.value)} placeholder="03:34.000" /><span className="subvalue">Optional override · mm:ss.mmm</span></label>
+                <SearchableSessionPicker
+                  sessions={sessions}
+                  selectedId={selectedSessionId}
+                  liveValue=""
+                  status={sourceStatus}
+                  onSelect={setSelectedSessionId}
+                  searchAriaLabel="Search reference sessions"
+                  listAriaLabel="Reference sessions"
+                />
+                <span className="subvalue">{sourceStatus} · {selectedSession ? "Saved reference selected" : "Using live/current session"}</span>
+              </div>
               <label><span className="label">{t("strategyPlanner.activeNormalLap")}</span><input value={`${formatRaceTime(form.normal_lap_time)} (${activeModel.source === "session" ? t("strategyPlanner.savedSessionManual") : activeModel.label})`} readOnly /><span className="subvalue">{t("strategyPlanner.usedByStrategyModel")}</span></label>
             </fieldset>
 
-            <fieldset className="strategy-assumption-group">
-              <legend>Fuel & reserve</legend>
-              <label><span className="label">Tank capacity</span><input type="number" min="0" step="0.1" value={form.tank_capacity_liters} onChange={(event) => update("tank_capacity_liters", event.target.value)} /><span className="subvalue">litres</span></label>
-              <label><span className="label">Safety reserve policy</span><select value={safetyPolicy} onChange={(event) => setSafetyPolicy(event.target.value as typeof safetyPolicy)}><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option></select><span className="subvalue">Adjusts planning rate and reserve</span></label>
-              <label><span className="label">Finish reserve</span><span className="strategy-inline-fields"><select value={reserveUnit} onChange={(event) => setReserveUnit(event.target.value as typeof reserveUnit)}><option value="laps">Equivalent laps</option><option value="liters">Litres</option></select><input type="number" min="0" step="0.1" value={reserveUnit === "laps" ? form.fuel_safety_margin_laps : form.fuel_safety_margin_liters} onChange={(event) => update(reserveUnit === "laps" ? "fuel_safety_margin_laps" : "fuel_safety_margin_liters", event.target.value)} /></span><span className="subvalue">{fmt(fuelSafetyMarginLiters, 2, " L")} before policy adjustment</span></label>
-              <label><span className="label">Lift-and-coast target</span><select value={form.lift_coast_mode} onChange={(event) => { const value = event.target.value as FormState["lift_coast_mode"]; setDirtyFields((current) => new Set(current).add("lift_coast_mode")); setForm((current) => ({ ...current, lift_coast_mode: value })); }}><option value="inferred">Infer saving needed</option><option value="fixed">Use selected percentage</option></select><span className="subvalue">Inference searches for the saving needed to extend a stint or remove a stop</span></label>
-              <label><span className="label">Selected lift-and-coast</span><input type="number" min="0.5" max="12" step="0.5" value={form.lift_coast_target_percent} onChange={(event) => update("lift_coast_target_percent", event.target.value)} disabled={form.lift_coast_mode !== "fixed"} /><span className="subvalue">Fuel saving target · defaults to 3%</span></label>
-            </fieldset>
-
-            <fieldset className="strategy-assumption-group">
-              <legend>Pit service</legend>
-              <label><span className="label">Pit lane driving loss</span><input type="number" min="0" step="0.1" value={form.pit_loss_seconds} onChange={(event) => update("pit_loss_seconds", event.target.value)} /><span className="subvalue">seconds per stop</span></label>
-              <label><span className="label">Load 5 L fuel</span><input type="number" min="0" step="0.1" value={form.refuel_seconds_per_5_liters} onChange={(event) => update("refuel_seconds_per_5_liters", event.target.value)} /><span className="subvalue">seconds</span></label>
-              <label><span className="label">Change one tyre</span><input type="number" min="0" step="0.1" value={form.tyre_change_seconds_per_tyre} onChange={(event) => update("tyre_change_seconds_per_tyre", event.target.value)} /><span className="subvalue">seconds</span></label>
-              <label><span className="label">Service timing</span><select value={serviceModel} onChange={(event) => setServiceModel(event.target.value as typeof serviceModel)}><option value="sequential">Sequential: fuel + tyres</option><option value="parallel">Parallel: slower job wins</option></select><span className="subvalue">How fuel and tyre work overlap</span></label>
-            </fieldset>
-
-            <fieldset className="strategy-assumption-group">
-              <legend>Tyre plan</legend>
+            <fieldset className="strategy-assumption-group strategy-tyres-available">
+              <legend>Tyres available</legend>
               <label><span className="label">Tyres available for race</span><input type="number" min="4" max="200" step="1" value={form.max_tyres_available} onChange={(event) => update("max_tyres_available", event.target.value)} /><span className="subvalue">Individual tyres · includes the four fitted at the start</span></label>
-              <label><span className="label">Maximum tyre wear</span><input type="number" min="0" max="1" step="0.01" value={form.max_tyre_wear} onChange={(event) => update("max_tyre_wear", event.target.value)} /><span className="subvalue">fraction · 0.75 means 75%</span></label>
-              <label><span className="label">Tyre change policy</span><select value={tyrePolicy} onChange={(event) => setTyrePolicy(event.target.value as typeof tyrePolicy)}><option value="automatic">Automatic by corner</option><option value="all">All four at every stop</option><option value="never">Never (exploration)</option></select><span className="subvalue">Automatic changes threshold crossings</span></label>
-              <label><span className="label">{t("strategyPlanner.startTyreSet")}</span><span className="toggle-line"><input type="checkbox" checked={form.race_start_new_tyres} onChange={(event) => updateBoolean("race_start_new_tyres", event.target.checked)} /><span>{t("strategyPlanner.startOnNewTyres")}</span></span><span className="subvalue">{t("strategyPlanner.otherwiseReferenceWear")}</span></label>
             </fieldset>
+
+            <details className="strategy-advanced-settings">
+              <summary>
+                <span><strong>Advanced settings</strong><small>Pace basis, fuel reserve, pit service, and tyre plan</small></span>
+                <span className="strategy-advanced-toggle" aria-hidden="true">+</span>
+              </summary>
+              <div className="strategy-advanced-grid">
+                <fieldset className="strategy-assumption-group">
+                  <legend>Pace basis</legend>
+                  <label><span className="label">{t("strategyPlanner.paceBasis")}</span><select value={paceBasis} onChange={(event) => setPaceBasis(event.target.value as PaceBasis)}><option value="median">{t("strategyPlanner.medianValidLap")}</option><option value="trimmed">{t("strategyPlanner.trimmedMean")}</option><option value="percentile">{t("strategyPlanner.percentileRacePace")}</option></select><span className="subvalue">{t("strategyPlanner.calculatedFromReference")}</span></label>
+                  <label><span className="label">Manual lap time</span><input value={manualLapText} onChange={(event) => updateLapTime(event.target.value)} placeholder="03:34.000" /><span className="subvalue">Optional override · mm:ss.mmm</span></label>
+                </fieldset>
+
+                <fieldset className="strategy-assumption-group">
+                  <legend>Fuel & reserve</legend>
+                  <label><span className="label">Tank capacity</span><input type="number" min="0" step="0.1" value={form.tank_capacity_liters} onChange={(event) => update("tank_capacity_liters", event.target.value)} /><span className="subvalue">litres</span></label>
+                  <label><span className="label">Safety reserve policy</span><select value={safetyPolicy} onChange={(event) => setSafetyPolicy(event.target.value as typeof safetyPolicy)}><option value="conservative">Conservative</option><option value="balanced">Balanced</option><option value="aggressive">Aggressive</option></select><span className="subvalue">Adjusts planning rate and reserve</span></label>
+                  <label><span className="label">Finish reserve</span><span className="strategy-inline-fields"><select value={reserveUnit} onChange={(event) => setReserveUnit(event.target.value as typeof reserveUnit)}><option value="laps">Equivalent laps</option><option value="liters">Litres</option></select><input type="number" min="0" step="0.1" value={reserveUnit === "laps" ? form.fuel_safety_margin_laps : form.fuel_safety_margin_liters} onChange={(event) => update(reserveUnit === "laps" ? "fuel_safety_margin_laps" : "fuel_safety_margin_liters", event.target.value)} /></span><span className="subvalue">{fmt(fuelSafetyMarginLiters, 2, " L")} before policy adjustment</span></label>
+                  <label><span className="label">Lift-and-coast target</span><select value={form.lift_coast_mode} onChange={(event) => { const value = event.target.value as FormState["lift_coast_mode"]; setDirtyFields((current) => new Set(current).add("lift_coast_mode")); setForm((current) => ({ ...current, lift_coast_mode: value })); }}><option value="inferred">Infer saving needed</option><option value="fixed">Use selected percentage</option></select><span className="subvalue">Inference searches for the saving needed to extend a stint or remove a stop</span></label>
+                  <label><span className="label">Selected lift-and-coast</span><input type="number" min="0.5" max="12" step="0.5" value={form.lift_coast_target_percent} onChange={(event) => update("lift_coast_target_percent", event.target.value)} disabled={form.lift_coast_mode !== "fixed"} /><span className="subvalue">Fuel saving target · defaults to 3%</span></label>
+                </fieldset>
+
+                <fieldset className="strategy-assumption-group">
+                  <legend>Pit service</legend>
+                  <label><span className="label">Pit lane driving loss</span><input type="number" min="0" step="0.1" value={form.pit_loss_seconds} onChange={(event) => update("pit_loss_seconds", event.target.value)} /><span className="subvalue">seconds per stop</span></label>
+                  <label><span className="label">Load 5 L fuel</span><input type="number" min="0" step="0.1" value={form.refuel_seconds_per_5_liters} onChange={(event) => update("refuel_seconds_per_5_liters", event.target.value)} /><span className="subvalue">seconds</span></label>
+                  <label><span className="label">Change one tyre</span><input type="number" min="0" step="0.1" value={form.tyre_change_seconds_per_tyre} onChange={(event) => update("tyre_change_seconds_per_tyre", event.target.value)} /><span className="subvalue">seconds</span></label>
+                  <label><span className="label">Service timing</span><select value={serviceModel} onChange={(event) => setServiceModel(event.target.value as typeof serviceModel)}><option value="sequential">Sequential: fuel + tyres</option><option value="parallel">Parallel: slower job wins</option></select><span className="subvalue">How fuel and tyre work overlap</span></label>
+                </fieldset>
+
+                <fieldset className="strategy-assumption-group">
+                  <legend>Tyre plan</legend>
+                  <label><span className="label">Maximum tyre wear</span><input type="number" min="0" max="1" step="0.01" value={form.max_tyre_wear} onChange={(event) => update("max_tyre_wear", event.target.value)} /><span className="subvalue">fraction · 0.75 means 75%</span></label>
+                  <label><span className="label">Tyre change policy</span><select value={tyrePolicy} onChange={(event) => setTyrePolicy(event.target.value as typeof tyrePolicy)}><option value="automatic">Automatic by corner</option><option value="all">All four at every stop</option><option value="never">Never (exploration)</option></select><span className="subvalue">Automatic changes threshold crossings</span></label>
+                  <label><span className="label">{t("strategyPlanner.startTyreSet")}</span><span className="toggle-line"><input type="checkbox" checked={form.race_start_new_tyres} onChange={(event) => updateBoolean("race_start_new_tyres", event.target.checked)} /><span>{t("strategyPlanner.startOnNewTyres")}</span></span><span className="subvalue">{t("strategyPlanner.otherwiseReferenceWear")}</span></label>
+                </fieldset>
+              </div>
+            </details>
           </div>
         </div>
-        <p className="control-row strategy-assumption-actions">
-          <button type="button" onClick={useLiveData}>Use live data</button>
-          <button type="button" onClick={useSelectedSession}>Use selected saved session</button>
-          <button type="button" onClick={() => void useComparableHistory()}>Use comparable history</button>
-          <button type="button" onClick={resetMeasuredModel}>Reset to measured model</button>
-          <button className="primary" onClick={() => void api.updateAssumptions({
-          race_duration_minutes: form.race_duration_minutes,
-          normal_lap_time: form.normal_lap_time,
-          race_start_new_tyres: form.race_start_new_tyres,
-          pit_loss_seconds: form.pit_loss_seconds,
-          tyre_change_seconds_per_tyre: form.tyre_change_seconds_per_tyre,
-          refuel_seconds_per_5_liters: form.refuel_seconds_per_5_liters,
-          safety_car_pit_loss_seconds: form.safety_car_pit_loss_seconds,
-          fuel_safety_margin_liters: fuelSafetyMarginLiters,
-          fuel_safety_margin_laps: form.fuel_safety_margin_laps,
-          max_tyre_wear: form.max_tyre_wear,
-          max_tyres_available: Math.max(4, Math.floor(form.max_tyres_available)),
-          lift_coast_mode: form.lift_coast_mode,
-          lift_coast_target_percent: Math.min(12, Math.max(0.5, form.lift_coast_target_percent)),
-        })}>{t("strategyPlanner.saveAssumptions")}</button>
-        </p>
       </section>
       </PageSection>
 

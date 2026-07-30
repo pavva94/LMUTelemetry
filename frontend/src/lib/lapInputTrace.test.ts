@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, buildLapTimeDeltaData, isCompleteLapInputTrace, type LapInputTrace } from "./lapInputTrace";
+import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, buildLapTimeDeltaData, isCompleteLapInputTrace, sampleLapGForcePoints, type LapInputTrace } from "./lapInputTrace";
 
 describe("lap input traces", () => {
   it("replaces stationary samples and keeps moving samples", () => {
@@ -62,5 +62,25 @@ describe("lap input traces", () => {
     expect(rows[0]).toEqual({ progress: 0, delta: 0 });
     expect(rows[100]).toEqual({ progress: 50, delta: 1 });
     expect(rows[200]).toEqual({ progress: 100, delta: 2 });
+  });
+
+  it("keeps a representative bounded sample of G-force history", () => {
+    const trace: LapInputTrace = {
+      lap: 4,
+      points: Array.from({ length: 101 }, (_, index) => ({
+        distance: index * 10,
+        throttle: 1,
+        brake: 0,
+        gForceLat: index / 100,
+        gForceLong: -index / 100,
+      })),
+    };
+
+    const points = sampleLapGForcePoints(trace, 5);
+    expect(points).toHaveLength(5);
+    expect(points[0].x).toBeCloseTo(0);
+    expect(points[0].y).toBeCloseTo(0);
+    expect(points[0].z).toBe(12);
+    expect(points[4]).toEqual({ x: 1, y: -1, z: 12 });
   });
 });

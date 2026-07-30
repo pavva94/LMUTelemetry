@@ -17,7 +17,7 @@ class StrategyAssumptions(BaseModel):
     fuel_safety_margin_laps: float = 1.0
     max_tyre_wear: float = 0.75
     max_tyres_available: int = Field(default=24, ge=4, le=200)
-    lift_coast_mode: Literal["inferred", "fixed"] = "inferred"
+    lift_coast_mode: Literal["inferred", "fixed"] = "fixed"
     lift_coast_target_percent: float = Field(default=3.0, ge=0.5, le=12)
     normal_lap_time: float = 214.0
     race_duration_minutes: float = 120.0

@@ -2,6 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { SessionReview } from "../types/session";
 
 describe("Strategy Planner session model", () => {
+  it("defaults lift-and-coast to the user-selected 3% target", async () => {
+    Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { protocol: "http:", host: "localhost" } } });
+    const { seededForm } = await import("./StrategyPlanner");
+    const form = seededForm(null);
+    expect(form.lift_coast_mode).toBe("fixed");
+    expect(form.lift_coast_target_percent).toBe(3);
+  });
+
   it("uses the selected robust basis rather than worn-tyre tail laps as the simulation baseline", async () => {
     Object.defineProperty(globalThis, "window", { configurable: true, value: { location: { protocol: "http:", host: "localhost" } } });
     const { modelFromSession } = await import("./StrategyPlanner");

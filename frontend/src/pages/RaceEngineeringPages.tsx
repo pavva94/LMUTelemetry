@@ -947,13 +947,36 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
       </section>
       </PageSection>
       <PageSection number="04" title="Stint Breakdown" description="Every detected run between pit stops, with controls for choosing the stint to inspect.">
+      <section className="card span-12 stint-selector-card">
+        <SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits come from telemetry pit entries, and returning to the main menu starts a new session." />
+        <div className="stint-selector-control" role="group" aria-label="Select stint to inspect">
+          {stints.length ? stints.map((stint) => {
+            const active = selected?.number === stint.number;
+            return (
+              <button
+                key={stint.number}
+                type="button"
+                className={active ? "stint-select-button active" : "stint-select-button"}
+                aria-pressed={active}
+                onClick={() => setSelectedStint(stint.number)}
+              >
+                <small>Stint</small>
+                <strong>{stint.number}</strong>
+              </button>
+            );
+          }) : (
+            <button type="button" className="stint-select-button active" aria-pressed="true">
+              <small>Stint</small>
+              <strong>Current</strong>
+            </button>
+          )}
+          <span className="stint-selector-note">Stints split only on pit entry or a new session.</span>
+        </div>
+      </section>
       <section className="card span-12">
         <SectionTitle title="Stint Summary" help="Lists all detected stints. Telemetry pit entries start a new stint, and returning to the main menu starts a new session." />
         {stints.length ? <StintSummaryTable stints={stints} /> : <EmptyState detail="Complete laps and pit cycles will populate the stint history." />}
       </section>
-      <section className="card span-12"><SectionTitle title="Stint Selector" help="Chooses the stint to inspect. Splits come from telemetry pit entries, and returning to the main menu starts a new session." /><div className="control-row">{stints.length ? stints.map((stint) => <button key={stint.number} className={selectedStint === stint.number ? "active-control" : ""} onClick={() => setSelectedStint(stint.number)}>Stint {stint.number}</button>) : <button className="active-control">Current stint</button>}<span className="muted">Stints split only on pit entry or a new session.</span></div></section>
-      </PageSection>
-      <PageSection number="05" title="Selected Stint Analysis" description="Pace, fuel, tyre behavior, and lap-level evidence for the selected stint.">
       <section className="card span-3"><SectionTitle title="Summary" help="Condenses clean-lap stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Valid / detected laps" value={`${text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} / ${text(summary.detected_lap_count ?? summary.lap_count)}`} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Clean-lap fuel used" value={fmt(summary.fuel_used as number, 2, " L")} /></section>
       <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes eligible lap-to-lap wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Avg wear / valid lap" value={pct(summary.tyre_wear_delta as number)} /><Metric label="Model wear rate" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
       <section className="card span-4"><SectionTitle title="Lap time" help="Shows lap-time evolution across the selected stint, isolated from fuel and tyre scales so pace changes are easier to read." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"]]} height={240} /></section>

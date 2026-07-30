@@ -3,12 +3,12 @@ import { CartesianGrid, Legend, Line, LineChart, ReferenceLine, ResponsiveContai
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 import { PageSection } from "../components/PageSection";
+import { SearchableSessionPicker } from "../components/SearchableSessionPicker";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
 import { PerformanceReportDialog } from "../components/PerformanceReportDialog";
 import { useI18n } from "../i18n/I18nProvider";
 import { translateLegacyText } from "../i18n/legacyText";
-import { duckdbSessionLabel, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
 import { buildLapBoundaries } from "../lib/chartLapBoundaries";
 import { chartLabelFormatter, chartValueFormatter, formatTelemetryValue, isRaceTimeField } from "../lib/telemetryFields";
 import { buildRacePrepReport, type RacePrepReport as RacePrepReportModel, type Wheel } from "../lib/racePrepReport";
@@ -80,7 +80,6 @@ export function RacePrepReport({ strategy }: Props) {
   const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
   const [sessions, setSessions] = useState<LmuDuckdbSession[]>([]);
   const [selected, setSelected] = useState("current");
-  const [sessionSearch, setSessionSearch] = useState("");
   const [review, setReview] = useState<SessionReview | null>(null);
   const [status, setStatus] = useState("Loading sessions");
   const [sessionListLoading, setSessionListLoading] = useState(true);
@@ -134,7 +133,6 @@ export function RacePrepReport({ strategy }: Props) {
       defaultRaceDurationMinutes: Number(strategy?.assumptions?.race_duration_minutes || 120),
     });
   }, [review, strategy]);
-  const visibleSessions = useMemo(() => filterDuckdbSessions(sessions, sessionSearch, selected === "current" ? undefined : selected), [sessionSearch, selected, sessions]);
 
   return (
     <div className="page grid">
@@ -142,19 +140,21 @@ export function RacePrepReport({ strategy }: Props) {
       <section className="card span-12">
         <SectionTitle title="Session Report" help="Reviews the current live session or a synced saved session with pace, fuel, tyre, environment, and engineering evidence." />
         <div className="section-toolbar report-toolbar">
-          <label>
+          <div className="report-session-picker-field">
             <span className="label">Session</span>
-            <input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search live, type, track, car, file, laps" />
-            <select value={selected} onChange={(event) => setSelected(event.target.value)}>
-            <option value="current">Current live session</option>
-            {visibleSessions.map((session) => (
-              <option key={session.id} value={session.id}>
-                {duckdbSessionLabel(session)}
-              </option>
-            ))}
-          </select>
-          <span className="subvalue">{sessionSearch.trim() ? `${visibleSessions.length}/${sessions.length} matches` : "Live/current remains available"}</span>
-          </label>
+            <SearchableSessionPicker
+              sessions={sessions}
+              selectedId={selected}
+              liveValue="current"
+              liveLabel="Current live session"
+              status={status}
+              onSelect={setSelected}
+              searchPlaceholder="Search type, track, car, date, file, or laps"
+              searchAriaLabel="Search report sessions"
+              listAriaLabel="Report sessions"
+            />
+            <span className="subvalue">{selected === "current" ? "Using the current live session" : "Using a saved session"}</span>
+          </div>
           <div className="report-primary-actions"><span className="badge blue">{status}</span><button className="primary" onClick={() => setReportDialogOpen(true)} disabled={selected === "current" || !review?.session} title={selected === "current" ? "Select an imported historical session to generate a PDF" : undefined}>Generate Performance Report</button></div>
         </div>
       </section>

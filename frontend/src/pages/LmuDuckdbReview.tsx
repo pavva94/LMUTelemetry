@@ -1,10 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { api } from "../api/client";
 import { LoadingOverlay } from "../components/LoadingOverlay";
+import { PageSection } from "../components/PageSection";
+import { SearchableSessionPicker } from "../components/SearchableSessionPicker";
 import { useDuckdbJob } from "../hooks/useDuckdbJob";
 import { SectionTitle } from "../components/SectionTitle";
-import { duckdbSessionLabel, duckdbSessionParts, filterDuckdbSessions } from "../lib/lmuDuckdbSession";
+import { duckdbSessionParts } from "../lib/lmuDuckdbSession";
 import { toFiniteNumber } from "../lib/sessionAnalysis";
 import { chartLabelFormatter, chartValueFormatter, isRaceTimeField } from "../lib/telemetryFields";
 import { formatRaceTime } from "../lib/timeFormat";
@@ -80,6 +82,15 @@ function EmptyState({ detail }: { detail: string }) {
 
 function Metric({ label, value, sub }: { label: string; value: string | number; sub?: string }) {
   return <div className="metric compact"><span className="label">{label}</span><span className="value">{value}</span>{sub && <span className="subvalue">{sub}</span>}</div>;
+}
+
+function SummaryGroup({ eyebrow, title, tone, children }: { eyebrow: string; title: string; tone: "cyan" | "amber" | "green" | "purple"; children: ReactNode }) {
+  return (
+    <section className={`session-summary-group session-summary-group-${tone}`}>
+      <header><span>{eyebrow}</span><h3>{title}</h3></header>
+      <div className="session-summary-metrics">{children}</div>
+    </section>
+  );
 }
 
 function avg(rows: Row[], key: string) {
@@ -251,6 +262,11 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
 
   useEffect(() => {
     if (!sessionId || !lapA) return;
+    if (sessionId === "current") {
+      setTrajectoryRows(samples);
+      setTrajectoryStatus("Using current live session samples");
+      return;
+    }
     let mounted = true;
     setTrajectoryStatus("Loading GPS trajectory");
     api.lmuDuckdbTrajectory(sessionId, lapA, lapB, 1800)
@@ -267,7 +283,7 @@ function LapTrajectoryMap({ sessionId, samples, laps }: { sessionId: string; sam
     return () => {
       mounted = false;
     };
-  }, [sessionId, lapA, lapB]);
+  }, [sessionId, lapA, lapB, samples]);
 
   const mapData = useMemo(() => {
     const selected = new Set([lapA, lapB].filter(Boolean));
@@ -602,8 +618,7 @@ export function LmuDuckdbReview() {
   const { run: runDuckdbJob, progress: duckdbProgress } = useDuckdbJob();
   const [folder, setFolder] = useState(DEFAULT_FOLDER);
   const [sessions, setSessions] = useState<LmuDuckdbSession[]>([]);
-  const [selectedId, setSelectedId] = useState("");
-  const [sessionSearch, setSessionSearch] = useState("");
+  const [selectedId, setSelectedId] = useState("current");
   const [review, setReview] = useState<Review | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [nextOffset, setNextOffset] = useState<number | null>(null);
@@ -629,14 +644,17 @@ export function LmuDuckdbReview() {
       setNextOffset(payload.next_offset ?? null);
       setCurrentOffset(payload.offset);
       setTotal(payload.total);
-      const firstId = payload.sessions[0]?.id || "";
-      setSelectedId(firstId);
+      setSelectedId((current) =>
+        current === "current" || payload.sessions.some((session) => session.id === current)
+          ? current
+          : payload.sessions[0]?.id || "current"
+      );
       const loaded = offset + payload.sessions.length;
       setStatus(payload.total ? `Showing ${offset + 1}-${loaded} of ${payload.total} saved sessions` : "No saved sessions found");
     } catch (exc) {
       if (!offset) {
         setSessions([]);
-        setSelectedId("");
+        setSelectedId("current");
       }
       setStatus(exc instanceof Error ? exc.message : String(exc));
     } finally {
@@ -675,21 +693,20 @@ export function LmuDuckdbReview() {
   }, []);
 
   useEffect(() => {
-    if (!selectedId) {
-      setReviewLoading(false);
-      return;
-    }
     let mounted = true;
     setReview(null);
     setReviewLoading(true);
-    setStatus("Loading selected session");
-    runDuckdbJob<Review>(() => api.startDuckdbReviewJob(selectedId, 300))
+    setStatus(selectedId === "current" ? "Loading current live session" : "Loading selected session");
+    const request = selectedId === "current"
+      ? api.review(300)
+      : runDuckdbJob<Review>(() => api.startDuckdbReviewJob(selectedId, 300));
+    request
       .then((data) => {
         if (!mounted) return;
         setReview(data);
         const extraWarnings = ((data as Review & { warnings?: string[] }).warnings || []);
         setWarnings((current) => Array.from(new Set([...current, ...extraWarnings])));
-        setStatus("Session loaded");
+        setStatus(selectedId === "current" ? "Current live session loaded" : "Session loaded");
       })
       .catch((exc) => mounted && setStatus(exc instanceof Error ? exc.message : String(exc)))
       .finally(() => {
@@ -700,9 +717,8 @@ export function LmuDuckdbReview() {
     };
   }, [selectedId]);
 
-  const selectedSession = ((review?.session?.id === selectedId ? review.session : null) || sessions.find((session) => session.id === selectedId) || null) as LmuDuckdbSession | null;
+  const selectedSession = ((selectedId === "current" ? review?.session : review?.session?.id === selectedId ? review.session : null) || sessions.find((session) => session.id === selectedId) || null) as LmuDuckdbSession | null;
   const selectedParts = duckdbSessionParts(selectedSession);
-  const visibleSessions = useMemo(() => filterDuckdbSessions(sessions, sessionSearch, selectedId), [sessionSearch, selectedId, sessions]);
   const metadataRows = Object.entries(selectedSession?.metadata || {}).slice(0, 16);
   const samples = (review?.telemetry_samples || []) as Row[];
   const laps = (review?.laps || []) as Row[];
@@ -782,15 +798,23 @@ export function LmuDuckdbReview() {
     <div className="duckdb-workspace">
       <LoadingOverlay show={busy || reviewLoading} title={duckdbProgress?.phase || (reviewLoading ? "Loading session" : "Loading sessions")} detail={duckdbProgress?.message || (reviewLoading ? "Opening the selected session and preparing review charts." : "Loading saved telemetry sessions from the local index.")} percentage={duckdbProgress?.percentage} error={duckdbProgress?.error} />
       <section className="duckdb-browser">
-        <SectionTitle title="Session Review" help="Read-only review of saved Le Mans Ultimate sessions. Raw chart samples are loaded from the selected session on demand." />
+        <SectionTitle title="Session Review" help="Read-only review of the current live session or saved Le Mans Ultimate sessions. Raw chart samples are loaded from the selected session on demand." />
         <div className="duckdb-path-grid">
           <label>Telemetry folder<input value={folder} onChange={(event) => setFolder(event.target.value)} placeholder={DEFAULT_FOLDER} /></label>
-          <label>Search sessions<input value={sessionSearch} onChange={(event) => setSessionSearch(event.target.value)} placeholder="Search type, track, car, file, laps" /></label>
-          <label>Session<select value={selectedId} onChange={(event) => setSelectedId(event.target.value)} disabled={!sessions.length}>
-            {sessions.length ? visibleSessions.map((session) => (
-              <option key={session.id} value={session.id}>{duckdbSessionLabel(session)}</option>
-            )) : <option value="">No saved sessions</option>}
-          </select></label>
+          <div className="duckdb-session-picker-field">
+            <span className="label">Session</span>
+            <SearchableSessionPicker
+              sessions={sessions}
+              selectedId={selectedId}
+              liveValue="current"
+              liveLabel="Current live session"
+              status={status}
+              onSelect={setSelectedId}
+              searchPlaceholder="Search type, track, car, date, file, or laps"
+              searchAriaLabel="Search review sessions"
+              listAriaLabel="Review sessions"
+            />
+          </div>
           <button disabled={busy || !folder.trim()} onClick={() => void useFolder()}>Use folder</button>
           <button className="primary" disabled={busy} onClick={() => void loadPage(0)}>Refresh list</button>
           <input value={status} readOnly />
@@ -805,35 +829,53 @@ export function LmuDuckdbReview() {
           <div className="duckdb-selected-session">
             <strong>{sessionTitle(selectedSession)}</strong>
             <span>{text(selectedSession?.file_name)} / {dateText(selectedSession?.created_at)} / {fileSize(selectedSession?.file_size_bytes)}</span>
-            {sessionSearch.trim() && <small>{visibleSessions.length}/{sessions.length} matches</small>}
+            <small>{selectedId === "current" ? "Live/current source" : "Saved session source"}</small>
           </div>
         ) : <EmptyState detail="No sessions saved yet. Set and sync the LMU session folder from User Profile." />}
       </section>
 
       <main className="duckdb-analysis page grid">
-      <section className="card span-12">
-        <div className="header-grid">
-          <Metric label="Database" value={sessionTitle(selectedSession)} />
-          <Metric label="File" value={text(selectedSession?.file_name)} />
-          <Metric label="Size" value={fileSize(selectedSession?.file_size_bytes)} />
-          <Metric label="Track" value={text(selectedParts.track)} />
-          <Metric label="Session" value={text(selectedParts.sessionType)} />
-          <Metric label="Car" value={text(selectedParts.car)} />
-          <Metric label="Valid / detected laps" value={`${summary.validLaps} / ${summary.detectedLaps}`} />
-          <Metric label="Samples" value={summary.samples} sub={summary.storedSamples ? `${summary.storedSamples} native rows` : "mapped review samples"} />
-          <Metric label="Best lap" value={formatRaceTime(summary.bestLap)} />
-          <Metric label="Clean pace average" value={formatRaceTime(summary.avgLap)} sub={`${summary.paceLaps} pace-clean laps`} />
-          <Metric label="Recent 5 clean-lap pace" value={formatRaceTime(summary.fiveLapPace)} />
-          <Metric label="Top speed" value={fmt(summary.topSpeed, 0, " km/h")} />
-          <Metric label="Eligible-lap fuel used" value={fmt(summary.fuelUsed, 2, " L")} />
-          <Metric label="Avg fuel/lap" value={fmt(summary.avgFuelPerLap, 2, " L")} />
-          <Metric label="Distance" value={fmt(summary.distance, 1, " km")} />
-          <Metric label="Avg tyre wear used" value={fmt(summary.tyreWear, 2, "%")} sub={summary.tyreLifeRemaining != null ? `${fmt(summary.tyreLifeRemaining, 1, "%")} life left` : undefined} />
-          <Metric label="Sample avg tyre temp" value={fmt(summary.tyreTemp, 0, " C")} />
-          <Metric label="Sample avg pressure" value={fmt(summary.tyrePressure, 1, " kPa")} />
-          <Metric label="Sample avg brake temp" value={fmt(summary.brakeTemp, 0, " C")} />
-        </div>
-      </section>
+      <PageSection number="01" title="Session Overview" description="Identify the selected run, then scan its clean-lap pace, usable fuel evidence, distance, and vehicle-condition averages.">
+        <section className="session-overview-card span-12">
+          <header className="session-overview-identity">
+            <div>
+              <span>Selected telemetry session</span>
+              <h3>{sessionTitle(selectedSession)}</h3>
+              <p>{text(selectedSession?.file_name)} · {fileSize(selectedSession?.file_size_bytes)}</p>
+            </div>
+            <div className="session-identity-tags">
+              <span><small>Track</small>{text(selectedParts.track)}</span>
+              <span><small>Session</small>{text(selectedParts.sessionType)}</span>
+              <span><small>Car</small>{text(selectedParts.car)}</span>
+            </div>
+          </header>
+          <div className="session-summary-groups">
+            <SummaryGroup eyebrow="Lap quality" title="Pace & performance" tone="amber">
+              <Metric label="Valid / detected laps" value={`${summary.validLaps} / ${summary.detectedLaps}`} />
+              <Metric label="Best lap" value={formatRaceTime(summary.bestLap)} />
+              <Metric label="Clean pace average" value={formatRaceTime(summary.avgLap)} sub={`${summary.paceLaps} pace-clean laps`} />
+              <Metric label="Recent 5 clean-lap pace" value={formatRaceTime(summary.fiveLapPace)} />
+              <Metric label="Top speed" value={fmt(summary.topSpeed, 0, " km/h")} />
+            </SummaryGroup>
+            <SummaryGroup eyebrow="Recorded evidence" title="Coverage" tone="cyan">
+              <Metric label="Review samples" value={summary.samples} sub="mapped for charts" />
+              <Metric label="Native samples" value={text(summary.storedSamples)} sub="stored in source" />
+            </SummaryGroup>
+            <SummaryGroup eyebrow="Run totals" title="Fuel & distance" tone="green">
+              <Metric label="Eligible-lap fuel used" value={fmt(summary.fuelUsed, 2, " L")} />
+              <Metric label="Average fuel / lap" value={fmt(summary.avgFuelPerLap, 2, " L")} />
+              <Metric label="Distance" value={fmt(summary.distance, 1, " km")} />
+            </SummaryGroup>
+            <SummaryGroup eyebrow="Sample averages" title="Vehicle condition" tone="purple">
+              <Metric label="Tyre wear used" value={fmt(summary.tyreWear, 2, "%")} sub={summary.tyreLifeRemaining != null ? `${fmt(summary.tyreLifeRemaining, 1, "%")} life left` : undefined} />
+              <Metric label="Tyre temperature" value={fmt(summary.tyreTemp, 0, " C")} />
+              <Metric label="Tyre pressure" value={fmt(summary.tyrePressure, 1, " kPa")} />
+              <Metric label="Brake temperature" value={fmt(summary.brakeTemp, 0, " C")} />
+            </SummaryGroup>
+          </div>
+        </section>
+      </PageSection>
+      <PageSection number="02" title="Source & Coverage" description="Inspect session metadata and confirm which native telemetry channels are available for analysis.">
       {metadataRows.length > 0 && (
         <section className="card span-12">
           <SectionTitle title="Session Metadata" help="Values read from the selected session metadata." />
@@ -843,15 +885,28 @@ export function LmuDuckdbReview() {
         </section>
       )}
       <ChannelSummary review={review} />
+      {!metadataRows.length && !review?.channel_manifest?.length && (
+        <section className="card span-12">
+          <EmptyState detail="Source metadata and the native channel manifest are available when a saved telemetry database is selected." />
+        </section>
+      )}
+      </PageSection>
 
+      <PageSection number="03" title="Pace, Fuel & Inputs" description="Compare lap progression, fuel use, speed, powertrain response, and driver inputs across the selected run.">
       <section className="card span-6"><SectionTitle title="Lap Times" help="Shows detected lap pace from native LMU telemetry." /><Chart data={laps} xKey="lap_number" lines={[["lap_time", "#6dd6ff"]]} /></section>
       <section className="card span-6"><SectionTitle title="Lap Fuel" help="Shows fuel used and added per detected lap." /><Chart data={laps} xKey="lap_number" lines={[["fuel_used", "#e6b450"], ["fuel_added", "#69d28f"]]} /></section>
       <section className="card span-6"><SectionTitle title="Speed And RPM" help="Shows powertrain and speed history from mapped session channels." /><Chart data={speedChart.data} xKey={speedChart.xKey} lines={speedLines} /></section>
       <section className="card span-6"><SectionTitle title="Driver Inputs" help="Shows throttle, brake, and steering channels when available." /><Chart data={inputChart.data} xKey={inputChart.xKey} lines={inputLines} /></section>
+      </PageSection>
+
+      <PageSection number="04" title="Tyres, Brakes & Platform" description="Review tyre wear and temperature, brake heat, and ride-height behavior for balance and degradation clues.">
       <section className="card span-6"><SectionTitle title="Tyre Wear" help="Tracks detected tyre wear by corner." /><Chart data={tyreWearChart.data} xKey={tyreWearChart.xKey} lines={tyreWearLines} /></section>
       <section className="card span-6"><SectionTitle title="Tyre Temperatures" help="Shows tyre heat by corner when available." /><Chart data={tyreTempChart.data} xKey={tyreTempChart.xKey} lines={tyreTempLines} /></section>
       <section className="card span-6"><SectionTitle title="Brake Temperatures" help="Shows brake heat by corner when available." /><Chart data={brakeTempChart.data} xKey={brakeTempChart.xKey} lines={brakeTempLines} /></section>
       <section className="card span-6"><SectionTitle title="Ride Heights" help="Shows platform movement when available." /><Chart data={rideHeightChart.data} xKey={rideHeightChart.xKey} lines={rideHeightLines} /></section>
+      </PageSection>
+
+      <PageSection number="05" title="Extended Telemetry" description="Explore the additional timing, control, GPS, energy, environment, and component-detail channels present in this session.">
       {available.sectors && <section className="card span-6"><SectionTitle title="Sectors" help="Shows current, last, and best sector timing channels when LMU stores them." /><Chart data={sectorChart.data} xKey={sectorChart.xKey} lines={sectorLines} /></section>}
       {available.flags && <section className="card span-6"><SectionTitle title="Flags" help="Shows sector and yellow flag state channels when available." /><Chart data={flagChart.data} xKey={flagChart.xKey} lines={flagLines} /></section>}
       {available.assists && <section className="card span-6"><SectionTitle title="Assists And Settings" help="Shows ABS, TC, fuel map, brake bias, and brake migration channels." /><Chart data={assistChart.data} xKey={assistChart.xKey} lines={assistLines} /></section>}
@@ -878,7 +933,9 @@ export function LmuDuckdbReview() {
           ]} />
         </section>
       )}
+      </PageSection>
 
+      <PageSection number="06" title="Lap Evidence & Events" description="Audit individual laps, detected events, and GPS trajectory differences behind the session summary.">
       <section className="card span-12">
         <SectionTitle title="Lap Table" help="Lists detected laps with fuel and speed context." />
         {laps.length ? (
@@ -929,6 +986,7 @@ export function LmuDuckdbReview() {
           <LapTrajectoryMap sessionId={selectedId} samples={samples} laps={laps} />
         </section>
       )}
+      </PageSection>
       </main>
     </div>
   );

@@ -12,12 +12,13 @@ import {
   Tooltip,
   XAxis,
   YAxis,
+  ZAxis,
 } from "recharts";
 import { formatDuration, formatRaceTime } from "../lib/timeFormat";
 import { completedLapFuelUsed, currentLapFuelUsed } from "../lib/liveFuelHistory";
 import { completedLapDuration } from "../lib/liveLapTiming";
 import { environmentTrendDirection, trackWetnessState, type EnvironmentTrendDirection } from "../lib/environmentTrend";
-import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, isCompleteLapInputTrace, type LapInputPoint, type LapInputTrace } from "../lib/lapInputTrace";
+import { appendLapInputPoint, bestLapInputTrace, buildLapInputChartData, isCompleteLapInputTrace, sampleLapGForcePoints, type LapInputPoint, type LapInputTrace } from "../lib/lapInputTrace";
 import { brakeHeatColour } from "../lib/brakeTemperature";
 import { isHypercarClass } from "../lib/vehicleClass";
 import { raceFlagState } from "../lib/raceFlagState";
@@ -237,7 +238,13 @@ function useLapInputHistory(telemetry: TelemetrySnapshot | null) {
       if (history.sessionId !== sessionId) setHistory(restoredLapInputHistory(sessionId));
       return;
     }
-    const point: LapInputPoint = { distance: Math.max(0, distance), throttle: player.throttle ?? 0, brake: player.brake ?? 0 };
+    const point: LapInputPoint = {
+      distance: Math.max(0, distance),
+      throttle: player.throttle ?? 0,
+      brake: player.brake ?? 0,
+      gForceLat: finite(player.g_force_lat) ? player.g_force_lat : undefined,
+      gForceLong: finite(player.g_force_long) ? player.g_force_long : undefined,
+    };
     setHistory((existing) => {
       const base = existing.sessionId === sessionId ? existing : restoredLapInputHistory(sessionId);
       if (!base.current) return { ...base, sessionId, current: { lap, invalidated: Boolean(player.lap_invalidated), points: [point] } };
@@ -495,7 +502,7 @@ function NearbyStandings({ mergedCars, paceHistory, telemetry }: { mergedCars: C
   );
 }
 
-function InputsCard({ telemetry }: { telemetry: TelemetrySnapshot | null }) {
+function InputsCard({ telemetry, history, trackLength }: { telemetry: TelemetrySnapshot | null; history: LapInputHistory; trackLength?: number }) {
   const t = useT();
   const player = telemetry?.player;
   const controls = [{ label: t("telemetry.throttle"), value: player?.throttle, colour: "#6ee7a8" }, { label: t("telemetry.brake"), value: player?.brake, colour: "#ff6f68" }];
@@ -503,11 +510,24 @@ function InputsCard({ telemetry }: { telemetry: TelemetrySnapshot | null }) {
   const steeringDegrees = finite(steering) && finite(player?.steering_wheel_range_deg)
     ? steering * player.steering_wheel_range_deg / 2
     : undefined;
-  const hasGForce = finite(player?.g_force_lat) || finite(player?.g_force_long);
+  const completeTraces = useMemo(() => history.completed.filter((trace) => isCompleteLapInputTrace(trace, trackLength)), [history.completed, trackLength]);
+  const lastTrace = completeTraces[completeTraces.length - 1];
+  const bestTrace = bestLapInputTrace(completeTraces);
+  const bestGForce = useMemo(() => sampleLapGForcePoints(bestTrace), [bestTrace]);
+  const lastGForce = useMemo(() => sampleLapGForcePoints(lastTrace), [lastTrace]);
+  const hasLiveGForce = finite(player?.g_force_lat) || finite(player?.g_force_long);
+  const hasGForce = hasLiveGForce || bestGForce.length > 0 || lastGForce.length > 0;
   const lateralG = finite(player?.g_force_lat) ? player.g_force_lat : 0;
   const longitudinalG = finite(player?.g_force_long) ? player.g_force_long : 0;
   const combinedG = Math.hypot(lateralG, longitudinalG);
-  const gPlotLimit = Math.max(2, Math.ceil(combinedG * 2) / 2);
+  const historicalG = [...bestGForce, ...lastGForce];
+  const largestAxisForce = Math.max(Math.abs(lateralG), Math.abs(longitudinalG), ...historicalG.flatMap((point) => [Math.abs(point.x), Math.abs(point.y)]));
+  const gPlotLimit = Math.max(2, Math.ceil(largestAxisForce * 2) / 2);
+  const gForceSeries = [
+    { id: "best", label: t("liveDashboard.bestLap"), colour: "#a78bfa", data: bestGForce, lap: bestTrace?.lap },
+    { id: "last", label: t("liveDashboard.lastLapTrace"), colour: "#6ee7a8", data: lastGForce, lap: lastTrace?.lap },
+    { id: "live", label: t("liveDashboard.currentLapLive"), colour: "#ff6f68", data: hasLiveGForce ? [{ x: lateralG, y: longitudinalG, z: 64 }] : [], lap: history.current?.lap },
+  ];
   return <section className="status-card input-card"><CardTitle icon={Gauge} eyebrow={t("liveDashboard.control")} title={t("liveDashboard.inputs")} />
     <div className="input-gauges">{controls.map((control) => <div key={control.label}><div className="vertical-gauge"><i style={{ height: `${Math.max(0, Math.min(100, (control.value || 0) * 100))}%`, background: control.colour }} /></div><strong>{percent(control.value)}</strong><span>{control.label}</span></div>)}</div>
     {finite(steering) && <div
@@ -520,6 +540,7 @@ function InputsCard({ telemetry }: { telemetry: TelemetrySnapshot | null }) {
     </div>}
     {hasGForce && <div className="g-force-live" aria-label={t("liveDashboard.gForce")}>
       <div className="g-force-heading"><span>{t("liveDashboard.gForce")}</span><strong>{t("liveDashboard.combinedG")} {fmt(combinedG, 2, " g")}</strong></div>
+      <div className="g-force-trace-key">{gForceSeries.map((series) => <span className={series.data.length ? "available" : "unavailable"} key={series.id} style={{ "--trace-colour": series.colour } as React.CSSProperties}><i />{series.label}{finite(series.lap) && <small>L{series.lap}</small>}</span>)}</div>
       <div className="g-force-plot">
         <span className="g-force-axis-label axis-lateral">{t("liveDashboard.lateralG")}</span>
         <span className="g-force-axis-label axis-longitudinal">{t("liveDashboard.longitudinalG")}</span>
@@ -527,9 +548,12 @@ function InputsCard({ telemetry }: { telemetry: TelemetrySnapshot | null }) {
           <ScatterChart margin={{ top: 9, right: 9, bottom: 9, left: 9 }}>
             <XAxis type="number" dataKey="x" domain={[-gPlotLimit, gPlotLimit]} hide />
             <YAxis type="number" dataKey="y" domain={[-gPlotLimit, gPlotLimit]} hide />
+            <ZAxis type="number" dataKey="z" range={[12, 64]} />
             <ReferenceLine x={0} stroke="#46525d" strokeDasharray="2 3" />
             <ReferenceLine y={0} stroke="#46525d" strokeDasharray="2 3" />
-            <Scatter data={[{ x: lateralG, y: longitudinalG }]} fill="#6dd6ff" isAnimationActive={false} shape="circle" />
+            <Scatter data={bestGForce} fill="#a78bfa" fillOpacity={.5} isAnimationActive={false} shape="circle" />
+            <Scatter data={lastGForce} fill="#6ee7a8" fillOpacity={.48} isAnimationActive={false} shape="circle" />
+            {hasLiveGForce && <Scatter data={[{ x: lateralG, y: longitudinalG, z: 64 }]} fill="#ff6f68" isAnimationActive={false} shape="circle" />}
           </ScatterChart>
         </ResponsiveContainer>
       </div>
@@ -706,8 +730,8 @@ function LapInputComparison({ history, trackLength }: { history: LapInputHistory
   const last = completeTraces[completeTraces.length - 1];
   const best = bestLapInputTrace(completeTraces);
   const series = useMemo(() => [
-    { id: "best", label: t("liveDashboard.bestLap"), colour: "#6ee7a8", trace: best },
-    { id: "last", label: t("liveDashboard.lastLapTrace"), colour: "#55c7f7", trace: last },
+    { id: "best", label: t("liveDashboard.bestLap"), colour: "#a78bfa", trace: best },
+    { id: "last", label: t("liveDashboard.lastLapTrace"), colour: "#6ee7a8", trace: last },
     { id: "current", label: t("liveDashboard.currentLapLive"), colour: "#f3b642", trace: history.current },
   ], [best, history.current, last, t]);
   const data = useMemo(() => buildLapInputChartData(series, trackLength), [series, trackLength]);
@@ -783,7 +807,7 @@ export function LiveDashboard({ telemetry, strategy, recommendation, connected, 
     <RaceHeader telemetry={telemetry} connected={connected} averageLap={averageLap} />
     <NearbyStandings mergedCars={mergedCompetitors} paceHistory={paceHistory} telemetry={telemetry} />
     <div className="live-status-row">
-      <InputsCard telemetry={telemetry} />
+      <InputsCard telemetry={telemetry} history={lapInputHistory} trackLength={telemetry?.session?.track_length_m} />
       <TyreCard player={telemetry?.player} vehicleClass={playerClass} />
       <EnvironmentCard telemetry={telemetry} />
       <FuelCard telemetry={telemetry} strategy={strategy} isHypercar={isHypercar} />
