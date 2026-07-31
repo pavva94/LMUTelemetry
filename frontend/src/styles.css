@@ -130,12 +130,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, .table-sort:foc
   cursor: pointer;
 }
 .nav button span { overflow-wrap: anywhere; }
-.nav button.active, .nav button:hover {
+.nav button.active, .nav button:hover:not(:disabled) {
   border-color: rgba(85, 199, 247, .26);
   background: rgba(85, 199, 247, .09);
   color: #fff;
 }
 .nav button.active { box-shadow: inset 3px 0 0 var(--cyan); }
+.nav button:disabled { cursor: not-allowed; opacity: .42; }
 .main { min-width: 0; position: relative; }
 
 .page { padding: 18px 22px 30px; }

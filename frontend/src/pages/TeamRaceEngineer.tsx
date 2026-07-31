@@ -4,6 +4,7 @@ import type { TeamPresence, TeamPublishingStatus, TeamSessionConfig } from "../t
 import type { TelemetrySnapshot } from "../types/telemetry";
 
 const storageKey = "lmu-team-session";
+export const DEFAULT_TEAM_CLOUD_URL = "https://lmutelemetry-production.up.railway.app";
 
 export function loadTeamConfig(): TeamSessionConfig | null {
   try {
@@ -28,7 +29,7 @@ async function responseJson<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function useTeamPublishingStatus() {
+export function useTeamPublishingStatus(enabled = true) {
   const [status, setStatus] = useState<TeamPublishingStatus | null>(null);
   const refresh = async () => {
     try {
@@ -38,10 +39,11 @@ export function useTeamPublishingStatus() {
     }
   };
   useEffect(() => {
+    if (!enabled) return;
     void refresh();
     const id = window.setInterval(() => void refresh(), 1000);
     return () => window.clearInterval(id);
-  }, []);
+  }, [enabled]);
   return { status, refresh };
 }
 
@@ -62,7 +64,9 @@ export function TeamRaceEngineer({
   publishingStatus: TeamPublishingStatus | null;
   refreshPublishingStatus: () => Promise<void>;
 }) {
-  const [cloudUrl, setCloudUrl] = useState(config?.cloudUrl || (window.location.protocol === "https:" ? window.location.origin : ""));
+  const [cloudUrl, setCloudUrl] = useState(
+    config?.cloudUrl || (window.location.protocol === "https:" ? window.location.origin : DEFAULT_TEAM_CLOUD_URL),
+  );
   const [sessionCode, setSessionCode] = useState(config?.sessionCode || "");
   const [accessKey, setAccessKey] = useState(config?.accessKey || "");
   const [displayName, setDisplayName] = useState(config?.displayName || "");

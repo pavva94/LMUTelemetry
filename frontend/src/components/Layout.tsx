@@ -3,6 +3,7 @@ import {
   BarChart3,
   ChevronRight,
   CircleDot,
+  Cloud,
   Flag,
   FileText,
   Microscope,
@@ -54,7 +55,7 @@ const modes = [
 
 const items = [...liveItems, ...planItems, ...profileItems] as const;
 
-export type PageKey = (typeof items)[number][0];
+export type PageKey = (typeof items)[number][0] | "team-session";
 export type ViewMode = "local" | "team";
 type ModeKey = (typeof modes)[number][0];
 
@@ -74,6 +75,8 @@ export function Layout({
   viewMode,
   setViewMode,
   publishing,
+  teamOnly = false,
+  teamReady = true,
   children,
 }: {
   page: PageKey;
@@ -81,6 +84,8 @@ export function Layout({
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
   publishing?: boolean;
+  teamOnly?: boolean;
+  teamReady?: boolean;
   children: React.ReactNode;
 }) {
   const t = useT();
@@ -100,7 +105,7 @@ export function Layout({
             <span className="brand-subtitle">{t("common.appSubtitle")}</span>
           </div>
         </div>
-        <div className="mode-menu" aria-label={t("navigation.mainModes")}>
+        {!teamOnly && <div className="mode-menu" aria-label={t("navigation.mainModes")}>
           <button className={viewMode === "team" ? "active team-mode-button" : "team-mode-button"} onClick={() => setViewMode("team")} aria-current={viewMode === "team" ? "page" : undefined}>
             <RadioTower size={18} />
             <span>
@@ -120,14 +125,28 @@ export function Layout({
               <ChevronRight className="mode-chevron" size={15} aria-hidden="true" />
             </button>
           ))}
-        </div>
+        </div>}
         <div className="nav-section-title">
           <span>{modeLabel}</span>
-          <small>{t("common.panels", { count: activeItems.length })}</small>
+          {viewMode !== "team" && <small>{t("common.panels", { count: activeItems.length })}</small>}
         </div>
+        {viewMode === "team" && (
+          <nav className="nav">
+            <button className={page === "team-session" ? "active" : ""} onClick={() => setPage("team-session")} aria-current={page === "team-session" ? "page" : undefined}>
+              <Cloud size={16} />
+              <span>Team Session</span>
+            </button>
+          </nav>
+        )}
+        {viewMode === "team" && (
+          <div className="nav-section-title">
+            <span>Team Race Engineering panels</span>
+            <small>{t("common.panels", { count: activeItems.length })}</small>
+          </div>
+        )}
         <nav className="nav">
           {activeItems.map(([key, labelKey, Icon]) => (
-            <button key={key} className={page === key ? "active" : ""} onClick={() => setPage(key)} aria-current={page === key ? "page" : undefined}>
+            <button key={key} className={page === key ? "active" : ""} onClick={() => setPage(key)} aria-current={page === key ? "page" : undefined} disabled={viewMode === "team" && !teamReady}>
               <Icon size={16} />
               <span>{t(labelKey)}</span>
             </button>

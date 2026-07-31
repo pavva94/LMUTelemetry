@@ -2,13 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { api, WS_BASE } from "../api/client";
 import type { TelemetrySnapshot } from "../types/telemetry";
 
-export function useTelemetrySocket() {
+export function useTelemetrySocket(enabled = true) {
   const [data, setData] = useState<TelemetrySnapshot | null>(null);
   const [socketConnected, setSocketConnected] = useState(false);
   const [apiReachable, setApiReachable] = useState(false);
   const retry = useRef<number>();
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -27,9 +28,10 @@ export function useTelemetrySocket() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
+    if (!enabled) return;
     let socket: WebSocket | null = null;
     let cancelled = false;
     const connect = () => {
@@ -54,6 +56,6 @@ export function useTelemetrySocket() {
       if (retry.current) window.clearTimeout(retry.current);
       socket?.close();
     };
-  }, []);
+  }, [enabled]);
   return { data, connected: socketConnected || apiReachable };
 }

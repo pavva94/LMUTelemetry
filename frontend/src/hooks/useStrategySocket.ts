@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, WS_BASE } from "../api/client";
 import type { RecommendationPayload, StrategyState } from "../types/strategy";
 
-export function useStrategySocket() {
+export function useStrategySocket(enabled = true) {
   const [strategy, setStrategy] = useState<StrategyState | null>(null);
   const [recommendation, setRecommendation] = useState<RecommendationPayload | null>(null);
   const [socketConnected, setSocketConnected] = useState(false);
@@ -10,6 +10,7 @@ export function useStrategySocket() {
   const retry = useRef<number>();
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -29,9 +30,10 @@ export function useStrategySocket() {
       cancelled = true;
       window.clearInterval(id);
     };
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
+    if (!enabled) return;
     let strategySocket: WebSocket | null = null;
     let recommendationSocket: WebSocket | null = null;
     let cancelled = false;
@@ -58,6 +60,6 @@ export function useStrategySocket() {
       strategySocket?.close();
       recommendationSocket?.close();
     };
-  }, []);
+  }, [enabled]);
   return { strategy, recommendation, connected: socketConnected || apiReachable };
 }

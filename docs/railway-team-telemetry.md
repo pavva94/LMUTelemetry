@@ -34,8 +34,8 @@ Do not select `cloud/` as the Railway root directory.
 3. Select **Deploy from GitHub repo** and choose LMUTelemetry.
 4. Allow the first deployment to be created. It may initially fail because the required variables and PostgreSQL are not configured yet.
 5. Open the service settings and confirm Railway detected the root `railway.json`.
-6. In **Settings → Deploy → Regions**, select **EU West / Amsterdam**.
-7. Keep the service at exactly **one replica**. The beta relay keeps active WebSocket rooms in memory.
+6. The repository's `railway.json` fixes the application service to **EU West / Amsterdam** with exactly **one replica**. Config as Code overrides the dashboard, so seeing a file-controlled value is expected.
+7. Place the PostgreSQL service in **EU West / Amsterdam** as well. The beta relay keeps active WebSocket rooms in memory and must remain at one application replica.
 
 ## 3. Add PostgreSQL
 

@@ -1,9 +1,10 @@
 FROM node:22-alpine AS frontend
 WORKDIR /src/frontend
+ENV VITE_CLOUD_ONLY=true
 COPY frontend/package*.json ./
 RUN npm ci
 COPY frontend ./
-RUN npm run build
+RUN VITE_CLOUD_ONLY=true npm run build
 
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 \

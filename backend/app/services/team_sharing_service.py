@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import ssl
 from dataclasses import asdict, dataclass
 from urllib.parse import urlparse
 
+import certifi
 import httpx
 import websockets
 from fastapi.encoders import jsonable_encoder
@@ -114,6 +116,11 @@ class TeamSharingService:
         scheme = "wss" if parsed.scheme == "https" else "ws"
         return f"{scheme}://{parsed.netloc}/ws/cloud/{self.status.session_code}"
 
+    @staticmethod
+    def _ssl_context() -> ssl.SSLContext:
+        """Use the packaged current CA bundle instead of a stale machine OpenSSL path."""
+        return ssl.create_default_context(cafile=certifi.where())
+
     def _frame(self) -> str | None:
         snapshot = self.telemetry_service.latest_snapshot
         if snapshot is None:
@@ -138,6 +145,7 @@ class TeamSharingService:
                 async with websockets.connect(
                     self._websocket_url(),
                     subprotocols=["lmu.telemetry.v1", f"lmu-ticket.{ticket}"],
+                    ssl=self._ssl_context() if self.status.cloud_url.startswith("https://") else None,
                     open_timeout=10,
                     ping_interval=5,
                     ping_timeout=15,

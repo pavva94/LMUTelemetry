@@ -29,18 +29,28 @@ import {
 import type { TeamSessionConfig } from "./types/team";
 import type { CompetitorState } from "./types/telemetry";
 
+const CLOUD_ONLY = import.meta.env.VITE_CLOUD_ONLY === "true";
+const teamPanelPages: PageKey[] = ["live", "circle-map", "one-lap", "race-history", "xy-plotter", "pit"];
+const teamPages: PageKey[] = ["team-session", ...teamPanelPages];
+
 export default function App() {
-  const viewModeFromHash = (): ViewMode => window.location.hash.replace(/^#\/?/, "").startsWith("team/") ? "team" : "local";
-  const pageFromHash = (): PageKey => {
+  const initialTeamConfig = useRef<TeamSessionConfig | null>(loadTeamConfig()).current;
+  const teamConfigRef = useRef<TeamSessionConfig | null>(initialTeamConfig);
+  const viewModeFromHash = (): ViewMode => CLOUD_ONLY || window.location.hash.replace(/^#\/?/, "").startsWith("team/") ? "team" : "local";
+  const pageFromHash = (config: TeamSessionConfig | null = teamConfigRef.current): PageKey => {
     const value = window.location.hash.replace(/^#\/?/, "").replace(/^team\//, "");
-    if (value === "race-simulation") return "planner";
-    if (value === "lap-compare") return "race-history";
-    return ["live", "profile", "circle-map", "one-lap", "race-history", "xy-plotter", "settings", "planner", "race-prep", "lap-analysis", "pit", "review"].includes(value) ? value as PageKey : "live";
+    const aliasedValue = value === "race-simulation" ? "planner" : value === "lap-compare" ? "race-history" : value;
+    const page = ["team-session", "live", "profile", "circle-map", "one-lap", "race-history", "xy-plotter", "settings", "planner", "race-prep", "lap-analysis", "pit", "review"].includes(aliasedValue) ? aliasedValue as PageKey : "live";
+    if (viewModeFromHash() === "team") {
+      if (!config) return "team-session";
+      return teamPages.includes(page) ? page : "live";
+    }
+    return page === "team-session" ? "live" : page;
   };
-  const [page, setPage] = useState<PageKey>(pageFromHash);
+  const [page, setPage] = useState<PageKey>(() => pageFromHash(initialTeamConfig));
   const [viewMode, setViewModeState] = useState<ViewMode>(viewModeFromHash);
   const viewModeRef = useRef<ViewMode>(viewMode);
-  const [teamConfig, setTeamConfigState] = useState<TeamSessionConfig | null>(loadTeamConfig);
+  const [teamConfig, setTeamConfigState] = useState<TeamSessionConfig | null>(initialTeamConfig);
   useEffect(() => {
     const sync = () => {
       setPage(pageFromHash());
@@ -52,24 +62,33 @@ export default function App() {
     return () => window.removeEventListener("hashchange", sync);
   }, []);
   const navigate = (next: PageKey) => {
-    window.location.hash = viewModeRef.current === "team" ? `team/${next}` : next;
-    setPage(next);
+    const target = viewModeRef.current === "team" ? next === "team-session" ? next : teamItemsPage(next) : next;
+    window.location.hash = viewModeRef.current === "team" ? `team/${target}` : target;
+    setPage(target);
   };
   const setViewMode = (next: ViewMode) => {
+    if (CLOUD_ONLY) return;
     viewModeRef.current = next;
     setViewModeState(next);
     window.location.hash = next === "team" ? `team/${teamItemsPage(page)}` : page;
   };
   const setTeamConfig = (next: TeamSessionConfig | null) => {
+    teamConfigRef.current = next;
     setTeamConfigState(next);
-    if (!next) window.localStorage.removeItem("lmu-team-session");
+    if (!next) {
+      window.localStorage.removeItem("lmu-team-session");
+      navigate("team-session");
+    } else if (page === "team-session") {
+      navigate("live");
+    }
   };
-  const { data: telemetry, connected: telemetryConnected } = useTelemetrySocket();
-  const { strategy, recommendation } = useStrategySocket();
+  const { data: telemetry, connected: telemetryConnected } = useTelemetrySocket(!CLOUD_ONLY);
+  const { strategy, recommendation } = useStrategySocket(!CLOUD_ONLY);
   const team = useTeamTelemetrySocket(teamConfig);
-  const { status: publishingStatus, refresh: refreshPublishingStatus } = useTeamPublishingStatus();
+  const { status: publishingStatus, refresh: refreshPublishingStatus } = useTeamPublishingStatus(!CLOUD_ONLY);
   const [competitors, setCompetitors] = useState<CompetitorState[]>([]);
   useEffect(() => {
+    if (CLOUD_ONLY) return;
     const id = window.setInterval(() => void api.competitors().then(setCompetitors).catch(() => {}), 2000);
     return () => window.clearInterval(id);
   }, []);
@@ -79,10 +98,10 @@ export default function App() {
   const activeConnected = viewMode === "team" ? team.connected : telemetryConnected;
   const currentCompetitors = activeTelemetry?.competitors?.length ? activeTelemetry.competitors : viewMode === "local" ? competitors : [];
   return (
-    <Layout page={page} setPage={navigate} viewMode={viewMode} setViewMode={setViewMode} publishing={publishingStatus?.publishing}>
+    <Layout page={page} setPage={navigate} viewMode={viewMode} setViewMode={setViewMode} publishing={publishingStatus?.publishing} teamOnly={CLOUD_ONLY} teamReady={teamConfig !== null}>
       <ErrorBoundary>
         {publishingStatus?.publishing && viewMode === "local" && <div className="team-publishing-banner"><span /> Publishing to team session {publishingStatus.session_code}. Changing pages does not interrupt sharing.</div>}
-        {viewMode === "team" && <TeamRaceEngineer config={teamConfig} setConfig={setTeamConfig} presence={team.presence} remoteConnected={team.connected} remoteError={team.error} publishingStatus={publishingStatus} refreshPublishingStatus={refreshPublishingStatus} />}
+        {viewMode === "team" && page === "team-session" && <TeamRaceEngineer config={teamConfig} setConfig={setTeamConfig} presence={team.presence} remoteConnected={team.connected} remoteError={team.error} publishingStatus={publishingStatus} refreshPublishingStatus={refreshPublishingStatus} />}
         <div style={{ display: page === "live" ? "contents" : "none" }} aria-hidden={page !== "live"}>
           <LiveDashboard telemetry={activeTelemetry} strategy={activeStrategy} recommendation={activeRecommendation} connected={activeConnected} competitors={currentCompetitors} />
         </div>
@@ -103,5 +122,5 @@ export default function App() {
 }
 
 function teamItemsPage(page: PageKey): PageKey {
-  return ["live", "circle-map", "one-lap", "race-history", "xy-plotter", "pit"].includes(page) ? page : "live";
+  return teamPanelPages.includes(page) ? page : "live";
 }
