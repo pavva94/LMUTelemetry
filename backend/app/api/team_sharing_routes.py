@@ -10,6 +10,7 @@ router = APIRouter(prefix="/api/team-sharing", tags=["team-sharing"])
 class TeamSharingConfiguration(BaseModel):
     cloud_url: str
     session_code: str = Field(min_length=8, max_length=8)
+    access_key: str = Field(min_length=20, max_length=128)
     display_name: str = Field(min_length=1, max_length=80)
 
 
@@ -28,6 +29,7 @@ def configure(body: TeamSharingConfiguration, request: Request):
         return request.app.state.team_sharing_service.configure(
             body.cloud_url,
             body.session_code,
+            body.access_key,
             body.display_name,
         )
     except (ValueError, RuntimeError) as exc:

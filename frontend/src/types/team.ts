@@ -4,6 +4,7 @@ import type { RecommendationPayload, StrategyState } from "./strategy";
 export type TeamSessionConfig = {
   cloudUrl: string;
   sessionCode: string;
+  accessKey: string;
   displayName: string;
 };
 

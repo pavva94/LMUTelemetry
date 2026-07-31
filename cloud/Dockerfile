@@ -14,5 +14,8 @@ COPY cloud/requirements.txt /app/cloud/requirements.txt
 RUN pip install --no-cache-dir -r /app/cloud/requirements.txt
 COPY cloud /app/cloud
 COPY --from=frontend /src/frontend/dist /app/frontend/dist
-CMD ["sh", "-c", "uvicorn cloud.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+RUN addgroup --system app && adduser --system --ingroup app app \
+    && chown -R app:app /app
+USER app
+CMD ["sh", "-c", "uvicorn cloud.main:app --host 0.0.0.0 --port ${PORT:-8000} --no-server-header"]
 

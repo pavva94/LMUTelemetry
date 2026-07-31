@@ -8,7 +8,7 @@ const storageKey = "lmu-team-session";
 export function loadTeamConfig(): TeamSessionConfig | null {
   try {
     const parsed = JSON.parse(window.localStorage.getItem(storageKey) || "null") as TeamSessionConfig | null;
-    return parsed?.cloudUrl && parsed?.sessionCode && parsed?.displayName ? parsed : null;
+    return parsed?.cloudUrl && parsed?.sessionCode && parsed?.accessKey && parsed?.displayName ? parsed : null;
   } catch {
     return null;
   }
@@ -64,6 +64,7 @@ export function TeamRaceEngineer({
 }) {
   const [cloudUrl, setCloudUrl] = useState(config?.cloudUrl || (window.location.protocol === "https:" ? window.location.origin : ""));
   const [sessionCode, setSessionCode] = useState(config?.sessionCode || "");
+  const [accessKey, setAccessKey] = useState(config?.accessKey || "");
   const [displayName, setDisplayName] = useState(config?.displayName || "");
   const [statusText, setStatusText] = useState("");
   const [creating, setCreating] = useState(false);
@@ -76,14 +77,17 @@ export function TeamRaceEngineer({
     const next = {
       cloudUrl: cloudUrl.trim().replace(/\/+$/, ""),
       sessionCode: sessionCode.trim().toUpperCase(),
+      accessKey: accessKey.trim(),
       displayName: displayName.trim(),
     };
-    if (!next.cloudUrl || next.sessionCode.length !== 8 || !next.displayName) {
-      setStatusText("Cloud URL, eight-character session code, and display name are required.");
+    if (!next.cloudUrl || next.sessionCode.length !== 8 || next.accessKey.length < 20 || !next.displayName) {
+      setStatusText("Cloud URL, session code, access key, and display name are required.");
       return;
     }
     try {
-      await responseJson(await fetch(`${next.cloudUrl}/api/cloud/sessions/${next.sessionCode}`));
+      await responseJson(await fetch(`${next.cloudUrl}/api/cloud/sessions/${next.sessionCode}`, {
+        headers: { "X-Session-Access-Key": next.accessKey },
+      }));
       window.localStorage.setItem(storageKey, JSON.stringify(next));
       setConfig(next);
       setStatusText("Joined. Team telemetry will appear as soon as a driver publishes.");
@@ -101,6 +105,7 @@ export function TeamRaceEngineer({
         body: JSON.stringify({
           cloud_url: config.cloudUrl,
           session_code: config.sessionCode,
+          access_key: config.accessKey,
           display_name: config.displayName,
         }),
       }));
@@ -125,13 +130,14 @@ export function TeamRaceEngineer({
   const createSession = async () => {
     setCreating(true);
     try {
-      const created = await responseJson<{ code: string }>(await fetch(`${cloudUrl.replace(/\/+$/, "")}/api/cloud/sessions`, {
+      const created = await responseJson<{ code: string; access_key: string }>(await fetch(`${cloudUrl.replace(/\/+$/, "")}/api/cloud/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Team-Admin-Key": adminKey },
         body: JSON.stringify({ name: sessionName, team_name: teamName }),
       }));
       setSessionCode(created.code);
-      setStatusText(`Session ${created.code} created. Share this code with the team.`);
+      setAccessKey(created.access_key);
+      setStatusText(`Session ${created.code} created. Copy and share both credentials—the access key is shown only now.`);
     } catch (reason) {
       setStatusText(reason instanceof Error ? reason.message : "Could not create the session.");
     } finally {
@@ -157,6 +163,7 @@ export function TeamRaceEngineer({
       <div className="team-join-grid">
         <label>Railway URL<input value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} placeholder="https://your-service.up.railway.app" /></label>
         <label>Session code<input value={sessionCode} maxLength={8} onChange={(event) => setSessionCode(event.target.value.toUpperCase())} placeholder="8 characters" /></label>
+        <label>Session access key<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} placeholder="Private team invitation key" /></label>
         <label>Your driver name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Displayed to the team" /></label>
         <button type="button" className="team-primary-action" onClick={() => void join()}><LogIn size={17} /> Join session</button>
       </div>
@@ -186,8 +193,8 @@ export function TeamRaceEngineer({
           <label>Team name<input value={teamName} onChange={(event) => setTeamName(event.target.value)} /></label>
           <label>Session name<input value={sessionName} onChange={(event) => setSessionName(event.target.value)} /></label>
           <label>Railway admin key<input type="password" value={adminKey} onChange={(event) => setAdminKey(event.target.value)} /></label>
-          <button type="button" disabled={creating || !cloudUrl || !teamName || !sessionName || !adminKey} onClick={() => void createSession()}>{creating ? "Creating…" : "Create and copy code"}</button>
-          {sessionCode.length === 8 && <button type="button" onClick={() => void navigator.clipboard.writeText(sessionCode)}><Copy size={15} /> Copy {sessionCode}</button>}
+          <button type="button" disabled={creating || !cloudUrl || !teamName || !sessionName || !adminKey} onClick={() => void createSession()}>{creating ? "Creating…" : "Create secure session"}</button>
+          {sessionCode.length === 8 && accessKey.length >= 20 && <button type="button" onClick={() => void navigator.clipboard.writeText(`Session code: ${sessionCode}\nAccess key: ${accessKey}`)}><Copy size={15} /> Copy secure invite</button>}
         </div>
       </details>
       {statusText && <p className="team-status-message">{statusText}</p>}
@@ -207,7 +214,9 @@ export function TeamSessionHistory({ trace, config }: { trace: TelemetrySnapshot
     let cancelled = false;
     const refresh = async () => {
       try {
-        const response = await fetch(`${config.cloudUrl}/api/cloud/sessions/${config.sessionCode}/laps`);
+        const response = await fetch(`${config.cloudUrl}/api/cloud/sessions/${config.sessionCode}/laps`, {
+          headers: { "X-Session-Access-Key": config.accessKey },
+        });
         if (response.ok && !cancelled) setCloudLaps(await response.json() as CloudLap[]);
       } catch {
         // Live browser history remains available while the cloud endpoint reconnects.
@@ -216,7 +225,7 @@ export function TeamSessionHistory({ trace, config }: { trace: TelemetrySnapshot
     void refresh();
     const id = window.setInterval(() => void refresh(), 3000);
     return () => { cancelled = true; window.clearInterval(id); };
-  }, [config?.cloudUrl, config?.sessionCode]);
+  }, [config?.accessKey, config?.cloudUrl, config?.sessionCode]);
   const liveLaps = useMemo(() => {
     const grouped = new Map<number, TelemetrySnapshot[]>();
     trace.forEach((snapshot) => {

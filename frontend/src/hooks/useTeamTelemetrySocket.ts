@@ -4,11 +4,10 @@ import type { TelemetrySnapshot } from "../types/telemetry";
 
 const emptySnapshot: TeamSnapshot = { telemetry: null, strategy: null, recommendation: null };
 
-function websocketUrl(cloudUrl: string, code: string, ticket: string) {
+function websocketUrl(cloudUrl: string, code: string) {
   const url = new URL(cloudUrl);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   url.pathname = `/ws/cloud/${encodeURIComponent(code)}`;
-  url.search = new URLSearchParams({ ticket }).toString();
   return url.toString();
 }
 
@@ -39,12 +38,19 @@ export function useTeamTelemetrySocket(config: TeamSessionConfig | null) {
         const response = await fetch(`${base}/api/cloud/sessions/${encodeURIComponent(config.sessionCode)}/ticket`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ display_name: config.displayName, role: "viewer" }),
+          body: JSON.stringify({
+            display_name: config.displayName,
+            role: "viewer",
+            access_key: config.accessKey,
+          }),
         });
         if (!response.ok) throw new Error((await response.text()) || `Session lookup failed (${response.status})`);
         const { ticket } = await response.json() as { ticket: string };
         if (cancelled) return;
-        socket = new WebSocket(websocketUrl(base, config.sessionCode, ticket));
+        socket = new WebSocket(
+          websocketUrl(base, config.sessionCode),
+          ["lmu.telemetry.v1", `lmu-ticket.${ticket}`],
+        );
         socket.onopen = () => {
           delay = 600;
           setConnected(true);
@@ -93,7 +99,7 @@ export function useTeamTelemetrySocket(config: TeamSessionConfig | null) {
       if (heartbeat) window.clearInterval(heartbeat);
       socket?.close();
     };
-  }, [config?.cloudUrl, config?.displayName, config?.sessionCode]);
+  }, [config?.accessKey, config?.cloudUrl, config?.displayName, config?.sessionCode]);
 
   return { ...snapshot, presence, connected, error, trace };
 }

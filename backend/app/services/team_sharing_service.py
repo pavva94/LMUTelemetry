@@ -32,6 +32,7 @@ class TeamSharingService:
     def __init__(self, telemetry_service):
         self.telemetry_service = telemetry_service
         self.status = TeamSharingStatus()
+        self._access_key: str | None = None
         self._task: asyncio.Task | None = None
         self._stop = asyncio.Event()
 
@@ -45,14 +46,17 @@ class TeamSharingService:
             raise ValueError("Remote cloud connections must use HTTPS")
         return normalized
 
-    def configure(self, cloud_url: str, session_code: str, display_name: str) -> dict:
+    def configure(self, cloud_url: str, session_code: str, access_key: str, display_name: str) -> dict:
         if self.status.publishing:
             raise RuntimeError("Stop publishing before changing the team session")
         self.status.cloud_url = self.normalize_cloud_url(cloud_url)
         self.status.session_code = session_code.strip().upper()
+        self._access_key = access_key.strip()
         self.status.display_name = display_name.strip()
         if len(self.status.session_code) != 8:
             raise ValueError("Session code must contain eight characters")
+        if len(self._access_key) < 20:
+            raise ValueError("A valid session access key is required")
         if not self.status.display_name:
             raise ValueError("Display name is required")
         self.status.configured = True
@@ -90,20 +94,25 @@ class TeamSharingService:
         return asdict(self.status)
 
     async def _ticket(self, force: bool) -> str:
-        assert self.status.cloud_url and self.status.session_code and self.status.display_name
+        assert self.status.cloud_url and self.status.session_code and self._access_key and self.status.display_name
         async with httpx.AsyncClient(timeout=10) as client:
             response = await client.post(
                 f"{self.status.cloud_url}/api/cloud/sessions/{self.status.session_code}/ticket",
-                json={"display_name": self.status.display_name, "role": "publisher", "force": force},
+                json={
+                    "display_name": self.status.display_name,
+                    "role": "publisher",
+                    "access_key": self._access_key,
+                    "force": force,
+                },
             )
             response.raise_for_status()
             return str(response.json()["ticket"])
 
-    def _websocket_url(self, ticket: str) -> str:
+    def _websocket_url(self) -> str:
         assert self.status.cloud_url and self.status.session_code
         parsed = urlparse(self.status.cloud_url)
         scheme = "wss" if parsed.scheme == "https" else "ws"
-        return f"{scheme}://{parsed.netloc}/ws/cloud/{self.status.session_code}?ticket={ticket}"
+        return f"{scheme}://{parsed.netloc}/ws/cloud/{self.status.session_code}"
 
     def _frame(self) -> str | None:
         snapshot = self.telemetry_service.latest_snapshot
@@ -127,7 +136,8 @@ class TeamSharingService:
             try:
                 ticket = await self._ticket(force)
                 async with websockets.connect(
-                    self._websocket_url(ticket),
+                    self._websocket_url(),
+                    subprotocols=["lmu.telemetry.v1", f"lmu-ticket.{ticket}"],
                     open_timeout=10,
                     ping_interval=5,
                     ping_timeout=15,
