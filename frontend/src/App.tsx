@@ -98,9 +98,23 @@ export default function App() {
   const activeConnected = viewMode === "team" ? team.connected : telemetryConnected;
   const currentCompetitors = activeTelemetry?.competitors?.length ? activeTelemetry.competitors : viewMode === "local" ? competitors : [];
   return (
-    <Layout page={page} setPage={navigate} viewMode={viewMode} setViewMode={setViewMode} publishing={publishingStatus?.publishing} teamOnly={CLOUD_ONLY} teamReady={teamConfig !== null}>
+    <Layout
+      page={page}
+      setPage={navigate}
+      viewMode={viewMode}
+      setViewMode={setViewMode}
+      publishing={publishingStatus?.publishing}
+      teamOnly={CLOUD_ONLY}
+      teamReady={teamConfig !== null}
+      teamSummary={teamConfig ? {
+        connected: team.connected,
+        viewerCount: team.presence.viewer_count ?? 0,
+        activeDriver: team.presence.active_driver,
+        sessionCode: teamConfig.sessionCode,
+      } : undefined}
+    >
       <ErrorBoundary>
-        {publishingStatus?.publishing && viewMode === "local" && <div className="team-publishing-banner"><span /> Publishing to team session {publishingStatus.session_code}. Changing pages does not interrupt sharing.</div>}
+        {publishingStatus?.publishing && viewMode === "local" && <div className="team-publishing-banner"><span /> {publishingStatus.connected ? `Cloud-confirmed publishing to team session ${publishingStatus.session_code}.` : `Connecting publisher to team session ${publishingStatus.session_code}…`} Changing pages does not interrupt sharing.</div>}
         {viewMode === "team" && page === "team-session" && <TeamRaceEngineer config={teamConfig} setConfig={setTeamConfig} presence={team.presence} remoteConnected={team.connected} remoteError={team.error} publishingStatus={publishingStatus} refreshPublishingStatus={refreshPublishingStatus} />}
         <div style={{ display: page === "live" ? "contents" : "none" }} aria-hidden={page !== "live"}>
           <LiveDashboard telemetry={activeTelemetry} strategy={activeStrategy} recommendation={activeRecommendation} connected={activeConnected} competitors={currentCompetitors} />

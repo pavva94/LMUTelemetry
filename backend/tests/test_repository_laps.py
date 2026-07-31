@@ -37,6 +37,18 @@ def test_lap_summary_uses_official_last_lap_time_for_completed_lap() -> None:
     assert laps[0]["lap_time"] == 91.234
 
 
+def test_lap_summary_uses_most_frequent_driver_name() -> None:
+    rows = [
+        TelemetrySampleModel(session_id="test", timestamp="2026-01-01T00:00:00", lap_number=1, game_time=0.0, driver_name="Jane Driver"),
+        TelemetrySampleModel(session_id="test", timestamp="2026-01-01T00:00:01", lap_number=1, game_time=1.0, driver_name="Jane Driver"),
+        TelemetrySampleModel(session_id="test", timestamp="2026-01-01T00:00:02", lap_number=1, game_time=2.0, driver_name="Transition Sample"),
+    ]
+
+    laps = Repository()._build_laps(rows)
+
+    assert laps[0]["driver_name"] == "Jane Driver"
+
+
 def test_repository_session_type_name_maps_lmu_race_range() -> None:
     repository = Repository()
 

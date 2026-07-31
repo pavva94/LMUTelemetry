@@ -64,6 +64,7 @@ def _ensure_sqlite_columns() -> None:
 
     existing = {column["name"] for column in inspector.get_columns("telemetry_samples")}
     columns = {
+        "driver_name": "VARCHAR",
         "lap_distance": "FLOAT",
         "position": "INTEGER",
         "class_position": "INTEGER",
@@ -158,7 +159,10 @@ def _ensure_sqlite_columns() -> None:
         connection.execute(text("CREATE INDEX IF NOT EXISTS ix_recommendations_session_id_id ON recommendations (session_id, id)"))
 
     if "lap_summaries" in table_names:
+        existing = {column["name"] for column in inspector.get_columns("lap_summaries")}
         with engine.begin() as connection:
+            if "driver_name" not in existing:
+                connection.execute(text("ALTER TABLE lap_summaries ADD COLUMN driver_name VARCHAR"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_lap_summaries_session_id_lap ON lap_summaries (session_id, lap_number)"))
 
     if "session_aggregates" in table_names:

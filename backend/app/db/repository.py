@@ -135,6 +135,7 @@ class Repository:
                     timestamp=snapshot.timestamp.isoformat(),
                     game_time=state.current_time if state else None,
                     lap_number=player.lap_number if player else None,
+                    driver_name=player_comp.driver_name if player_comp else None,
                     lap_distance=player_comp.lap_distance if player_comp else None,
                     position=player.position if player else None,
                     class_position=player.class_position if player else None,
@@ -467,6 +468,7 @@ class Repository:
                 row = LapSummaryModel(session_id=session_id, lap_number=lap_number)
                 db.add(row)
             row.lap_time = lap.get("lap_time")
+            row.driver_name = lap.get("driver_name")
             row.fuel_start = lap.get("fuel_start")
             row.fuel_end = lap.get("fuel_end")
             row.fuel_used = lap.get("fuel_used")
@@ -554,8 +556,15 @@ class Repository:
             in_pit = any(bool(row.in_pits) for row in rows)
             wear_start = self._average_wear(first)
             wear_end = self._average_wear(last)
+            driver_counts: dict[str, int] = {}
+            for row in rows:
+                driver_name = (row.driver_name or "").strip()
+                if driver_name:
+                    driver_counts[driver_name] = driver_counts.get(driver_name, 0) + 1
+            driver_name = max(driver_counts, key=driver_counts.get) if driver_counts else None
             lap = {
                 "lap_number": lap_number,
+                "driver_name": driver_name,
                 "start_time": start_time,
                 "end_time": end_time,
                 "lap_time": duration,

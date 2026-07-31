@@ -77,6 +77,7 @@ export function Layout({
   publishing,
   teamOnly = false,
   teamReady = true,
+  teamSummary,
   children,
 }: {
   page: PageKey;
@@ -86,6 +87,7 @@ export function Layout({
   publishing?: boolean;
   teamOnly?: boolean;
   teamReady?: boolean;
+  teamSummary?: { connected: boolean; viewerCount: number; activeDriver?: string | null; sessionCode: string };
   children: React.ReactNode;
 }) {
   const t = useT();
@@ -132,9 +134,14 @@ export function Layout({
         </div>
         {viewMode === "team" && (
           <nav className="nav">
-            <button className={page === "team-session" ? "active" : ""} onClick={() => setPage("team-session")} aria-current={page === "team-session" ? "page" : undefined}>
+            <button className={`team-session-nav ${page === "team-session" ? "active" : ""}`} onClick={() => setPage("team-session")} aria-current={page === "team-session" ? "page" : undefined}>
               <Cloud size={16} />
-              <span>Team Session</span>
+              <span className="team-session-nav-copy">
+                <strong>Team Session</strong>
+                {teamSummary
+                  ? <small><i className={teamSummary.connected ? "online" : ""} />{teamSummary.viewerCount} viewer{teamSummary.viewerCount === 1 ? "" : "s"} · {teamSummary.connected ? "live" : "reconnecting"}<b>{teamSummary.activeDriver || teamSummary.sessionCode}</b></small>
+                  : <small>Join or create a session</small>}
+              </span>
             </button>
           </nav>
         )}

@@ -12,7 +12,7 @@ def test_create_lookup_and_ticket(monkeypatch):
         created = client.post(
             "/api/cloud/sessions",
             headers={"X-Team-Admin-Key": "test-secret"},
-            json={"name": "Le Mans 4H", "team_name": "LMU Team", "track_name": "Le Mans"},
+            json={"name": "Le Mans 4H", "team_name": "LMU Team", "track_name": "Le Mans", "leader_name": "Team Lead"},
         )
         assert created.status_code == 200
         code = created.json()["code"]
@@ -27,6 +27,15 @@ def test_create_lookup_and_ticket(monkeypatch):
         assert lookup.status_code == 200
         assert lookup.json()["team_name"] == "LMU Team"
         assert "access_key" not in lookup.json()
+
+        participants = client.get(
+            f"/api/cloud/sessions/{code}/participants",
+            headers={"X-Session-Access-Key": access_key},
+        )
+        assert participants.status_code == 200
+        assert participants.json()[0]["display_name"] == "Team Lead"
+        assert participants.json()[0]["role"] == "leader"
+        assert participants.json()[0]["lap_count"] == 0
 
         ticket = client.post(
             f"/api/cloud/sessions/{code}/ticket",
@@ -56,7 +65,7 @@ def test_live_relay(monkeypatch):
         ).json()["ticket"]
         with client.websocket_connect(
             f"/ws/cloud/{code}",
-            subprotocols=["lmu.telemetry.v1", f"lmu-ticket.{publisher_ticket}"],
+            subprotocols=["lmu.telemetry.v2", f"lmu-ticket.{publisher_ticket}"],
         ) as publisher:
             with client.websocket_connect(
                 f"/ws/cloud/{code}",
@@ -65,10 +74,25 @@ def test_live_relay(monkeypatch):
                 presence = viewer.receive_json()
                 assert presence["kind"] == "presence"
                 publisher.send_json({"kind": "snapshot", "payload": {"telemetry": {"connected": True}}})
+                acknowledgement = publisher.receive_json()
+                assert acknowledgement["kind"] == "ack"
+                assert acknowledgement["sequence"] == 1
                 relayed = viewer.receive_json()
                 assert relayed["kind"] == "snapshot"
                 assert relayed["source_name"] == "Driver One"
                 assert relayed["payload"]["telemetry"]["connected"] is True
+                lookup = client.get(
+                    f"/api/cloud/sessions/{code}",
+                    headers={"X-Session-Access-Key": access_key},
+                ).json()
+                assert lookup["sequence"] == 1
+                assert lookup["last_snapshot_at"]
+                participants = client.get(
+                    f"/api/cloud/sessions/{code}/participants",
+                    headers={"X-Session-Access-Key": access_key},
+                ).json()
+                assert {participant["display_name"] for participant in participants} == {"Driver One", "Engineer"}
+                assert next(participant for participant in participants if participant["display_name"] == "Driver One")["active_role"] == "driver"
 
 
 def test_completed_lap_is_persisted(monkeypatch):
@@ -87,11 +111,14 @@ def test_completed_lap_is_persisted(monkeypatch):
         ).json()["ticket"]
         with client.websocket_connect(
             f"/ws/cloud/{code}",
-            subprotocols=["lmu.telemetry.v1", f"lmu-ticket.{ticket}"],
+            subprotocols=["lmu.telemetry.v2", f"lmu-ticket.{ticket}"],
         ) as publisher:
             publisher.send_json({"kind": "snapshot", "payload": {"telemetry": {"player": {"lap_number": 1, "fuel_liters": 50.0, "speed_kph": 200.0}}}})
+            assert publisher.receive_json()["kind"] == "ack"
             publisher.send_json({"kind": "snapshot", "payload": {"telemetry": {"player": {"lap_number": 1, "fuel_liters": 48.0, "speed_kph": 260.0}}}})
+            assert publisher.receive_json()["kind"] == "ack"
             publisher.send_json({"kind": "snapshot", "payload": {"telemetry": {"player": {"lap_number": 2, "last_lap_time": 215.4, "fuel_liters": 47.9, "speed_kph": 180.0}}}})
+            assert publisher.receive_json()["kind"] == "ack"
         laps = client.get(
             f"/api/cloud/sessions/{code}/laps",
             headers={"X-Session-Access-Key": access_key},
@@ -100,6 +127,13 @@ def test_completed_lap_is_persisted(monkeypatch):
         assert laps.json()[-1]["driver_name"] == "Driver Two"
         assert laps.json()[-1]["lap_number"] == 1
         assert laps.json()[-1]["fuel_used"] == 2.0
+        participants = client.get(
+            f"/api/cloud/sessions/{code}/participants",
+            headers={"X-Session-Access-Key": access_key},
+        ).json()
+        driver = next(participant for participant in participants if participant["display_name"] == "Driver Two")
+        assert driver["lap_count"] == 1
+        assert driver["fastest_lap"] == 215.4
 
 
 def test_session_data_and_tickets_require_access_key(monkeypatch):
@@ -115,6 +149,10 @@ def test_session_data_and_tickets_require_access_key(monkeypatch):
         assert client.get(f"/api/cloud/sessions/{code}").status_code == 401
         assert client.get(
             f"/api/cloud/sessions/{code}/laps",
+            headers={"X-Session-Access-Key": "wrong-access-key-value"},
+        ).status_code == 401
+        assert client.get(
+            f"/api/cloud/sessions/{code}/participants",
             headers={"X-Session-Access-Key": "wrong-access-key-value"},
         ).status_code == 401
         assert client.post(

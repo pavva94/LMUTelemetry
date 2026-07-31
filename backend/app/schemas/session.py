@@ -18,6 +18,7 @@ class SessionSummary(BaseModel):
 
 class LapSummary(BaseModel):
     lap_number: int
+    driver_name: str | None = None
     lap_time: float | None = None
     fuel_start: float | None = None
     fuel_end: float | None = None

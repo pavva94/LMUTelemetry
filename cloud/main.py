@@ -70,6 +70,17 @@ class TeamLap(Base):
     completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class TeamParticipant(Base):
+    __tablename__ = "team_participants"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    session_id: Mapped[int] = mapped_column(ForeignKey("team_sessions.id"), index=True)
+    display_name: Mapped[str] = mapped_column(String(80), index=True)
+    role: Mapped[str] = mapped_column(String(24), default="viewer")
+    joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 engine = create_engine(database_url(), pool_pre_ping=True)
 ticket_secret = os.getenv("TOKEN_SECRET", "development-only-change-me").encode("utf-8")
 MAX_VIEWERS_PER_SESSION = int(os.getenv("MAX_VIEWERS_PER_SESSION", "20"))
@@ -133,6 +144,7 @@ class SessionCreate(StrictModel):
     name: str = Field(min_length=2, max_length=160)
     team_name: str = Field(min_length=2, max_length=120)
     track_name: str | None = Field(default=None, max_length=160)
+    leader_name: str | None = Field(default=None, min_length=1, max_length=80)
 
 
 class TicketRequest(StrictModel):
@@ -158,8 +170,9 @@ def consume_ticket(token: str) -> dict[str, Any]:
 
 
 class Viewer:
-    def __init__(self, websocket: WebSocket):
+    def __init__(self, websocket: WebSocket, display_name: str):
         self.websocket = websocket
+        self.display_name = display_name
         self.queue: asyncio.Queue[str | None] = asyncio.Queue(maxsize=2)
         self.writer = asyncio.create_task(self._write())
 
@@ -193,6 +206,7 @@ class CloudRoom:
         self.publisher_name: str | None = None
         self.latest: str | None = None
         self.sequence = 0
+        self.last_snapshot_at: str | None = None
         self.lock = asyncio.Lock()
         self.lap_number: int | None = None
         self.lap_driver: str | None = None
@@ -201,11 +215,12 @@ class CloudRoom:
         self.lap_max_speed: float | None = None
         self.lap_samples = 0
 
-    async def add_viewer(self, websocket: WebSocket) -> None:
+    async def add_viewer(self, websocket: WebSocket, display_name: str) -> None:
         if len(self.viewers) >= MAX_VIEWERS_PER_SESSION:
             raise HTTPException(status_code=429, detail="Session viewer limit reached")
-        viewer = Viewer(websocket)
+        viewer = Viewer(websocket, display_name)
         self.viewers[websocket] = viewer
+        await asyncio.to_thread(record_participant, self.code, display_name, "viewer")
         if self.latest:
             viewer.offer(self.latest)
         await self.presence()
@@ -227,6 +242,7 @@ class CloudRoom:
             self.publisher_name = name
             if self.lap_driver != name:
                 self._reset_lap()
+        await asyncio.to_thread(record_participant, self.code, name, "driver")
         await self.presence()
 
     async def release(self, websocket: WebSocket) -> None:
@@ -236,7 +252,7 @@ class CloudRoom:
                 self.publisher_name = None
         await self.presence()
 
-    async def publish(self, raw: str) -> None:
+    async def publish(self, raw: str) -> int:
         self.sequence += 1
         parsed = json.loads(raw, parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)))
         if not isinstance(parsed, dict) or parsed.get("kind", "snapshot") != "snapshot":
@@ -244,11 +260,12 @@ class CloudRoom:
         body = parsed.get("payload", parsed)
         if not isinstance(body, dict):
             raise ValueError("Snapshot payload must be an object")
+        received_at = utc_now().isoformat()
         outbound = json.dumps(
             {
                 "protocol_version": 1,
                 "sequence": self.sequence,
-                "sent_at": utc_now().isoformat(),
+                "sent_at": received_at,
                 "kind": parsed.get("kind", "snapshot"),
                 "source_name": self.publisher_name,
                 "payload": body,
@@ -257,9 +274,11 @@ class CloudRoom:
             allow_nan=False,
         )
         self.latest = outbound
+        self.last_snapshot_at = received_at
         await self._track_lap(parsed)
         for viewer in list(self.viewers.values()):
             viewer.offer(outbound)
+        return self.sequence
 
     def _reset_lap(self, lap_number: int | None = None) -> None:
         self.lap_number = lap_number
@@ -313,6 +332,8 @@ class CloudRoom:
                     "active_driver": self.publisher_name,
                     "viewer_count": len(self.viewers),
                     "publishing": self.publisher is not None,
+                    "sequence": self.sequence,
+                    "last_snapshot_at": self.last_snapshot_at,
                 },
             },
             separators=(",", ":"),
@@ -320,12 +341,133 @@ class CloudRoom:
         for viewer in list(self.viewers.values()):
             viewer.offer(payload)
 
+    async def close(self) -> None:
+        if self.publisher is not None:
+            with suppress(Exception):
+                await self.publisher.close(code=4004, reason="Team session ended")
+        for websocket in list(self.viewers):
+            with suppress(Exception):
+                await websocket.close(code=4004, reason="Team session ended")
+
+    def active_participants(self) -> dict[str, str]:
+        active = {viewer.display_name.casefold(): "viewer" for viewer in self.viewers.values()}
+        if self.publisher_name:
+            active[self.publisher_name.casefold()] = "driver"
+        return active
+
 
 rooms: dict[str, CloudRoom] = {}
 
 
 def room_for(code: str) -> CloudRoom:
     return rooms.setdefault(code, CloudRoom(code))
+
+
+def record_participant(code: str, display_name: str, role: str) -> None:
+    name = display_name.strip()
+    if not name:
+        return
+    role_rank = {"viewer": 0, "driver": 1, "leader": 2}
+    with Session(engine) as db:
+        team_session = db.scalar(select(TeamSession).where(TeamSession.code == code.upper()))
+        if team_session is None:
+            return
+        participant = db.scalar(
+            select(TeamParticipant).where(
+                TeamParticipant.session_id == team_session.id,
+                TeamParticipant.display_name == name,
+            )
+        )
+        now = utc_now()
+        if participant is None:
+            participant = TeamParticipant(
+                session_id=team_session.id,
+                display_name=name,
+                role=role,
+                joined_at=now,
+                last_seen_at=now,
+            )
+            db.add(participant)
+        else:
+            if role_rank.get(role, 0) > role_rank.get(participant.role, 0):
+                participant.role = role
+            participant.last_seen_at = now
+        db.commit()
+
+
+def participant_payloads(code: str) -> list[dict[str, Any]]:
+    normalized = code.upper()
+    room = rooms.get(normalized)
+    active = room.active_participants() if room else {}
+    with Session(engine) as db:
+        team_session = db.scalar(select(TeamSession).where(TeamSession.code == normalized))
+        if team_session is None:
+            return []
+        participants = db.scalars(
+            select(TeamParticipant)
+            .where(TeamParticipant.session_id == team_session.id)
+            .order_by(TeamParticipant.joined_at, TeamParticipant.id)
+        ).all()
+        laps = db.scalars(
+            select(TeamLap).where(TeamLap.session_id == team_session.id)
+        ).all()
+    lap_stats: dict[str, dict[str, Any]] = {}
+    for lap in laps:
+        key = lap.driver_name.casefold()
+        stats = lap_stats.setdefault(key, {"lap_count": 0, "fastest_lap": None, "last_lap": None})
+        stats["lap_count"] += 1
+        stats["last_lap"] = lap.lap_number
+        if lap.lap_time is not None and lap.lap_time > 0:
+            stats["fastest_lap"] = min(stats["fastest_lap"] or lap.lap_time, lap.lap_time)
+    payloads = [
+        {
+            "display_name": participant.display_name,
+            "role": participant.role,
+            "online": participant.display_name.casefold() in active,
+            "active_role": active.get(participant.display_name.casefold()),
+            "lap_count": lap_stats.get(participant.display_name.casefold(), {}).get("lap_count", 0),
+            "fastest_lap": lap_stats.get(participant.display_name.casefold(), {}).get("fastest_lap"),
+            "last_lap": lap_stats.get(participant.display_name.casefold(), {}).get("last_lap"),
+            "joined_at": participant.joined_at,
+            "last_seen_at": participant.last_seen_at,
+        }
+        for participant in participants
+    ]
+    known = {participant["display_name"].casefold() for participant in payloads}
+    now = utc_now()
+    for viewer in room.viewers.values() if room else []:
+        key = viewer.display_name.casefold()
+        if key not in known:
+            payloads.append(
+                {
+                    "display_name": viewer.display_name,
+                    "role": "viewer",
+                    "online": True,
+                    "active_role": active.get(key),
+                    "lap_count": lap_stats.get(key, {}).get("lap_count", 0),
+                    "fastest_lap": lap_stats.get(key, {}).get("fastest_lap"),
+                    "last_lap": lap_stats.get(key, {}).get("last_lap"),
+                    "joined_at": now,
+                    "last_seen_at": now,
+                }
+            )
+            known.add(key)
+    if room and room.publisher_name and room.publisher_name.casefold() not in known:
+        key = room.publisher_name.casefold()
+        payloads.append(
+            {
+                "display_name": room.publisher_name,
+                "role": "driver",
+                "online": True,
+                "active_role": "driver",
+                "lap_count": lap_stats.get(key, {}).get("lap_count", 0),
+                "fastest_lap": lap_stats.get(key, {}).get("fastest_lap"),
+                "last_lap": lap_stats.get(key, {}).get("last_lap"),
+                "joined_at": now,
+                "last_seen_at": now,
+            }
+        )
+    return payloads
 
 
 def persist_lap(
@@ -407,6 +549,9 @@ def session_payload(row: TeamSession) -> dict[str, Any]:
         "ended_at": row.ended_at,
         "active_driver": room.publisher_name if room else None,
         "viewer_count": len(room.viewers) if room else 0,
+        "publishing": room.publisher is not None if room else False,
+        "sequence": room.sequence if room else 0,
+        "last_snapshot_at": room.last_snapshot_at if room else None,
     }
 
 
@@ -421,8 +566,7 @@ async def lifespan(_: FastAPI):
             connection.execute(text("ALTER TABLE team_sessions ADD COLUMN access_key_hash VARCHAR(128)"))
     yield
     for room in rooms.values():
-        for viewer in list(room.viewers.values()):
-            await viewer.close()
+        await room.close()
 
 
 app = FastAPI(
@@ -528,7 +672,10 @@ def create_team_session(body: SessionCreate, x_team_admin_key: str | None = Head
         db.add(row)
         db.commit()
         db.refresh(row)
-        return {**session_payload(row), "access_key": access_key}
+        created = {**session_payload(row), "access_key": access_key}
+    if body.leader_name:
+        record_participant(row.code, body.leader_name, "leader")
+    return created
 
 
 @app.get("/api/cloud/sessions/{code}")
@@ -567,6 +714,17 @@ def get_team_laps(code: str, x_session_access_key: str | None = Header(default=N
         ]
 
 
+@app.get("/api/cloud/sessions/{code}/participants")
+def get_team_participants(code: str, x_session_access_key: str | None = Header(default=None)):
+    normalized = code.upper()
+    with Session(engine) as db:
+        row = db.scalar(select(TeamSession).where(TeamSession.code == normalized))
+        if row is None:
+            raise HTTPException(status_code=404, detail="Team session not found")
+        require_session_access(row, x_session_access_key)
+    return participant_payloads(normalized)
+
+
 @app.post("/api/cloud/sessions/{code}/ticket")
 def create_ticket(code: str, body: TicketRequest):
     normalized = code.upper()
@@ -588,7 +746,7 @@ def create_ticket(code: str, body: TicketRequest):
 
 
 @app.post("/api/cloud/sessions/{code}/end")
-def end_team_session(code: str, x_team_admin_key: str | None = Header(default=None)):
+async def end_team_session(code: str, x_team_admin_key: str | None = Header(default=None)):
     require_admin(x_team_admin_key)
     with Session(engine) as db:
         row = db.scalar(select(TeamSession).where(TeamSession.code == code.upper()))
@@ -598,7 +756,11 @@ def end_team_session(code: str, x_team_admin_key: str | None = Header(default=No
         row.ended_at = utc_now()
         db.commit()
         db.refresh(row)
-        return session_payload(row)
+        result = session_payload(row)
+    room = rooms.pop(code.upper(), None)
+    if room:
+        await room.close()
+    return result
 
 
 @app.websocket("/ws/cloud/{code}")
@@ -627,7 +789,8 @@ async def cloud_socket(websocket: WebSocket, code: str):
     role = claims.get("role")
     room = room_for(normalized)
     if role == "publisher":
-        await websocket.accept(subprotocol="lmu.telemetry.v1")
+        protocol = "lmu.telemetry.v2" if "lmu.telemetry.v2" in offered_protocols else "lmu.telemetry.v1"
+        await websocket.accept(subprotocol=protocol)
         try:
             await room.claim(websocket, str(claims.get("display_name") or "Driver"), bool(claims.get("force")))
             while True:
@@ -636,7 +799,16 @@ async def cloud_socket(websocket: WebSocket, code: str):
                     await websocket.close(code=4009, reason="Frame too large")
                     return
                 try:
-                    await room.publish(raw)
+                    sequence = await room.publish(raw)
+                    if protocol == "lmu.telemetry.v2":
+                        await websocket.send_json(
+                            {
+                                "protocol_version": 2,
+                                "kind": "ack",
+                                "sequence": sequence,
+                                "received_at": room.last_snapshot_at,
+                            }
+                        )
                 except (json.JSONDecodeError, TypeError, ValueError):
                     await websocket.close(code=4003, reason="Invalid telemetry frame")
                     return
@@ -652,7 +824,7 @@ async def cloud_socket(websocket: WebSocket, code: str):
         await websocket.close(code=4008, reason="Session viewer limit reached")
         return
     await websocket.accept(subprotocol="lmu.telemetry.v1")
-    await room.add_viewer(websocket)
+    await room.add_viewer(websocket, str(claims.get("display_name") or "Viewer"))
     try:
         while True:
             raw = await websocket.receive_text()

@@ -5,6 +5,7 @@ import json
 import logging
 import ssl
 from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 import certifi
@@ -20,11 +21,15 @@ logger = logging.getLogger(__name__)
 class TeamSharingStatus:
     configured: bool = False
     publishing: bool = False
+    socket_connected: bool = False
     connected: bool = False
     cloud_url: str | None = None
     session_code: str | None = None
     display_name: str | None = None
     sent_frames: int = 0
+    acknowledged_frames: int = 0
+    last_acknowledged_at: str | None = None
+    last_frame_bytes: int | None = None
     last_error: str | None = None
 
 
@@ -62,6 +67,12 @@ class TeamSharingService:
         if not self.status.display_name:
             raise ValueError("Display name is required")
         self.status.configured = True
+        self.status.socket_connected = False
+        self.status.connected = False
+        self.status.sent_frames = 0
+        self.status.acknowledged_frames = 0
+        self.status.last_acknowledged_at = None
+        self.status.last_frame_bytes = None
         self.status.last_error = None
         return self.as_dict()
 
@@ -78,6 +89,7 @@ class TeamSharingService:
 
     async def stop(self) -> dict:
         self.status.publishing = False
+        self.status.socket_connected = False
         self.status.connected = False
         self._stop.set()
         if self._task:
@@ -144,7 +156,7 @@ class TeamSharingService:
                 ticket = await self._ticket(force)
                 async with websockets.connect(
                     self._websocket_url(),
-                    subprotocols=["lmu.telemetry.v1", f"lmu-ticket.{ticket}"],
+                    subprotocols=["lmu.telemetry.v2", f"lmu-ticket.{ticket}"],
                     ssl=self._ssl_context() if self.status.cloud_url.startswith("https://") else None,
                     open_timeout=10,
                     ping_interval=5,
@@ -152,19 +164,31 @@ class TeamSharingService:
                     max_size=65_536,
                     compression="deflate",
                 ) as socket:
-                    self.status.connected = True
+                    self.status.socket_connected = True
+                    self.status.connected = False
                     self.status.last_error = None
                     delay = 0.5
                     force = False
                     while self.status.publishing and not self._stop.is_set():
                         frame = self._frame()
                         if frame:
+                            self.status.last_frame_bytes = len(frame.encode("utf-8"))
                             await socket.send(frame)
                             self.status.sent_frames += 1
+                            raw_ack = await asyncio.wait_for(socket.recv(), timeout=5)
+                            if not isinstance(raw_ack, str):
+                                raise RuntimeError("Cloud returned a non-text acknowledgement")
+                            ack = json.loads(raw_ack)
+                            if ack.get("kind") != "ack" or not isinstance(ack.get("sequence"), int):
+                                raise RuntimeError("Cloud returned an invalid telemetry acknowledgement")
+                            self.status.acknowledged_frames += 1
+                            self.status.last_acknowledged_at = datetime.now(timezone.utc).isoformat()
+                            self.status.connected = True
                         await asyncio.sleep(0.2)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                self.status.socket_connected = False
                 self.status.connected = False
                 self.status.last_error = str(exc)[:240]
                 logger.warning("Team telemetry publisher disconnected: %s", exc)
@@ -173,5 +197,6 @@ class TeamSharingService:
                 except asyncio.TimeoutError:
                     pass
                 delay = min(10.0, delay * 2)
+        self.status.socket_connected = False
         self.status.connected = False
 

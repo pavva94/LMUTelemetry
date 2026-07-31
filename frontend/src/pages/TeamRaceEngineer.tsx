@@ -1,10 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
-import { Cloud, Copy, LogIn, Radio, RadioTower, Square, Upload, Users } from "lucide-react";
-import type { TeamPresence, TeamPublishingStatus, TeamSessionConfig } from "../types/team";
+import { Cloud, Copy, Crown, LogIn, LogOut, Power, Radio, RadioTower, Square, Upload, UserPlus, Users } from "lucide-react";
+import type { TeamParticipant, TeamPresence, TeamPublishingStatus, TeamSessionConfig, TeamSessionInfo } from "../types/team";
 import type { TelemetrySnapshot } from "../types/telemetry";
 
 const storageKey = "lmu-team-session";
+const leaderStoragePrefix = "lmu-team-session-leader:";
 export const DEFAULT_TEAM_CLOUD_URL = "https://lmutelemetry-production.up.railway.app";
+
+function leaderStorageKey(code: string) {
+  return `${leaderStoragePrefix}${code}`;
+}
+
+function formatLapTime(value?: number | null) {
+  if (!value || value <= 0) return "--";
+  const minutes = Math.floor(value / 60);
+  return `${minutes}:${(value - minutes * 60).toFixed(3).padStart(6, "0")}`;
+}
 
 export function loadTeamConfig(): TeamSessionConfig | null {
   try {
@@ -64,6 +75,7 @@ export function TeamRaceEngineer({
   publishingStatus: TeamPublishingStatus | null;
   refreshPublishingStatus: () => Promise<void>;
 }) {
+  const [entryMode, setEntryMode] = useState<"join" | "create">("join");
   const [cloudUrl, setCloudUrl] = useState(
     config?.cloudUrl || (window.location.protocol === "https:" ? window.location.origin : DEFAULT_TEAM_CLOUD_URL),
   );
@@ -75,7 +87,45 @@ export function TeamRaceEngineer({
   const [adminKey, setAdminKey] = useState("");
   const [teamName, setTeamName] = useState("");
   const [sessionName, setSessionName] = useState("");
+  const [leaderName, setLeaderName] = useState("");
+  const [sessionInfo, setSessionInfo] = useState<TeamSessionInfo | null>(null);
+  const [participants, setParticipants] = useState<TeamParticipant[]>([]);
   const desktopAvailable = publishingStatus !== null;
+  const cloudHasData = Boolean(presence.sequence && presence.last_snapshot_at);
+  const leaderAdminKey = config ? window.sessionStorage.getItem(leaderStorageKey(config.sessionCode)) : null;
+  const isLeader = Boolean(config && leaderAdminKey);
+
+  useEffect(() => {
+    if (!config) {
+      setSessionInfo(null);
+      setParticipants([]);
+      return;
+    }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const headers = { "X-Session-Access-Key": config.accessKey };
+        const [infoResponse, participantsResponse] = await Promise.all([
+          fetch(`${config.cloudUrl}/api/cloud/sessions/${config.sessionCode}`, { headers }),
+          fetch(`${config.cloudUrl}/api/cloud/sessions/${config.sessionCode}/participants`, { headers }),
+        ]);
+        if (!infoResponse.ok) throw new Error((await infoResponse.text()) || "Could not refresh the team session.");
+        if (!participantsResponse.ok) throw new Error((await participantsResponse.text()) || "Could not refresh participants.");
+        if (!cancelled) {
+          setSessionInfo(await infoResponse.json() as TeamSessionInfo);
+          setParticipants(await participantsResponse.json() as TeamParticipant[]);
+        }
+      } catch (reason) {
+        if (!cancelled) setStatusText(reason instanceof Error ? reason.message : "Could not refresh the team session.");
+      }
+    };
+    void refresh();
+    const id = window.setInterval(() => void refresh(), 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [config?.accessKey, config?.cloudUrl, config?.sessionCode]);
 
   const join = async () => {
     const next = {
@@ -85,16 +135,16 @@ export function TeamRaceEngineer({
       displayName: displayName.trim(),
     };
     if (!next.cloudUrl || next.sessionCode.length !== 8 || next.accessKey.length < 20 || !next.displayName) {
-      setStatusText("Cloud URL, session code, access key, and display name are required.");
+      setStatusText("Cloud URL, session code, access key, and your name are required.");
       return;
     }
     try {
       await responseJson(await fetch(`${next.cloudUrl}/api/cloud/sessions/${next.sessionCode}`, {
         headers: { "X-Session-Access-Key": next.accessKey },
       }));
-      window.localStorage.setItem(storageKey, JSON.stringify(next));
-      setConfig(next);
-      setStatusText("Joined. Team telemetry will appear as soon as a driver publishes.");
+      const memberConfig: TeamSessionConfig = { ...next, role: "member" };
+      window.localStorage.setItem(storageKey, JSON.stringify(memberConfig));
+      setConfig(memberConfig);
     } catch (reason) {
       setStatusText(reason instanceof Error ? reason.message : "Could not join the session.");
     }
@@ -125,7 +175,7 @@ export function TeamRaceEngineer({
     }
   };
 
-  const stop = async () => {
+  const stopPublishing = async () => {
     await fetch("/api/team-sharing/stop", { method: "POST" });
     setStatusText("Publishing stopped. Local telemetry recording continues.");
     await refreshPublishingStatus();
@@ -134,14 +184,22 @@ export function TeamRaceEngineer({
   const createSession = async () => {
     setCreating(true);
     try {
-      const created = await responseJson<{ code: string; access_key: string }>(await fetch(`${cloudUrl.replace(/\/+$/, "")}/api/cloud/sessions`, {
+      const base = cloudUrl.trim().replace(/\/+$/, "");
+      const created = await responseJson<TeamSessionInfo & { access_key: string }>(await fetch(`${base}/api/cloud/sessions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Team-Admin-Key": adminKey },
-        body: JSON.stringify({ name: sessionName, team_name: teamName }),
+        body: JSON.stringify({ name: sessionName, team_name: teamName, leader_name: leaderName }),
       }));
-      setSessionCode(created.code);
-      setAccessKey(created.access_key);
-      setStatusText(`Session ${created.code} created. Copy and share both credentials—the access key is shown only now.`);
+      const leaderConfig: TeamSessionConfig = {
+        cloudUrl: base,
+        sessionCode: created.code,
+        accessKey: created.access_key,
+        displayName: leaderName.trim(),
+        role: "leader",
+      };
+      window.localStorage.setItem(storageKey, JSON.stringify(leaderConfig));
+      window.sessionStorage.setItem(leaderStorageKey(created.code), adminKey);
+      setConfig(leaderConfig);
     } catch (reason) {
       setStatusText(reason instanceof Error ? reason.message : "Could not create the session.");
     } finally {
@@ -149,59 +207,124 @@ export function TeamRaceEngineer({
     }
   };
 
+  const leaveSession = async () => {
+    if (publishingStatus?.publishing) await fetch("/api/team-sharing/stop", { method: "POST" }).catch(() => undefined);
+    if (config) window.sessionStorage.removeItem(leaderStorageKey(config.sessionCode));
+    window.localStorage.removeItem(storageKey);
+    setSessionCode("");
+    setAccessKey("");
+    setConfig(null);
+  };
+
+  const endSession = async () => {
+    if (!config || !leaderAdminKey) return;
+    try {
+      await responseJson(await fetch(`${config.cloudUrl}/api/cloud/sessions/${config.sessionCode}/end`, {
+        method: "POST",
+        headers: { "X-Team-Admin-Key": leaderAdminKey },
+      }));
+      await leaveSession();
+    } catch (reason) {
+      setStatusText(reason instanceof Error ? reason.message : "Could not stop the team session.");
+    }
+  };
+
+  const copyInvite = async () => {
+    if (!config) return;
+    await navigator.clipboard.writeText(`Railway URL: ${config.cloudUrl}\nSession code: ${config.sessionCode}\nAccess key: ${config.accessKey}`);
+    setStatusText("Secure invitation copied.");
+  };
+
+  if (!config) {
+    return (
+      <section className="team-engineer-hero team-entry" aria-label="Join or create a team session">
+        <div className="team-engineer-heading">
+          <div><span>Team mode</span><h2>Team Session</h2><p>Join an existing race room or create a new one as team leader.</p></div>
+          <div className="team-signal"><RadioTower size={22} /><strong>Not in a session</strong><small>Choose how you want to enter</small></div>
+        </div>
+        <div className="team-entry-switch" role="tablist" aria-label="Team session action">
+          <button type="button" className={entryMode === "join" ? "active" : ""} onClick={() => setEntryMode("join")}><LogIn size={17} /> Join a session</button>
+          <button type="button" className={entryMode === "create" ? "active" : ""} onClick={() => setEntryMode("create")}><UserPlus size={17} /> Create a session</button>
+        </div>
+        {entryMode === "join" ? (
+          <div className="team-entry-form team-entry-form-join">
+            <label>Railway URL<input value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} placeholder="https://your-service.up.railway.app" /></label>
+            <label>Session code<input value={sessionCode} maxLength={8} onChange={(event) => setSessionCode(event.target.value.toUpperCase())} placeholder="8 characters" /></label>
+            <label>Session access key<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} placeholder="Private team invitation key" /></label>
+            <label>Your name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Displayed to the team" /></label>
+            <button type="button" className="team-primary-action" onClick={() => void join()}><LogIn size={17} /> Join session</button>
+          </div>
+        ) : (
+          <div className="team-entry-form team-entry-form-create">
+            <label>Railway URL<input value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} placeholder="https://your-service.up.railway.app" /></label>
+            <label>Team name<input value={teamName} onChange={(event) => setTeamName(event.target.value)} /></label>
+            <label>Session name<input value={sessionName} onChange={(event) => setSessionName(event.target.value)} /></label>
+            <label>Team leader name<input value={leaderName} onChange={(event) => setLeaderName(event.target.value)} /></label>
+            <label>Railway admin key<input type="password" value={adminKey} onChange={(event) => setAdminKey(event.target.value)} /></label>
+            <button type="button" className="team-primary-action" disabled={creating || !cloudUrl || !teamName || !sessionName || !leaderName || !adminKey} onClick={() => void createSession()}>{creating ? "Creating…" : "Create session"}</button>
+          </div>
+        )}
+        {statusText && <p className="team-status-message">{statusText}</p>}
+      </section>
+    );
+  }
+
   return (
-    <section className="team-engineer-hero" aria-label="Team Race Engineer connection">
+    <section className="team-engineer-hero" aria-label="Active team session">
       <div className="team-engineer-heading">
         <div>
-          <span>Team mode</span>
-          <h2>Race Engineer</h2>
-          <p>Join the portal session to watch the active driver. Publishing is independent from the page you are viewing.</p>
+          <span>{isLeader ? "Team leader" : "Team member"}</span>
+          <h2>{sessionInfo?.name || `Session ${config.sessionCode}`}</h2>
+          <p>{sessionInfo?.team_name || "Team session"} · Code {config.sessionCode} · Signed in as {config.displayName}</p>
         </div>
         <div className={`team-signal ${remoteConnected ? "connected" : ""}`}>
           <RadioTower size={22} />
-          <strong>{remoteConnected ? "Cloud link live" : "Waiting for cloud"}</strong>
-          <small>{remoteError || (config ? `Session ${config.sessionCode}` : "Enter the team session code")}</small>
+          <strong>{remoteConnected ? cloudHasData ? "Cloud telemetry live" : "Cloud connected · waiting for data" : "Waiting for cloud"}</strong>
+          <small>{remoteError || (cloudHasData ? `Frame ${presence.sequence} · ${new Date(presence.last_snapshot_at!).toLocaleTimeString()}` : `Session ${config.sessionCode}`)}</small>
         </div>
-      </div>
-
-      <div className="team-join-grid">
-        <label>Railway URL<input value={cloudUrl} onChange={(event) => setCloudUrl(event.target.value)} placeholder="https://your-service.up.railway.app" /></label>
-        <label>Session code<input value={sessionCode} maxLength={8} onChange={(event) => setSessionCode(event.target.value.toUpperCase())} placeholder="8 characters" /></label>
-        <label>Session access key<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} placeholder="Private team invitation key" /></label>
-        <label>Your driver name<input value={displayName} onChange={(event) => setDisplayName(event.target.value)} placeholder="Displayed to the team" /></label>
-        <button type="button" className="team-primary-action" onClick={() => void join()}><LogIn size={17} /> Join session</button>
       </div>
 
       <div className="team-connection-rail" aria-live="polite">
         <span><Cloud size={16} /><small>Cloud</small><strong>{remoteConnected ? "Connected" : "Offline"}</strong></span>
         <span><Radio size={16} /><small>Active driver</small><strong>{presence.active_driver || "Waiting"}</strong></span>
         <span><Users size={16} /><small>Viewers</small><strong>{presence.viewer_count ?? 0}</strong></span>
-        <span><Upload size={16} /><small>This PC</small><strong>{publishingStatus?.publishing ? publishingStatus.connected ? "Publishing" : "Reconnecting" : desktopAvailable ? "Viewer / idle" : "Browser viewer"}</strong></span>
+        <span><Upload size={16} /><small>This PC</small><strong>{publishingStatus?.publishing ? publishingStatus.connected ? `Publishing · ${publishingStatus.acknowledged_frames ?? 0} confirmed` : publishingStatus.socket_connected ? "Connected · awaiting cloud ack" : "Reconnecting" : desktopAvailable ? "Viewer / idle" : "Browser viewer"}</strong></span>
       </div>
 
-      {desktopAvailable && config && (
+      <div className="team-session-actions">
+        <button type="button" onClick={() => void copyInvite()}><Copy size={15} /> Copy secure invite</button>
+        {isLeader
+          ? <button type="button" className="danger" onClick={() => void endSession()}><Power size={15} /> Stop session</button>
+          : <button type="button" className="danger" onClick={() => void leaveSession()}><LogOut size={15} /> Exit session</button>}
+      </div>
+
+      <div className="team-participants">
+        <div className="team-participants-heading"><div><span>Session roster</span><h3>Participants</h3></div><small>{participants.filter((participant) => participant.online).length} online · {participants.length} joined</small></div>
+        <div className="table-wrap"><table><thead><tr><th>Participant</th><th>Role</th><th>Status</th><th>Laps</th><th>Fastest lap</th><th>Last lap</th></tr></thead><tbody>
+          {participants.map((participant) => <tr key={participant.display_name}>
+            <td><span className="team-participant-name">{participant.role === "leader" && <Crown size={13} />}{participant.display_name}</span></td>
+            <td>{participant.active_role === "driver" ? "Driver" : participant.role === "leader" ? "Team leader" : "Viewer"}</td>
+            <td><span className={`team-presence-pill ${participant.online ? "online" : ""}`}><i />{participant.online ? "Online" : "Offline"}</span></td>
+            <td>{participant.lap_count}</td><td>{formatLapTime(participant.fastest_lap)}</td><td>{participant.last_lap ?? "--"}</td>
+          </tr>)}
+          {!participants.length && <tr><td colSpan={6}>Waiting for the participant list…</td></tr>}
+        </tbody></table></div>
+      </div>
+
+      {desktopAvailable && (
         <div className="team-publisher-actions">
           {!publishingStatus?.publishing ? (
             <>
               <button type="button" onClick={() => void publish(false)}><Upload size={16} /> Start publishing</button>
               <button type="button" onClick={() => void publish(true)}>Take over active driver</button>
             </>
-          ) : <button type="button" className="danger" onClick={() => void stop()}><Square size={15} /> Stop publishing</button>}
+          ) : <button type="button" className="danger" onClick={() => void stopPublishing()}><Square size={15} /> Stop publishing</button>}
           <small>Local collection and recording are unaffected by these controls.</small>
         </div>
       )}
 
-      <details className="team-create-session">
-        <summary>Create a session as team lead</summary>
-        <div className="team-create-grid">
-          <label>Team name<input value={teamName} onChange={(event) => setTeamName(event.target.value)} /></label>
-          <label>Session name<input value={sessionName} onChange={(event) => setSessionName(event.target.value)} /></label>
-          <label>Railway admin key<input type="password" value={adminKey} onChange={(event) => setAdminKey(event.target.value)} /></label>
-          <button type="button" disabled={creating || !cloudUrl || !teamName || !sessionName || !adminKey} onClick={() => void createSession()}>{creating ? "Creating…" : "Create secure session"}</button>
-          {sessionCode.length === 8 && accessKey.length >= 20 && <button type="button" onClick={() => void navigator.clipboard.writeText(`Session code: ${sessionCode}\nAccess key: ${accessKey}`)}><Copy size={15} /> Copy secure invite</button>}
-        </div>
-      </details>
       {statusText && <p className="team-status-message">{statusText}</p>}
+      {publishingStatus?.publishing && publishingStatus.last_error && <p className="team-status-message">Publisher error: {publishingStatus.last_error}</p>}
     </section>
   );
 }

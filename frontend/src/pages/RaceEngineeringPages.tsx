@@ -443,7 +443,7 @@ function numericSampleFields(samples: Field[]) {
   return [...preferred.filter((key) => discovered.has(key)), ...[...discovered].filter((key) => !preferred.includes(key)).sort()];
 }
 
-export function buildStints(laps: Field[]) {
+export function buildStints(laps: Field[], fallbackDriver = "Player") {
   const groups: Field[][] = [];
   let current: Field[] = [];
   laps.forEach((lap) => {
@@ -471,8 +471,15 @@ export function buildStints(laps: Field[]) {
       const fallback = toFiniteNumber(row.tyre_wear_delta);
       return wheelDeltas.length ? avgNumbers(wheelDeltas) : fallback != null && fallback > 0 && fallback < 0.2 ? fallback : null;
     }).filter((value): value is number => value != null);
+    const driverCounts = [...paceRows, ...rows].reduce<Record<string, number>>((counts, row) => {
+      const driver = String(row.driver_name || "").trim();
+      if (driver) counts[driver] = (counts[driver] || 0) + 1;
+      return counts;
+    }, {});
+    const driverName = Object.entries(driverCounts).sort((left, right) => right[1] - left[1])[0]?.[0] || fallbackDriver;
     const summary = {
       stint_number: number,
+      driver_name: driverName,
       start_lap: rows[0]?.lap_number,
       end_lap: rows[rows.length - 1]?.lap_number,
       lap_count: paceRows.length,
@@ -940,7 +947,8 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
   const { review, error } = useSessionReview();
   const [selectedStint, setSelectedStint] = useState(1);
   const laps = (review?.laps || []) as Field[];
-  const stints = buildStints(laps);
+  const currentDriver = telemetry?.competitors?.find((competitor) => competitor.is_player)?.driver_name || "Player";
+  const stints = buildStints(laps, currentDriver);
   if (error && !stints.length) return <div className="page"><section className="card"><EmptyState title="No stint history" detail="Stint summaries will appear after recording completed laps." /></section></div>;
   const sessionFuel = stints.reduce((sum, stint) => sum + (Number(stint.summary.fuel_used) || 0), 0);
   const fastest = minField(stints.map((stint) => stint.summary), "fastest_lap");
@@ -982,6 +990,7 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
               >
                 <small>Stint</small>
                 <strong>{stint.number}</strong>
+                <span>{text(stint.summary.driver_name)}</span>
               </button>
             );
           }) : (
@@ -996,7 +1005,7 @@ export function RaceHistory({ telemetry, strategy }: EngineeringProps) {
         <SectionTitle title="Stint Summary" help="Lists all detected stints. Telemetry pit entries start a new stint, and returning to the main menu starts a new session." />
         {stints.length ? <StintSummaryTable stints={stints} /> : <EmptyState detail="Complete laps and pit cycles will populate the stint history." />}
       </section>
-      <section className="card span-3"><SectionTitle title="Summary" help="Condenses clean-lap stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Valid / detected laps" value={`${text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} / ${text(summary.detected_lap_count ?? summary.lap_count)}`} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Clean-lap fuel used" value={fmt(summary.fuel_used as number, 2, " L")} /></section>
+      <section className="card span-3"><SectionTitle title="Summary" help="Condenses the selected driver's clean-lap stint length, pace, and fuel. Compare fastest and average lap to judge consistency across the run." /><Metric label="Driver" value={text(summary.driver_name)} /><Metric label="Valid / detected laps" value={`${text(summary.lap_count ?? strategy?.stint?.current_stint_lap)} / ${text(summary.detected_lap_count ?? summary.lap_count)}`} /><Metric label="Fastest lap" value={lapTime(summary.fastest_lap as number)} /><Metric label="Average lap" value={lapTime(summary.average_lap as number)} /><Metric label="Clean-lap fuel used" value={fmt(summary.fuel_used as number, 2, " L")} /></section>
       <section className="card span-3"><SectionTitle title="Tyres" help="Summarizes eligible lap-to-lap wear and compound state. High wear rate with stable pace may be acceptable; high wear plus pace loss needs attention." /><Metric label="Avg wear / valid lap" value={pct(summary.tyre_wear_delta as number)} /><Metric label="Model wear rate" value={pct(strategy?.tyres?.wear_rate_per_lap)} /><Metric label="Compound" value={text(telemetry?.player?.tyre_state?.compound_front)} /></section>
       <section className="card span-4"><SectionTitle title="Lap time" help="Shows lap-time evolution across the selected stint, isolated from fuel and tyre scales so pace changes are easier to read." /><BasicLineChart data={rows} lines={[["lap_time", "#e6b450"]]} height={240} /></section>
       <section className="card span-4"><SectionTitle title="Fuel used" help="Shows fuel consumed on each lap of the selected stint. Compare consistent laps to identify consumption changes or anomalous readings." /><BasicLineChart data={rows} lines={[["fuel_used", "#6dd6ff"]]} height={240} /></section>
@@ -1012,10 +1021,11 @@ function StintSummaryTable({ stints }: { stints: Array<{ number: number; rows: F
   return (
     <div className="table-wrap">
       <table>
-        <thead><tr><th>Stint</th><th>Valid / detected laps</th><th>Lap range</th><th>Fastest</th><th>Average</th><th>Clean fuel used</th><th>Fuel/valid lap</th><th>Avg wear/valid lap</th><th>Top speed</th></tr></thead>
+        <thead><tr><th>Stint</th><th>Driver</th><th>Valid / detected laps</th><th>Lap range</th><th>Fastest</th><th>Average</th><th>Clean fuel used</th><th>Fuel/valid lap</th><th>Avg wear/valid lap</th><th>Top speed</th></tr></thead>
         <tbody>{stints.map((stint) => (
           <tr key={stint.number}>
             <td>{stint.number}</td>
+            <td>{text(stint.summary.driver_name)}</td>
             <td>{text(stint.summary.lap_count)} / {text(stint.summary.detected_lap_count)}</td>
             <td>{text(stint.summary.start_lap)}-{text(stint.summary.end_lap)}</td>
             <td>{lapTime(stint.summary.fastest_lap as number)}</td>
