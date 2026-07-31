@@ -9,6 +9,7 @@ import {
   Gauge,
   History,
   LineChart,
+  RadioTower,
   Settings,
   Timer,
   UserRound,
@@ -36,6 +37,15 @@ const profileItems = [
   ["review", "navigation.sessionReview", BarChart3],
 ] as const;
 
+const teamItems = [
+  ["live", "navigation.liveDashboard", Gauge],
+  ["circle-map", "navigation.circleMap", CircleDot],
+  ["one-lap", "navigation.standings", Timer],
+  ["race-history", "navigation.sessionHistory", History],
+  ["xy-plotter", "navigation.xyPlotter", LineChart],
+  ["pit", "navigation.pitWindow", Flag],
+] as const;
+
 const modes = [
   ["live", "navigation.liveMode", "navigation.liveModeDescription", Gauge, liveItems],
   ["plan", "navigation.planMode", "navigation.planModeDescription", FileText, planItems],
@@ -45,6 +55,7 @@ const modes = [
 const items = [...liveItems, ...planItems, ...profileItems] as const;
 
 export type PageKey = (typeof items)[number][0];
+export type ViewMode = "local" | "team";
 type ModeKey = (typeof modes)[number][0];
 
 const firstPageByMode: Record<ModeKey, PageKey> = {
@@ -60,16 +71,23 @@ function modeForPage(page: PageKey) {
 export function Layout({
   page,
   setPage,
+  viewMode,
+  setViewMode,
+  publishing,
   children,
 }: {
   page: PageKey;
   setPage: (page: PageKey) => void;
+  viewMode: ViewMode;
+  setViewMode: (mode: ViewMode) => void;
+  publishing?: boolean;
   children: React.ReactNode;
 }) {
   const t = useT();
   const activeMode = modeForPage(page);
-  const [, modeLabelKey, , , activeItems] = activeMode;
-  const modeLabel = t(modeLabelKey);
+  const [, modeLabelKey, , , localActiveItems] = activeMode;
+  const activeItems = viewMode === "team" ? teamItems : localActiveItems;
+  const modeLabel = viewMode === "team" ? "Team Race Engineer" : t(modeLabelKey);
   return (
     <div className="app-shell">
       <aside className="sidebar">
@@ -83,8 +101,17 @@ export function Layout({
           </div>
         </div>
         <div className="mode-menu" aria-label={t("navigation.mainModes")}>
+          <button className={viewMode === "team" ? "active team-mode-button" : "team-mode-button"} onClick={() => setViewMode("team")} aria-current={viewMode === "team" ? "page" : undefined}>
+            <RadioTower size={18} />
+            <span>
+              <strong>Team Race Engineer</strong>
+              <small>Watch the active driver from the shared team session</small>
+            </span>
+            {publishing && <i className="publishing-dot" title="This PC is publishing" />}
+            <ChevronRight className="mode-chevron" size={15} aria-hidden="true" />
+          </button>
           {modes.map(([key, labelKey, descriptionKey, Icon]) => (
-            <button key={key} className={activeMode[0] === key ? "active" : ""} onClick={() => setPage(firstPageByMode[key])} aria-current={activeMode[0] === key ? "page" : undefined}>
+            <button key={key} className={viewMode === "local" && activeMode[0] === key ? "active" : ""} onClick={() => { setViewMode("local"); setPage(firstPageByMode[key]); }} aria-current={viewMode === "local" && activeMode[0] === key ? "page" : undefined}>
               <Icon size={18} />
               <span>
                 <strong>{t(labelKey)}</strong>
