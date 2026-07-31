@@ -16,5 +16,6 @@ backend/.pytest*/
 tmp-pytest-*/
 data/sessions/*.sqlite3
 data/sessions/*.sqlite3-*
+cloud-lmu-telemetry.sqlite3
 .env
 *.log
